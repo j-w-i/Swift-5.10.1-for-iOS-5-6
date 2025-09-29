@@ -1,0 +1,498 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% This source file is part of the Swift.org open source project
+%
+% Copyright (c) 2021 - 2022 Apple Inc. and the Swift project authors
+% Licensed under Apache License v2.0 with Runtime Library Exception
+%
+% See https://swift.org/LICENSE.txt for license information
+% See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% KOMA-Script 'scrbook' document class
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% From left to right, each option does the following:
+% - A4 page size. Do not change!
+% - Draw line under chapter/section heading at top of page
+% - Next three options force use of serif fonts for part, chapter and section headings
+% - Put Bibliography in Table of Contents
+% - Use 'flat' ToC style because it looks better with double-digit chapter numbers
+% - Use 'fleqn' to left-align display math to make it consistent with the 'quote' environment which I use for tables and diagrams and stuff
+%
+% - Changing `twoside=semi' to `twoside' is safe. The default mode is meant for reading on-screen. If you make this change, even pages have a wider left margin, and odd pages have a wider right margin, which looks silly when scrolling vertically, but makes sense if you actually print and bind the book.
+\documentclass[a4paper,headsepline,headings=standardclasses,headings=big,chapterprefix=false,bibliography=totoc,toc=flat,fleqn,twoside=semi]{scrbook}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Packages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Fancy drop caps at the start of each chapter.
+\usepackage{Zallman,lettrine}
+\renewcommand\LettrineFontHook{\Zallmanfamily}
+
+% Multiple indices.
+\usepackage{imakeidx}
+
+% Theorem-like environments: proposition, example, algorithm, etc.
+\usepackage{amsthm}
+
+% For the 'List of Algorithms'. Must load before hyperref.
+\usepackage{thmtools}
+
+\renewcommand\thmtformatoptarg[1]{#1}
+
+% thmtools doesn't offer enough customization options, so hack it up to not print "Algorithm" in each line of the "List of Algorithms"
+\makeatletter
+
+\renewcommand\thmt@mklistcmd{%
+  \thmtlo@newentry
+    \@xa\def\csname ll@\thmt@envname\endcsname{%
+      \protect\numberline{\csname the\thmt@envname\endcsname}%
+      \ifx\@empty\thmt@shortoptarg\else\protect\thmtformatoptarg{\thmt@shortoptarg}\fi
+    }%
+  \@xa\gdef\csname thmt@contentsline@\thmt@envname\endcsname{%
+    \thmt@contentslineShow% default:show
+  }%
+}
+
+\makeatother
+
+% Hyperlinks in PDF files. We enable numbering in PDF bookmark titles, and backreferences from bibliography entries.
+\usepackage[pdfborder={0 0 0},linkcolor=blue,citecolor=blue,linktocpage=true,colorlinks=true,bookmarksnumbered,bookmarksopen=true,bookmarksopenlevel=0,pagebackref]{hyperref}
+
+% More control over PDF bookmarks.
+\usepackage{bookmark}
+
+% \uptau for generic parameter notation
+\usepackage{upgreek}
+
+% rcases, etc
+\usepackage{mathtools}
+
+% Nice horizontal rules in tables: \toprule, \midrule, \bottomrule
+\usepackage{booktabs}
+
+% AMS math symbols: \varnothing, \mathbb, etc
+\usepackage{amssymb}
+
+% UTF-8 greek letters directly in TeX for verbatim environment
+\usepackage{textgreek}
+
+% TikZ for figures
+\usepackage{tikz}
+\usepackage{tikz-cd}
+\usetikzlibrary{positioning,shapes,arrows,trees,calc,fit,backgrounds,shapes.multipart}
+\tikzstyle{class}=[rounded corners,draw=black,thick,anchor=west]
+\tikzstyle{stage}=[rounded corners, fill=light-gray, text centered]
+\tikzstyle{arrow}=[->,>=stealth]
+\tikzstyle{genericenv}=[inner sep=12pt, rounded corners, draw=gray, very thick]
+\tikzstyle{genericenvlabel}=[fill=white, draw=gray, very thick, rounded corners]
+\tikzstyle{genericenvmatrix}=[matrix, row sep=3pt, column sep=5pt]
+\tikzstyle{genericenvpart}=[rounded corners, fill=light-gray]
+\tikzstyle{abstractvertex}=[circle, fill=gray]
+\tikzstyle{abstractvertex2}=[circle, fill=lightgray]
+\tikzstyle{SourceFile}=[draw=black,thick,fill=lightgray]
+\tikzstyle{decl}=[draw=black,thick]
+\tikzstyle{type}=[rounded corners,draw=black,thick,fill=lighter-gray]
+\tikzstyle{OtherEntity}=[draw=black,thick,fill=lighter-gray]
+
+% \DeclareMathOperator, \boxed, etc
+\usepackage{mathtools}
+
+% Verbatim environment with border and line numbers
+\usepackage{fancyvrb}
+
+% Extended array environment
+\usepackage{array}
+
+% Colors for shaded frames
+\usepackage{xcolor}
+
+% Shaded frames for 'More details' boxes in Introduction
+\usepackage{mdframed}
+
+% To customize bibliography with \bstctlcite
+\usepackage{IEEEtrantools}
+
+% Each chapter is its own file.
+\usepackage{subfiles}
+
+% Strikethrough (\st)
+\usepackage[normalem]{ulem}
+
+% Line breaks in URLs in bibliography
+\usepackage{url}
+\def\UrlBreaks{\do\/\do-}
+
+% Text flowing around figures
+\usepackage{wrapfig}
+
+% For \textbf inside \texttt
+\usepackage{bold-extra}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Environments
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Various theorem-like environments
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+
+% Algorithm 12A, 12B, etc.
+\newtheorem{algorithm}{Algorithm}[chapter]
+\renewcommand\thealgorithm{\thechapter\Alph{algorithm}}
+
+% Hack so that the sample 'Algorithm 0A' from the Preface doesn't show up in the list.
+\newtheorem{algorithmx}{Algorithm}[chapter]
+\renewcommand\thealgorithmx{\thechapter\Alph{algorithmx}}
+
+% Use the same counter for all three so you get Definition 12.1, Proposition 12.2, Example 12.3 etc.
+\newtheorem{example}[definition]{Example}
+
+% We don't want the statement of the theorem to use italics...
+% \theoremstyle{theorem}
+\newtheorem{proposition}[definition]{Proposition}
+\newtheorem{lemma}[definition]{Lemma}
+\newtheorem{theorem}[definition]{Theorem}
+
+% 'listing' floating environment for source listings
+\DeclareNewTOC[
+  type = listing,
+  counterwithin=chapter,
+  float
+]{listing}
+
+% 'Verbatim' environment for fancy source listings
+\RecustomVerbatimEnvironment{Verbatim}{Verbatim}{frame=single,rulecolor=\color{gray},numbers=left}
+
+% 'More Details' boxes in Introduction
+\newenvironment{MoreDetails}{\medskip\begin{mdframed}[rightline=true,frametitlerule=true,frametitlerulecolor=gray,frametitlebackgroundcolor=light-gray,frametitlerulewidth=2pt,backgroundcolor=light-gray,linecolor=gray,frametitle={More details}]
+\begin{itemize}}{\end{itemize}
+\end{mdframed}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Macros
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% I use this in a few places.
+\definecolor{light-gray}{gray}{0.90}
+\definecolor{lighter-gray}{gray}{0.97}
+
+% Zero-tolerance policy for overfull hboxes.
+\overfullrule=10pt
+
+% Comment this out and uncomment the next line to see the work-in-progress sections.
+\newcommand{\ifWIP}{\iffalse}
+%\newcommand{\ifWIP}{\iftrue}
+
+% By default KOMA-script lays out footnotes so that the second line is offset by the width of an opening quotation mark. This looks ugly if your footnote text is not actually a quotation, because the second line is indented too far relative to the first line.
+\deffootnote[1em]{1em}{1em}{\textsuperscript{\thefootnotemark}}
+
+% Bibliography backreferences pages with citations
+\renewcommand*{\backrefalt}[4]{%
+       \ifcase #1 %
+         \\*(No citations.)%
+       \or
+         \\*(Cited on page #2.)%
+       \else
+         \\*(Cited on pages #2.)%
+\fi }
+
+% Request evalator requests
+\newcommand{\Request}[1]{\textbf{#1}}
+
+% Formal requirements in proof calculus
+\newcommand{\FormalReq}[1]{[\texttt{#1}]}
+\newcommand{\ConfReq}[2]{[\texttt{#1:~#2}]}
+
+% Substitution algebra notation
+\newcommand{\Type}[1]{[{\texttt{#1}}]}
+
+\newcommand{\SubstMap}[1]{\{#1\}}
+\newcommand{\SubstMapC}[2]{\{#1;\,#2\}}
+
+\newcommand{\SubstType}[2]{\texttt{#1} \mapsto \texttt{#2}}
+\newcommand{\SubstConf}[3]{\ConfReq{#1}{#3} \mapsto \ConfReq{#2}{#3}}
+
+\newcommand{\SubstMapLong}[1]{\left\{\begin{array}{l}#1\end{array}\right\}}
+\newcommand{\SubstMapLongC}[2]{\left\{\begin{array}{l}#1;\\[\medskipamount] #2\end{array}\right\}}
+
+\newcommand{\Proto}[1]{[\texttt{#1}]}
+
+\newcommand{\ProtoObj}{\textsc{Proto}}
+
+\newcommand{\Conf}[2]{[#1\texttt{:~#2}]}
+
+\newcommand{\AssocType}[1]{\pi(\texttt{#1})}
+\newcommand{\AssocConf}[2]{\pi(\texttt{#1:~#2})}
+
+\newcommand{\SigObj}{\textsc{Sig}}
+\newcommand{\TypeObj}[1]{\textsc{Type}({#1})}
+\newcommand{\SubMapObj}[2]{\textsc{Sub}({#1, #2})}
+\newcommand{\ConfObj}[1]{\textsc{Conf}({#1})}
+\newcommand{\ConfPObj}[2]{\textsc{Conf}_{\texttt{#1}}({#2})}
+\newcommand{\AssocTypeObj}[1]{\textsc{AssocType}_{\texttt{#1}}}
+\newcommand{\AssocConfObj}[1]{\textsc{AssocConf}_{\texttt{#1}}}
+
+\newcommand{\ttbf}[1]{\texttt{\textbf{#1}}}
+\newcommand{\T}{\ttbf{T}}
+
+\newcommand{\PhiInv}{\varphi^{-1}}
+\newcommand{\AR}{\langle A;\,R\rangle}
+
+% Old substitution algebra notation
+\newcommand{\mathboxed}[1]{\boxed{\mbox{\vphantom{pI\texttt{pI}}#1}}}
+\newcommand{\ttbox}[1]{\boxed{\mbox{\vphantom{pI\texttt{pI}}\texttt{#1}}}}
+\newcommand{\ttgp}[2]{\texttt{$\uptau$\_#1\_#2}}
+
+% Archetypes print [[like this]]. Must be in math mode
+\newcommand{\archetype}[1]{[\![\texttt{#1}]\!]}
+
+% Equivalence class notation for math
+\newcommand{\EquivClass}[1]{[\![#1]\!]}
+
+% GitHub links in 'Source Code Reference' sections
+\newcommand{\SourceFile}[1]{\href{https://github.com/apple/swift/tree/main/#1}{\texttt{#1}}}
+
+% Note: \apiref{foo}{bar} must be followed by a newline, because of a quirk with \noindent
+\def\apiref#1#2
+{\bigskip\hrule\nobreak\vskip 3pt\noindent\texttt{\vphantom{p}#1}\hfill\textsl{#2}\par\nobreak\vskip 3pt\hrule\vskip 3pt\noindent}
+
+% Requirement Machine symbols
+\newcommand{\proto}[1]{\texttt{#1}}
+\newcommand{\protosym}[1]{[\texttt{#1}]}
+\newcommand{\assocsym}[2]{[\texttt{#1}|\texttt{#2}]}
+\newcommand{\layoutsym}[1]{[\mathrm{layout}\colon\texttt{#1}]}
+\newcommand{\supersym}[1]{[\mathrm{superclass}\colon #1]}
+\newcommand{\concretesym}[1]{[\mathrm{concrete}\colon #1]}
+
+\DeclareMathOperator{\Src}{src}
+\DeclareMathOperator{\Dst}{dst}
+
+%%%%
+% Remove these
+%%%%
+\usepackage{bm}
+\newcommand{\namesym}[1]{\mathrm{#1}}
+\newcommand{\genericparam}[1]{\bm{\mathsf{#1}}}
+\newcommand{\gensig}[2]{\langle #1\;\textit{where}\;#2\rangle}
+\newcommand{\genericsym}[2]{\bm{\uptau}_{#1,#2}}
+\DeclareMathOperator{\gpdepth}{depth}
+\DeclareMathOperator{\gpindex}{index}
+\DeclareMathOperator{\domain}{domain}
+%%%%%
+
+% Type parameter and conformance path graph
+\tikzstyle{root} = [rounded corners, fill=lightgray]
+\tikzstyle{interior} = [rounded corners, fill=light-gray]
+
+% Protocol dependency graph
+\tikzstyle{protocol} = [rounded corners, fill=light-gray]
+
+% Title page logo
+
+\newcommand{\GenericsLogo}{\Huge\centering\textcolor{lightgray}{$
+\begin{array}{|cccccccccc|}
+\hline
+\otimes&\circ&+&:&\cdot&\varnothing&\star&\vee&\times&\bot\\
+\sim&\rightarrow&\in&\Rightarrow&=&\vdash&<&\prec&>&\mapsto\\
++&\varnothing&\cdot&\vee&\star&\bot&\times&\circ&\otimes&:\\
+>&\prec&\sim&\mapsto&\in&\rightarrow&=&\Rightarrow&<&\vdash\\
+\cdot&\bot&\star&\circ&\times&:&\otimes&\varnothing&+&\vee\\
+<&\Rightarrow&>&\vdash&\sim&\prec&\in&\mapsto&=&\rightarrow\\
+\star&:&\times&\varnothing&\otimes&\vee&+&\bot&\cdot&\circ\\
+=&\mapsto&<&\rightarrow&>&\Rightarrow&\sim&\vdash&\in&\prec\\
+\times&\vee&\otimes&\bot&+&\circ&\cdot&:&\star&\varnothing\\
+\in&\vdash&=&\prec&<&\mapsto&>&\rightarrow&\sim&\Rightarrow\\
+\hline
+\end{array}
+$}}
+
+% I don't like boldface page numbers in the table of contents.
+\RedeclareSectionCommands[tocpagenumberformat=]{chapter}
+\RedeclareSectionCommands[tocpagenumberformat=]{part}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Index
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% We have a main index and one for command line flags.
+
+% generics.ist configures letter headings in the index.
+\makeindex[intoc,options=-s generics]
+\makeindex[intoc,name=flags,title=Command Line Flags,columns=1,options=-s generics]
+
+% \Index is used instead of \index for entries with custom formatting, eg
+%
+%   \Index{foo bar@foo \texttt{bar}}
+%
+% because for some reason, a mix of \IndexDefinition or \IndexSource with \index doesn't get collated correctly.
+\newcommand{\Index}[1]{\index{#1|textrm}}
+
+\newcommand{\IndexDefinition}[1]{\index{#1|textbf}}
+\newcommand{\IndexSource}[1]{\index{#1|textit}}
+
+% Add an entry to the command line flag index with the right formatting
+\newcommand{\IndexFlag}[1]{\index[flags]{#1@\texttt{-#1}}}
+
+% Used for -debug-requirement-machine=... flags
+\newcommand{\IndexTwoFlag}[2]{\index[flags]{#1@\texttt{-#1}!#2@\texttt{#2}}}
+
+% Derivation steps
+\newcommand{\IndexStep}[1]{\index{#1 derivation step@\textsc{#1} derivation step|textrm}}
+\newcommand{\IndexStepDefinition}[1]{\index{#1 derivation step@\textsc{#1} derivation step|textbf}}
+
+% Sets in the type substitution algebra
+\newcommand{\IndexSet}[2]{\index{#1@$#2$|textrm}}
+\newcommand{\IndexSetDefinition}[2]{\index{#1@$#2$|textbf}}
+
+% Normally a seealso index entry elides the page number, but sometimes we want index entries that look like this:
+%
+% foo, 123
+%    see also bar
+%
+% The trick is to make a fake subentry and format it with this macro to prevent it from showing up.
+%
+% The above example would be generated by: \index{foo}\index{foo!z@\igobble|seealso{bar}}
+%
+% The 'z' should sort after every other 'real' subentry, if any.
+\def\igobble#1 {}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title Page
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\titlehead{\GenericsLogo}
+\title{Compiling Swift Generics}
+\author{Slava Pestov}
+
+% Put chapter/section headings at the top of each page
+\pagestyle{headings}
+
+\begin{document}
+
+\maketitle
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Let's Go!
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Add a PDF bookmark for the Preface
+\cleardoublepage
+\pdfbookmark{Preface}{preface}
+
+\subfile{chapters/preface}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table of Contents
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% PDF bookmark for Table of Contents
+\cleardoublepage
+\pdfbookmark{Contents}{toc}
+\tableofcontents
+
+% List of Algorithms
+\cleardoublepage
+\pdfbookmark{List of Algorithms}{loa}
+\listoftheorems[ignoreall,onlynamed={algorithm},title={List of Algorithms}]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% The Good Stuff
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\part{Fundamental Concepts}\label{part fundamentals}
+
+\subfile{chapters/introduction}
+
+\subfile{chapters/compilation-model}
+
+\subfile{chapters/types}
+
+\subfile{chapters/declarations}
+
+\subfile{chapters/generic-declarations}
+
+\subfile{chapters/generic-signatures}
+
+\subfile{chapters/substitution-maps}
+
+\subfile{chapters/conformances}
+
+\subfile{chapters/generic-environments}
+
+\part{Further Explorations}\label{part odds and ends}
+
+\subfile{chapters/type-resolution}
+
+\subfile{chapters/extensions}
+
+\subfile{chapters/building-generic-signatures}
+
+\subfile{chapters/conformance-paths}
+
+\subfile{chapters/opaque-return-types}
+
+\subfile{chapters/existential-types}
+
+\subfile{chapters/class-inheritance}
+
+\subfile{chapters/witness-thunks}
+
+\part{The Requirement Machine}\label{part rqm}
+
+\subfile{chapters/basic-operation}
+
+\subfile{chapters/monoids}
+
+\subfile{chapters/symbols-terms-and-rules}
+
+\subfile{chapters/completion}
+
+\subfile{chapters/property-map}
+
+\subfile{chapters/concrete-conformances}
+
+\subfile{chapters/rewrite-system-minimization}
+
+% Move subsequent PDF bookmarks to the top level since the Appendix, Bibliography and Index are not logically contained in Part III
+\bookmarksetup{startatroot}
+
+\appendix
+
+\subfile{chapters/derived-requirements-summary}
+
+\subfile{chapters/type-substitution-summary}
+
+\subfile{chapters/runtime-representation}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Postmatter
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Customize bibliography some more
+\begingroup
+\scriptsize
+% Don't justify paragraphs since it looks silly
+\raggedright
+% Don't break bibliography entries across pages
+\raggedbottom
+\widowpenalties 1 10000
+\bibliographystyle{IEEEtran}
+\bibliography{generics}
+\endgroup
+
+% Index
+\indexprologue{\noindent A \textbf{bold} page number is where the concept is first defined; an \textit{italic} page number is where the implementation is shown in a ``Source Code Reference'' section. A plain page number is where the concept is used.\par}
+\printindex
+
+% Command Line Flags
+\setindexpreamble{}
+\printindex[flags]
+
+% Goodbye!
+\end{document}
+

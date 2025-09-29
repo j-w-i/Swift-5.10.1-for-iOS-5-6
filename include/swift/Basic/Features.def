@@ -1,0 +1,243 @@
+//===--- Features.def - Swift Features Metaprogramming ----------*- C++ -*-===//
+//
+// This source file is part of the Swift.org open source project
+//
+// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
+// Licensed under Apache License v2.0 with Runtime Library Exception
+//
+// See https://swift.org/LICENSE.txt for license information
+// See https://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
+//
+//===----------------------------------------------------------------------===//
+//
+// This file defines macros used for macro-metaprogramming with language
+// features.
+//
+//
+// LANGUAGE_FEATURE(FeatureName, SENumber, Description, Option)
+//
+//   The LANGUAGE_FEATURE macro describes each named feature that is
+//   introduced in Swift. It allows Swift code to check for a particular
+//   feature with "#if $FeatureName" in source code.
+//
+//     FeatureName: The name given to this feature to be used in source code,
+//       e.g., AsyncAwait.
+//     SENumber: The number assigned to this feature in the Swift Evolution
+//       process, or 0 if there isn't one.
+//     Description: A string literal describing the feature.
+//     Option: either a reference to a language option in the form
+//       "langOpts.<option name>" or "true" to indicate that it's always
+//       enabled.
+//
+// Suppressible language features can be suppressed when printing
+// an interface without having to suppress the entire declaration they're
+// contained within.  The declaration will be emitted multiple times,
+// each with a subset of the suppressible features.  To avoid combinatoric
+// re-emission, we assume a linear history: later features in this file
+// imply the existence of earlier features.  (This only needs to apply to
+// suppressible features.)
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LANGUAGE_FEATURE
+#  error define LANGUAGE_FEATURE before including Features.def
+#endif
+
+#ifndef SUPPRESSIBLE_LANGUAGE_FEATURE
+#define SUPPRESSIBLE_LANGUAGE_FEATURE(FeatureName, SENumber, Description, Option) \
+  LANGUAGE_FEATURE(FeatureName, SENumber, Description, Option)
+#endif
+
+#ifndef UPCOMING_FEATURE
+#  define UPCOMING_FEATURE(FeatureName, SENumber, Version)   \
+     LANGUAGE_FEATURE(FeatureName, SENumber, #FeatureName, \
+                      langOpts.hasFeature(#FeatureName))
+#endif
+
+#ifndef EXPERIMENTAL_FEATURE
+// Warning: setting `AvailableInProd` to `true` on a feature means that the flag
+//          cannot be dropped in the future.
+#  define EXPERIMENTAL_FEATURE(FeatureName, AvailableInProd)  \
+     LANGUAGE_FEATURE(FeatureName, 0, #FeatureName, \
+                      langOpts.hasFeature(#FeatureName))
+#endif
+
+#ifndef EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE
+#  define EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE(FeatureName, AvailableInProd) \
+     EXPERIMENTAL_FEATURE(FeatureName, AvailableInProd)
+#endif
+
+LANGUAGE_FEATURE(AsyncAwait, 296, "async/await", true)
+LANGUAGE_FEATURE(EffectfulProp, 310, "Effectful properties", true)
+LANGUAGE_FEATURE(MarkerProtocol, 0, "@_marker protocol", true)
+LANGUAGE_FEATURE(Actors, 0, "actors", true)
+LANGUAGE_FEATURE(ConcurrentFunctions, 0, "@concurrent functions", true)
+LANGUAGE_FEATURE(RethrowsProtocol, 0, "@rethrows protocol", true)
+LANGUAGE_FEATURE(GlobalActors, 316, "Global actors", true)
+LANGUAGE_FEATURE(BuiltinJob, 0, "Builtin.Job type", true)
+LANGUAGE_FEATURE(Sendable, 0, "Sendable and @Sendable", true)
+LANGUAGE_FEATURE(BuiltinExecutor, 0, "Builtin.Executor type", true)
+LANGUAGE_FEATURE(BuiltinContinuation, 0, "Continuation builtins", true)
+LANGUAGE_FEATURE(BuiltinHopToActor, 0, "Builtin.HopToActor", true)
+LANGUAGE_FEATURE(BuiltinTaskGroupWithArgument, 0, "TaskGroup builtins", true)
+LANGUAGE_FEATURE(InheritActorContext, 0, "@_inheritActorContext attribute", true)
+LANGUAGE_FEATURE(ImplicitSelfCapture, 0, "@_implicitSelfCapture attribute", true)
+LANGUAGE_FEATURE(BuiltinBuildExecutor, 0, "Executor-building builtins", true)
+LANGUAGE_FEATURE(BuiltinBuildComplexEqualityExecutor, 0, "Executor-building for 'complexEquality executor' builtins", true)
+LANGUAGE_FEATURE(BuiltinBuildMainExecutor, 0, "MainActor executor building builtin", true)
+LANGUAGE_FEATURE(BuiltinCreateAsyncTaskInGroup, 0, "MainActor executor building builtin", true)
+LANGUAGE_FEATURE(BuiltinCopy, 0, "Builtin.copy()", true)
+LANGUAGE_FEATURE(BuiltinStackAlloc, 0, "Builtin.stackAlloc", true)
+LANGUAGE_FEATURE(BuiltinUnprotectedStackAlloc, 0, "Builtin.unprotectedStackAlloc", true)
+LANGUAGE_FEATURE(BuiltinTaskRunInline, 0, "Builtin.taskRunInline", true)
+LANGUAGE_FEATURE(BuiltinUnprotectedAddressOf, 0, "Builtin.unprotectedAddressOf", true)
+LANGUAGE_FEATURE(NewCxxMethodSafetyHeuristics, 0, "Only import C++ methods that return pointers (projections) on owned types as unsafe", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(SpecializeAttributeWithAvailability, 0, "@_specialize attribute with availability", true)
+LANGUAGE_FEATURE(BuiltinAssumeAlignment, 0, "Builtin.assumeAlignment", true)
+LANGUAGE_FEATURE(BuiltinCreateTaskGroupWithFlags, 0, "Builtin.createTaskGroupWithFlags", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(UnsafeInheritExecutor, 0, "@_unsafeInheritExecutor", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(PrimaryAssociatedTypes2, 346, "Primary associated types", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(UnavailableFromAsync, 0, "@_unavailableFromAsync", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(NoAsyncAvailability, 340, "@available(*, noasync)", true)
+LANGUAGE_FEATURE(BuiltinIntLiteralAccessors, 368, "Builtin.IntLiteral accessors", true)
+LANGUAGE_FEATURE(Macros, 0, "Macros", hasSwiftSwiftParser)
+LANGUAGE_FEATURE(
+    FreestandingExpressionMacros, 382, "Expression macros",
+        hasSwiftSwiftParser)
+LANGUAGE_FEATURE(AttachedMacros, 389, "Attached macros", hasSwiftSwiftParser)
+LANGUAGE_FEATURE(ExtensionMacros, 402, "Extension macros", hasSwiftSwiftParser)
+LANGUAGE_FEATURE(MoveOnly, 390, "noncopyable types", true)
+LANGUAGE_FEATURE(MoveOnlyResilientTypes, 390, "non-@frozen noncopyable types with library evolution", true)
+LANGUAGE_FEATURE(ParameterPacks, 393, "Value and type parameter packs", true)
+SUPPRESSIBLE_LANGUAGE_FEATURE(LexicalLifetimes, 0, "@_eagerMove/@_noEagerMove/@_lexicalLifetimes annotations", true)
+LANGUAGE_FEATURE(FreestandingMacros, 397, "freestanding declaration macros", true)
+
+UPCOMING_FEATURE(ConciseMagicFile, 274, 6)
+UPCOMING_FEATURE(ForwardTrailingClosures, 286, 6)
+UPCOMING_FEATURE(BareSlashRegexLiterals, 354, 6)
+UPCOMING_FEATURE(DeprecateApplicationMain, 383, 6)
+UPCOMING_FEATURE(ImportObjcForwardDeclarations, 384, 6)
+UPCOMING_FEATURE(DisableOutwardActorInference, 401, 6)
+UPCOMING_FEATURE(IsolatedDefaultValues, 411, 6)
+UPCOMING_FEATURE(GlobalConcurrency, 412, 6)
+
+UPCOMING_FEATURE(ExistentialAny, 335, 7)
+
+EXPERIMENTAL_FEATURE(StaticAssert, false)
+EXPERIMENTAL_FEATURE(NamedOpaqueTypes, false)
+EXPERIMENTAL_FEATURE(FlowSensitiveConcurrencyCaptures, false)
+EXPERIMENTAL_FEATURE(CodeItemMacros, false)
+EXPERIMENTAL_FEATURE(TupleConformances, false)
+
+SUPPRESSIBLE_LANGUAGE_FEATURE(ExtensionMacroAttr, 0, "@attached(extension)", true)
+
+// Whether to enable @_used and @_section attributes
+EXPERIMENTAL_FEATURE(SymbolLinkageMarkers, true)
+
+// Whether to compile scripts lazily in immediate mode
+EXPERIMENTAL_FEATURE(LazyImmediate, false)
+
+// FIXME: MoveOnlyClasses is not intended to be in production,
+// but our tests currently rely on it, and we want to run those
+// tests in non-asserts builds too.
+EXPERIMENTAL_FEATURE(MoveOnlyClasses, true)
+EXPERIMENTAL_FEATURE(NoImplicitCopy, true)
+EXPERIMENTAL_FEATURE(OldOwnershipOperatorSpellings, true)
+EXPERIMENTAL_FEATURE(MoveOnlyEnumDeinits, true)
+EXPERIMENTAL_FEATURE(MoveOnlyTuples, true)
+EXPERIMENTAL_FEATURE(MoveOnlyPartialConsumption, true)
+
+EXPERIMENTAL_FEATURE(OneWayClosureParameters, false)
+EXPERIMENTAL_FEATURE(TypeWitnessSystemInference, false)
+EXPERIMENTAL_FEATURE(LayoutPrespecialization, true)
+
+EXPERIMENTAL_FEATURE(ModuleInterfaceExportAs, true)
+EXPERIMENTAL_FEATURE(AccessLevelOnImport, true)
+
+/// Whether to enable experimental layout string value witnesses
+EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE(LayoutStringValueWitnesses, true)
+EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE(LayoutStringValueWitnessesInstantiation, true)
+
+/// Whether to enable experimental differentiable programming features:
+/// `@differentiable` declaration attribute, etc.
+EXPERIMENTAL_FEATURE(DifferentiableProgramming, false)
+
+/// Whether to enable forward mode differentiation.
+EXPERIMENTAL_FEATURE(ForwardModeDifferentiation, false)
+
+/// Whether to enable experimental `AdditiveArithmetic` derived
+/// conformances.
+EXPERIMENTAL_FEATURE(AdditiveArithmeticDerivedConformances, false)
+
+/// Whether Objective-C completion handler parameters are imported as
+/// @Sendable.
+EXPERIMENTAL_FEATURE(SendableCompletionHandlers, false)
+
+/// Enables opaque type erasure without also enabling implict dynamic
+EXPERIMENTAL_FEATURE(OpaqueTypeErasure, false)
+
+/// Whether to perform round-trip testing of the Swift Swift parser.
+EXPERIMENTAL_FEATURE(ParserRoundTrip, false)
+
+/// Whether to perform validation of the parse tree produced by the Swift
+/// Swift parser.
+EXPERIMENTAL_FEATURE(ParserValidation, false)
+
+/// Whether to emit diagnostics from the new parser first, and only emit
+/// diagnostics from the existing parser when there are none from the new
+/// parser.
+EXPERIMENTAL_FEATURE(ParserDiagnostics, false)
+
+/// Enables implicit some while also enabling existential `any`
+EXPERIMENTAL_FEATURE(ImplicitSome, false)
+
+/// Parse using the Swift (swift-syntax) parser and use ASTGen to generate the
+/// corresponding syntax tree.
+EXPERIMENTAL_FEATURE(ParserASTGen, false)
+
+/// Use the syntax tree produced by the Swift (swift-syntax) parser for type
+/// parsing, using ASTGen to translate them into AST nodes.
+EXPERIMENTAL_FEATURE(ASTGenTypes, false)
+
+/// Parse using the Swift (swift-syntax) parser and use ASTGen to generate the
+/// corresponding syntax tree.
+EXPERIMENTAL_FEATURE(BuiltinMacros, false)
+
+/// Import C++ class templates as semantically-meaningless symbolic
+/// Swift types and C++ methods as symbolic functions with blank
+/// signatures.
+EXPERIMENTAL_FEATURE(ImportSymbolicCXXDecls, false)
+
+/// Generate bindings for functions that 'throw' in the C++ section of the generated Clang header.
+EXPERIMENTAL_FEATURE(GenerateBindingsForThrowingFunctionsInCXX, false)
+
+/// Enable reference bindings.
+EXPERIMENTAL_FEATURE(ReferenceBindings, true)
+
+/// Enable the explicit 'import Builtin' and allow Builtin usage.
+EXPERIMENTAL_FEATURE(BuiltinModule, true)
+
+// Enable strict concurrency.
+EXPERIMENTAL_FEATURE(StrictConcurrency, true)
+
+/// Defer Sendable checking to SIL diagnostic phase.
+EXPERIMENTAL_FEATURE(SendNonSendable, false)
+
+/// Enable extended callbacks (with additional parameters) to be used when the
+/// "playground transform" is enabled.
+EXPERIMENTAL_FEATURE(PlaygroundExtendedCallbacks, true)
+
+/// Enable 'then' statements.
+EXPERIMENTAL_FEATURE(ThenStatements, false)
+
+/// Enable the `@_rawLayout` attribute.
+EXPERIMENTAL_FEATURE(RawLayout, true)
+
+/// Enables the "embedded" swift mode (no runtime).
+EXPERIMENTAL_FEATURE(Embedded, true)
+
+#undef EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE
+#undef EXPERIMENTAL_FEATURE
+#undef UPCOMING_FEATURE
+#undef SUPPRESSIBLE_LANGUAGE_FEATURE
+#undef LANGUAGE_FEATURE

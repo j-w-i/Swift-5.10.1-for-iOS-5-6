@@ -1,0 +1,34 @@
+module Functions {
+  header "functions.h"
+}
+
+module Fields {
+  header "fields.h"
+}
+
+module Polymorphism {
+  header "polymorphism.h"
+  requires cplusplus
+}
+
+module ReferenceToDerived {
+  header "reference-to-derived.h"
+  requires cplusplus
+}
+
+module SubTypes {
+  header "sub-types.h"
+}
+
+module Subscripts {
+  header "subscripts.h"
+}
+
+module TypeAliases {
+  header "type-aliases.h"
+}
+
+module VirtualMethods {
+  header "virtual-methods.h"
+  requires cplusplus
+}
