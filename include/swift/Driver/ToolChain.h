@@ -75,6 +75,9 @@ protected:
                ArrayRef<const Action *> InputActions,
                const CommandOutput &Output, const OutputInfo &OI);
 
+    /// Forwards to Compilation::getDiags without exposing private compilation state.
+    DiagnosticEngine &getDiags() const;
+
     /// Forwards to Compilation::getInputFiles.
     ArrayRef<InputPair> getTopLevelInputFiles() const;
 

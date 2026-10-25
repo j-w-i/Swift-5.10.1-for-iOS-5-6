@@ -806,7 +806,7 @@ toolchains::Darwin::constructInvocation(const DynamicLinkJobAction &job,
       SmallString<128> crtPath(resourcePath);
       llvm::sys::path::append(crtPath, "crt1.3.1.o");
       if (!llvm::sys::fs::exists(crtPath))
-        context.C.getDiags().diagnose(SourceLoc(),
+        context.getDiags().diagnose(SourceLoc(),
                                      diag::error_legacy_ios5_crt_missing,
                                      crtPath.str());
       Arguments.push_back("-no_new_main");
@@ -818,7 +818,7 @@ toolchains::Darwin::constructInvocation(const DynamicLinkJobAction &job,
     SmallString<128> backportsPath(resourcePath);
     llvm::sys::path::append(backportsPath, "libswiftLegacyIOS5Backports.a");
     if (!llvm::sys::fs::exists(backportsPath))
-      context.C.getDiags().diagnose(SourceLoc(),
+      context.getDiags().diagnose(SourceLoc(),
                                    diag::error_legacy_ios5_backports_missing,
                                    backportsPath.str());
     Arguments.push_back(context.Args.MakeArgString(backportsPath));

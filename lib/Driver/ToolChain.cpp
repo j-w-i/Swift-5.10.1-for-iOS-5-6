@@ -40,6 +40,10 @@ ToolChain::JobContext::JobContext(Compilation &C, ArrayRef<const Job *> Inputs,
     : C(C), Inputs(Inputs), InputActions(InputActions), Output(Output), OI(OI),
       Args(C.getArgs()) {}
 
+DiagnosticEngine &ToolChain::JobContext::getDiags() const {
+  return C.getDiags();
+}
+
 ArrayRef<InputPair> ToolChain::JobContext::getTopLevelInputFiles() const {
   return C.getInputFiles();
 }
