@@ -807,13 +807,13 @@ struct TargetAnyClassMetadataObjCInterop
       TargetClassMetadataObjCInterop *superclass)
       : TargetAnyClassMetadata<Runtime>(isa, superclass),
         CacheData{nullptr, nullptr},
-        Data(SWIFT_CLASS_IS_SWIFT_MASK) {}
+        Data(initialDataWord()) {}
 
   constexpr TargetAnyClassMetadataObjCInterop(
       TargetClassMetadataObjCInterop *superclass)
       : TargetAnyClassMetadata<Runtime>(superclass), CacheData{nullptr,
                                                                nullptr},
-        Data(SWIFT_CLASS_IS_SWIFT_MASK) {}
+        Data(initialDataWord()) {}
 
   // Allow setting the metadata kind to a class ISA on class metadata.
   using TargetMetadata<Runtime>::getClassISA;
@@ -834,10 +834,42 @@ struct TargetAnyClassMetadataObjCInterop
     return offsetof(TargetAnyClassMetadataObjCInterop, Data);
   }
 
+  /// Runtime construction must use the same class-data ABI as IRGen.
+  static constexpr StoredSize initialDataWord() {
+#if defined(SWIFT_LEGACY_IOS5_CLASS_MARKING)
+    return 0;
+#else
+    return SWIFT_CLASS_IS_SWIFT_MASK;
+#endif
+  }
+
+  static StoredSize makeDataWord(const void *ro) {
+    return reinterpret_cast<StoredSize>(ro) | initialDataWord();
+  }
+
   /// Is this object a valid swift type metadata?  That is, can it be
   /// safely downcast to ClassMetadata?
   bool isTypeMetadata() const {
+#if defined(SWIFT_LEGACY_IOS5_CLASS_MARKING)
+    static_assert(sizeof(void *) == 4,
+                  "legacy iOS 5 class marking requires a 32-bit runtime");
+    // This ABI is private to the legacy runtime. Do not probe arbitrary ObjC
+    // data in the default runtime, or reinterpret remote-process addresses.
+    if (!Data)
+      return false;
+    auto flags = *reinterpret_cast<const uint32_t *>(Data);
+    const void *ro = reinterpret_cast<const void *>(Data);
+    if (flags & 0x80000000u) {
+      // iOS 5 class_rw_t: flags, version, ro (RW_REALIZED is bit 31).
+      ro = *reinterpret_cast<const void *const *>(Data + 8);
+      if (!ro)
+        return false;
+    }
+    return (*reinterpret_cast<const uint32_t *>(ro) &
+            uint32_t(ClassFlags::LegacySwiftClassMarker)) != 0;
+#else
     return (Data & SWIFT_CLASS_IS_SWIFT_MASK);
+#endif
   }
   /// A different perspective on the same bit
   bool isPureObjC() const {
@@ -1089,6 +1121,11 @@ public:
   /// may have a different bit set from the one that this runtime canonically
   /// considers the "is Swift" bit.
   void setAsTypeMetadata() {
+#if defined(SWIFT_LEGACY_IOS5_CLASS_MARKING)
+    // The RO marker is installed by IRGen; never tag the bare data pointer.
+    assert(isTypeMetadata());
+    return;
+#endif
     // If the wrong "is Swift" bit is set, set the correct one.
     //
     // Note that the only time we should see the "new" bit set while

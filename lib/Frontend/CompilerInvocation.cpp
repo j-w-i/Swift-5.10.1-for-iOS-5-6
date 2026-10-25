@@ -1103,6 +1103,29 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
           validateCxxInteropCompatibilityMode("swift-5.9").second;
   }
 
+  // Class marking is an ABI choice, never inferred from deployment version.
+  Opts.LegacyIOS5ClassMarking = Args.hasFlag(
+      OPT_enable_legacy_ios5_class_marking,
+      OPT_disable_legacy_ios5_class_marking,
+      Args.hasArg(OPT_enable_legacy_ios5_runtime));
+  if (Args.hasArg(OPT_enable_legacy_ios5_runtime) &&
+      !Opts.LegacyIOS5ClassMarking) {
+    Diags.diagnose(SourceLoc(), diag::error_argument_not_allowed_with,
+                   "-disable-legacy-ios5-class-marking",
+                   "-enable-legacy-ios5-runtime");
+    return true;
+  }
+  if ((Opts.LegacyIOS5ClassMarking ||
+       Args.hasArg(OPT_enable_legacy_ios5_runtime)) &&
+      (Target.getArch() != llvm::Triple::arm ||
+       Target.getSubArch() != llvm::Triple::ARMSubArch_v7 ||
+       !Target.isiOS() || Target.isTvOS() ||
+       Target.isSimulatorEnvironment() || Target.isMacCatalystEnvironment())) {
+    Diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
+                   "-enable-legacy-ios5-class-marking", Target.str());
+    return true;
+  }
+
   Opts.EnableObjCInterop =
       Args.hasFlag(OPT_enable_objc_interop, OPT_disable_objc_interop,
                    Target.isOSDarwin());
@@ -1771,8 +1794,16 @@ static bool ParseSearchPathArgs(SearchPathOptions &Opts,
   if (const Arg *A = Args.getLastArg(OPT_visualc_tools_version))
     Opts.setVCToolsVersion(A->getValue());
 
-  if (const Arg *A = Args.getLastArg(OPT_resource_dir))
+  if (const Arg *A = Args.getLastArg(OPT_resource_dir)) {
     Opts.RuntimeResourcePath = A->getValue();
+  } else if (Args.hasArg(OPT_enable_legacy_ios5_runtime) &&
+             !Opts.RuntimeResourcePath.empty() &&
+             llvm::sys::path::filename(Opts.RuntimeResourcePath) != "swift_ios5") {
+    llvm::SmallString<128> legacy(Opts.RuntimeResourcePath);
+    llvm::sys::path::remove_filename(legacy);
+    llvm::sys::path::append(legacy, "swift_ios5");
+    Opts.RuntimeResourcePath = legacy.str().str();
+  }
 
   Opts.SkipRuntimeLibraryImportPaths |= Args.hasArg(OPT_nostdimport);
 

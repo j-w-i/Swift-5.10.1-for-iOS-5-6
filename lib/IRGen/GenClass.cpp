@@ -1564,7 +1564,11 @@ namespace {
 
       // struct _class_ro_t {
       //   uint32_t flags;
-      b.addInt32(unsigned(buildFlags(forMeta, hasUpdater)));
+      unsigned roFlags = unsigned(buildFlags(forMeta, hasUpdater));
+      if (IGM.Context.LangOpts.LegacyIOS5ClassMarking &&
+          !FieldLayout->hasObjCImplementation())
+        roFlags |= unsigned(ClassFlags::LegacySwiftClassMarker);
+      b.addInt32(roFlags);
 
       //   uint32_t instanceStart;
       //   uint32_t instanceSize;

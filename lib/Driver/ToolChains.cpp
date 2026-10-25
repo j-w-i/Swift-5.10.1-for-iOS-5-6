@@ -272,6 +272,9 @@ void ToolChain::addCommonFrontendArgs(const OutputInfo &OI,
   inputArgs.AddLastArg(arguments, options::OPT_nostdimport);
   inputArgs.AddLastArg(arguments, options::OPT_parse_stdlib);
   inputArgs.AddLastArg(arguments, options::OPT_resource_dir);
+  inputArgs.AddLastArg(arguments, options::OPT_enable_legacy_ios5_runtime);
+  inputArgs.AddLastArg(arguments, options::OPT_enable_legacy_ios5_class_marking,
+                       options::OPT_disable_legacy_ios5_class_marking);
   inputArgs.AddLastArg(arguments, options::OPT_solver_memory_threshold);
   inputArgs.AddLastArg(arguments, options::OPT_value_recursion_threshold);
   inputArgs.AddLastArg(arguments, options::OPT_warn_swift3_objc_inference);
@@ -1457,6 +1460,10 @@ void ToolChain::getResourceDirPath(SmallVectorImpl<char> &resourceDirPath,
     auto programPath = getDriver().getSwiftProgramPath();
     CompilerInvocation::computeRuntimeResourcePathFromExecutablePath(
         programPath, shared, resourceDirPath);
+    if (args.hasArg(options::OPT_enable_legacy_ios5_runtime)) {
+      llvm::sys::path::remove_filename(resourceDirPath);
+      llvm::sys::path::append(resourceDirPath, "swift_ios5");
+    }
   }
 
   StringRef libSubDir = getPlatformNameForTriple(getTriple());

@@ -682,8 +682,7 @@ initializeClassMetadataFromPattern(ClassMetadata *metadata,
   // RO-data pointer.
 #if SWIFT_OBJC_INTEROP
   auto classRO = metadataExtraData + pattern->ClassRODataOffset;
-  metadata->Data =
-    reinterpret_cast<uintptr_t>(classRO) | SWIFT_CLASS_IS_SWIFT_MASK;
+  metadata->Data = AnyClassMetadata::makeDataWord(classRO);
 #endif
 
   // Class flags.
@@ -3015,8 +3014,7 @@ _swift_relocateClassMetadata(const ClassDescriptor *description,
   // RO-data pointer.
 #if SWIFT_OBJC_INTEROP
   auto classRO = pattern->Data.get();
-  metadata->Data =
-    reinterpret_cast<uintptr_t>(classRO) | SWIFT_CLASS_IS_SWIFT_MASK;
+  metadata->Data = AnyClassMetadata::makeDataWord(classRO);
 #endif
 
   // Class flags.
@@ -3099,7 +3097,8 @@ static uint32_t getLog2AlignmentFromMask(size_t alignMask) {
 }
 
 static inline ClassROData *getROData(ClassMetadata *theClass) {
-  return (ClassROData*)(theClass->Data & ~uintptr_t(SWIFT_CLASS_IS_SWIFT_MASK));
+  return (ClassROData *)(theClass->Data &
+                        ~uintptr_t(AnyClassMetadata::initialDataWord()));
 }
 
 // This gets called if we fail during copyGenericClassObjcName().  Its job is

@@ -319,6 +319,10 @@ enum class ClassFlags : uint32_t {
   /// which was created during compilation and made to be canonical by
   /// modifying the metadata accessor.
   IsCanonicalStaticSpecialization = 0x10,
+
+  /// Legacy iOS 5 Swift marker in Objective-C class_ro_t::flags, not in the
+  /// Swift metadata Flags field. Only used with explicit legacy class marking.
+  LegacySwiftClassMarker = 0x10000,
 };
 inline bool operator&(ClassFlags a, ClassFlags b) {
   return (uint32_t(a) & uint32_t(b)) != 0;

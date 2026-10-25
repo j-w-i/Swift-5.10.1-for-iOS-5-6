@@ -13,6 +13,7 @@
 #include "ToolChains.h"
 
 #include "swift/AST/DiagnosticsDriver.h"
+#include "swift/AST/DiagnosticsFrontend.h"
 #include "swift/AST/PlatformKind.h"
 #include "swift/Basic/Dwarf.h"
 #include "swift/Basic/LLVM.h"
@@ -792,6 +793,25 @@ toolchains::Darwin::constructInvocation(const DynamicLinkJobAction &job,
     Arguments.push_back(context.Args.MakeArgString(context.OI.SDKPath));
   }
 
+  if (job.getKind() == LinkKind::Executable &&
+      context.Args.hasArg(options::OPT_enable_legacy_ios5_runtime) &&
+      Triple.getArch() == llvm::Triple::arm &&
+      Triple.getSubArch() == llvm::Triple::ARMSubArch_v7 &&
+      Triple.isiOS() && !Triple.isTvOS() &&
+      !Triple.isSimulatorEnvironment() && !Triple.isMacCatalystEnvironment()) {
+    // iOS 5 dyld needs LC_UNIXTHREAD, even when the source is compiled with
+    // a newer deployment floor. Do not rewrite the resulting Mach-O.
+    SmallString<128> crtPath;
+    getResourceDirPath(crtPath, context.Args, /*shared=*/true);
+    llvm::sys::path::append(crtPath, "crt1.3.1.o");
+    if (!llvm::sys::fs::exists(crtPath))
+      context.C.getDiags().diagnose(SourceLoc(),
+                                    diag::error_legacy_ios5_crt_missing,
+                                    crtPath.str());
+    Arguments.push_back("-no_new_main");
+    Arguments.push_back(context.Args.MakeArgString(crtPath));
+  }
+
   Arguments.push_back("-lobjc");
   Arguments.push_back("-lSystem");
 
@@ -895,7 +915,12 @@ static void validateDeploymentTarget(const toolchains::Darwin &TC,
         return;
       }
     }
-    if (triple.isOSVersionLT(7))
+    if (triple.isOSVersionLT(7) &&
+        !(args.hasArg(options::OPT_enable_legacy_ios5_runtime) &&
+          triple.getArch() == llvm::Triple::arm &&
+          triple.getSubArch() == llvm::Triple::ARMSubArch_v7 &&
+          !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
+          !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5)))
       diags.diagnose(SourceLoc(), diag::error_os_minimum_deployment,
                      "iOS 7");
     if (triple.isArch32Bit() && !triple.isOSVersionLT(11)) {
@@ -931,6 +956,26 @@ void
 toolchains::Darwin::validateArguments(DiagnosticEngine &diags,
                                       const llvm::opt::ArgList &args,
                                       StringRef defaultTarget) const {
+  bool legacyRuntime = args.hasArg(options::OPT_enable_legacy_ios5_runtime);
+  bool legacyMarking = args.hasFlag(
+      options::OPT_enable_legacy_ios5_class_marking,
+      options::OPT_disable_legacy_ios5_class_marking, legacyRuntime);
+  if (legacyRuntime && args.hasArg(options::OPT_static_executable))
+    diags.diagnose(SourceLoc(), diag::error_argument_not_allowed_with,
+                   "-static-executable", "-enable-legacy-ios5-runtime");
+  if (legacyRuntime && !legacyMarking)
+    diags.diagnose(SourceLoc(), diag::error_argument_not_allowed_with,
+                   "-disable-legacy-ios5-class-marking",
+                   "-enable-legacy-ios5-runtime");
+  if ((legacyRuntime || legacyMarking) &&
+      (getTriple().getArch() != llvm::Triple::arm ||
+       getTriple().getSubArch() != llvm::Triple::ARMSubArch_v7 ||
+       !getTriple().isiOS() || getTriple().isTvOS() ||
+       getTriple().isSimulatorEnvironment() ||
+       getTriple().isMacCatalystEnvironment()))
+    diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
+                   "-enable-legacy-ios5-runtime", getTriple().str());
+
   // Validating apple platforms deployment targets.
   validateDeploymentTarget(*this, diags, args);
   validateTargetVariant(*this, diags, args, defaultTarget);

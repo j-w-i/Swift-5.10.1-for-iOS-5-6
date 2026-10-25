@@ -4091,6 +4091,13 @@ namespace {
       // Derive the RO-data.
       llvm::Constant *data = asImpl().getROData();
 
+      if (IGM.Context.LangOpts.LegacyIOS5ClassMarking) {
+        // iOS 5 objc4 dereferences this word without masking low bits.
+        // Swift-ness is recorded in class_ro_t::flags instead.
+        B.add(llvm::ConstantExpr::getPtrToInt(data, IGM.IntPtrTy));
+        return;
+      }
+
       if (!asImpl().getFieldLayout().hasObjCImplementation()) {
         // Set a low bit to indicate this class has Swift metadata.
         auto bit = llvm::ConstantInt::get(

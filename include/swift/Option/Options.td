@@ -127,6 +127,16 @@ def driver_print_bindings : Flag<["-"], "driver-print-bindings">,
 def driver_print_jobs : Flag<["-"], "driver-print-jobs">, InternalDebugOpt,
   HelpText<"Dump list of jobs to execute">;
 def _HASH_HASH_HASH : Flag<["-"], "###">, Alias<driver_print_jobs>;
+def enable_legacy_ios5_runtime : Flag<["-"], "enable-legacy-ios5-runtime">,
+  Flags<[FrontendOption]>,
+  HelpText<"Use the parallel lib/swift_ios5 resource tree and legacy iOS 5 class marking (off by default)">;
+def enable_legacy_ios5_class_marking : Flag<["-"], "enable-legacy-ios5-class-marking">,
+  Flags<[FrontendOption]>,
+  HelpText<"Mark Swift classes in Objective-C class_ro_t flags instead of class data pointer low bits">;
+def disable_legacy_ios5_class_marking : Flag<["-"], "disable-legacy-ios5-class-marking">,
+  Flags<[FrontendOption]>,
+  HelpText<"Use standard Swift class marking (incompatible with -enable-legacy-ios5-runtime)">;
+
 def driver_skip_execution : Flag<["-"], "driver-skip-execution">,
   InternalDebugOpt,
   HelpText<"Skip execution of subtasks when performing compilation">;

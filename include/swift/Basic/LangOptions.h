@@ -192,6 +192,10 @@ namespace swift {
     /// Enable experimental string processing
     bool EnableExperimentalStringProcessing = true;
 
+    /// Emit bare Objective-C class data pointers and the legacy RO-flags
+    /// Swift marker. Opt-in only: deployment targets do not select this ABI.
+    bool LegacyIOS5ClassMarking = false;
+
     /// Disable API availability checking.
     bool DisableAvailabilityChecking = false;
 

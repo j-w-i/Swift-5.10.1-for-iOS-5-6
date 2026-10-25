@@ -55,6 +55,10 @@ ERROR(error_no_output_file_map_specified,none,
 ERROR(error_unable_to_make_temporary_file,none,
       "unable to make temporary file: %0", (StringRef))
 
+ERROR(error_legacy_ios5_crt_missing,none,
+      "legacy iOS 5 executable startup object is missing: '%0'; install the "
+      "iOS 5 crt1.3.1.o in the selected runtime resource directory", (StringRef))
+
 ERROR(error_no_input_files,none,
       "no input files", ())
 
