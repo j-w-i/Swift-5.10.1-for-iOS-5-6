@@ -31,7 +31,7 @@ fi
 # Clang's executable target omits JIT/LTO archives needed by Swift's frontend.
 # Derive the actual archive closure from the generated Swift build graph.
 MISSING_TARGETS=()
-while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < <(python3 - "$B/build/swift/build.ninja" "$B/build/llvm" <<'PY'
+python3 - "$B/build/swift/build.ninja" "$B/build/llvm" > "$B/build/swift/missing-llvm-targets.txt" <<'PY'
 from pathlib import Path
 import re,sys
 text=Path(sys.argv[1]).read_text(); root=Path(sys.argv[2])
@@ -39,7 +39,7 @@ for p in sorted(set(re.findall(r'/[^\s|]+/lib[^\s|]+\.a',text))):
     path=Path(p)
     if root in path.parents and not path.exists(): print(path.stem[3:])
 PY
-)
+while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < "$B/build/swift/missing-llvm-targets.txt"
 if [ "${#MISSING_TARGETS[@]}" -gt 0 ]; then
   run "$TOOLS/ninja" -C "$B/build/llvm" -j1 "${MISSING_TARGETS[@]}"
 fi
