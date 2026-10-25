@@ -32,3 +32,18 @@ Inputs for step 5 that are NOT in git: the 5.1.5 runtime build (from Swift-5.1.5
 ## Honest status
 - Verified: `fetch-deps.sh` from an empty directory; both patches apply to fresh upstream tags; the already-built toolchain works with the app (combined iOS 5/6 builds).
 - NOT verified: a from-scratch run of steps 2–6 on a clean machine (takes many hours). Steps 4–5 are still documented rather than wrapped in one `build-all.sh`; the old runtime inputs in step 5 are the least reproducible part.
+
+## Reproducibility proof (2026-10-26)
+From a fresh `git clone` of this repo into an empty directory, `utils/legacy-ios5-mac/build-all.sh` ran start to finish on
+an Apple Silicon Mac (macOS 27, 14 cores, Xcode 13.4.1 at a space-free path) and produced `out/swift-5.10.1-ios5.xctoolchain`
+(stages: tools, host-toolchain, baseline-toolchain, fetch-510, llvm-510, swift-510, driver-510, fetch-515, compiler-515, crt-515,
+runtime-515, overlays, assemble). With that toolchain:
+- `check-class-marking.sh`: PASS.
+- sample app, iOS 5.0, armv7: ARCHIVE SUCCEEDED, LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN.
+- sample app, iOS 7.0 floor, armv7+arm64 (guide route): ARCHIVE SUCCEEDED, LC_MAIN.
+Device execution: PENDING (not observed).
+
+Known non-source inputs: the armv7/armv7s Swift 5.10.1 stdlib *modules* come from the author's pinned release pkg
+(`BASELINE_PKG_URL`, SHA-256 in build-all.sh); the official swift.org package only ships arm64 modules.
+Paths containing spaces are rejected up front. An attached iOS device can make Xcode 13.4.1's xcodebuild hang
+on this macOS; unplug it while building.
