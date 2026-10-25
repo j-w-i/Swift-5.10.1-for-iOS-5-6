@@ -90,7 +90,7 @@ legacy class marking. Preserve the probe's compatibility controls such as
 `-runtime-compatibility-version none`; they prevent unwanted modern compatibility
 archive force-load references but are not a proof of runtime ABI compatibility.
 Actual armv7 links, import/availability audits, UNIXTHREAD startup inspection,
-and real iOS 5 device execution remain separate required stages.
+and real iOS 5 device execution remain separate required stages. Current stock-compiler probes intentionally compile overlays at iOS7.0 and inherit old runtime dylibs with that Mach-O minimum. They are not deployment-qualified iOS5 libraries; do not rewrite their load commands to conceal this. The final patched-compiler stage must produce/audit genuine deployment metadata or explicitly verify old-dyld acceptance before qualification. The sample executable's min5.0 does not change its libraries' minima.
 
 ## Validation performed for this bootstrap
 
