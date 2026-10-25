@@ -1,20 +1,21 @@
 #!/bin/bash
 # macOS-only, planning regression: never compiles or links a program.
-# Usage: check-driver-routing.sh SWIFTC SDK freshOUTPUT
+# Usage: check-driver-routing.sh SWIFTC SDK freshOUTPUT [modern|cpp|modern,cpp]
 # Requires Python 3 and an assembled compiler with the patched SwiftDriver backend.
 # The deliberately invalid CRT/archive below are ONLY existence-check fixtures for
 # -driver-print-jobs. They must never be passed to a real compilation/link step.
 set -euo pipefail
-if [ "$#" -ne 3 ]; then
-  echo 'Usage: check-driver-routing.sh SWIFTC SDK freshOUTPUT' >&2
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
+  echo 'Usage: check-driver-routing.sh SWIFTC SDK freshOUTPUT [modern|cpp|modern,cpp]' >&2
   exit 2
 fi
+BACKENDS=${4:-modern,cpp}
 [ "$(uname -s)" = Darwin ] || { echo 'Requires macOS; no cross-host driver execution.' >&2; exit 1; }
 [ -x "$1" ] || { echo 'SWIFTC must name an executable.' >&2; exit 1; }
 [ -d "$2" ] || { echo 'SDK must name an existing SDK directory.' >&2; exit 1; }
 [ ! -e "$3" ] && [ ! -L "$3" ] || { echo 'OUTPUT must be fresh (including no dangling symlink).' >&2; exit 1; }
 command -v python3 >/dev/null
-python3 - "$1" "$2" "$3" <<'PY'
+python3 - "$1" "$2" "$3" "$BACKENDS" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,10 @@ def info(label, backend, target, flags):
 def check_jobs(label, backend, is_legacy, library):
     output = out / (label + ('.dylib' if library else '.executable'))
     flags = [legacy] if is_legacy else []
-    args = ['-target', 'armv7-apple-ios7.0', '-resource-dir', str(fixture),
+    # The output file name is not a legal module identifier; name it explicitly so
+    # both driver implementations plan the same way. Nothing is compiled here.
+    args = ['-target', 'armv7-apple-ios7.0', '-module-name', 'PlannedModule',
+            '-resource-dir', str(fixture),
             '-runtime-compatibility-version', 'none', '-driver-print-jobs',
             *flags, *(['-emit-library'] if library else []), str(source), '-o', str(output)]
     printed = run(label, backend, args)
@@ -128,8 +132,13 @@ def check_jobs(label, backend, is_legacy, library):
             f'{label}: unexpectedly compiled object output')
 
 
+# Optional 4th argument selects which driver implementations to exercise;
+# the C++ driver is the patched swift-frontend invoked through a `swiftc` symlink.
+requested = sys.argv[4].split(',')
+for name in requested:
+    require(name in ('modern', 'cpp'), 'unknown backend: ' + name)
 try:
-    for backend in ('modern', 'cpp'):
+    for backend in requested:
         stock, stock_libs = info(backend + '-default7', backend, 'armv7-apple-ios7.0', [])
         old, old_libs = info(backend + '-legacy5', backend, 'armv7-apple-ios5.0', [legacy])
         require(stock.name == 'swift' and stock.parent.name == 'lib',

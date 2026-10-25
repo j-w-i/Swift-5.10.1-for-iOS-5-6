@@ -933,8 +933,15 @@ static void validateDeploymentTarget(const toolchains::Darwin &TC,
           triple.getSubArch() == llvm::Triple::ARMSubArch_v7 &&
           !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
           !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5)))
-      diags.diagnose(SourceLoc(), diag::error_os_minimum_deployment,
-                     "iOS 7");
+      // Point at the opt-in rather than only the generic floor, but keep the
+      // generic message for arm64/armv6/simulator/Catalyst and pre-iOS-5.
+      if (triple.getArch() == llvm::Triple::arm &&
+          triple.getSubArch() == llvm::Triple::ARMSubArch_v7 &&
+          !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
+          !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5))
+        diags.diagnose(SourceLoc(), diag::error_legacy_ios5_deployment_requires_opt_in);
+      else
+        diags.diagnose(SourceLoc(), diag::error_os_minimum_deployment, "iOS 7");
     if (triple.isArch32Bit() && !triple.isOSVersionLT(11)) {
       diags.diagnose(SourceLoc(), diag::error_ios_maximum_deployment_32,
                      triple.getOSMajorVersion());

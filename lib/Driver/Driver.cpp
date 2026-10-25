@@ -2393,6 +2393,12 @@ bool Driver::handleImmediateArgs(const ArgList &Args, const ToolChain &TC) {
       commandLine.push_back(resourceDirArg->getValue());
     }
 
+    // The legacy ABI selection changes the default resource directory
+    // (lib/swift_ios5), so the target-info query must see it too; otherwise
+    // clients would import stock modules for an iOS 5 target.
+    if (Args.hasArg(options::OPT_enable_legacy_ios5_runtime))
+      commandLine.push_back("-enable-legacy-ios5-runtime");
+
     if (Args.hasFlag(options::OPT_static_executable,
                      options::OPT_no_static_executable, false) ||
         Args.hasFlag(options::OPT_static_stdlib, options::OPT_no_static_stdlib,
