@@ -913,6 +913,7 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     // MARK: Conversion Functions
     
     /// Turn our more-specific options into the big bucket option set of NSCalendar
+    @available(iOS 8.0, *)
     private static func _toCalendarOptions(matchingPolicy: MatchingPolicy, repeatedTimePolicy: RepeatedTimePolicy, direction: SearchDirection) -> NSCalendar.Options {
         var result : NSCalendar.Options = []
         

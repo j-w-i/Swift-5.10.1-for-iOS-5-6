@@ -361,6 +361,9 @@ extension UIFont.TextStyle {
 }
 
 #if !os(watchOS) // UIContentSizeCategory not available on watchOS
+// The type itself is iOS 7+; annotate the extension so it can be declared
+// while building at a 5.0 deployment floor.
+@available(iOS 7.0, tvOS 7.0, *)
 extension UIContentSizeCategory {
 
     @available(iOS 11.0, tvOS 11.0,  *)

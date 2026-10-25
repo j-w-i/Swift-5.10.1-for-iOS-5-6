@@ -604,7 +604,9 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     public typealias ReadingOptions = NSData.ReadingOptions
     public typealias WritingOptions = NSData.WritingOptions
     public typealias SearchOptions = NSData.SearchOptions
+    @available(macOS 10.9, iOS 7.0, *)
     public typealias Base64EncodingOptions = NSData.Base64EncodingOptions
+    @available(macOS 10.9, iOS 7.0, *)
     public typealias Base64DecodingOptions = NSData.Base64DecodingOptions
 
     public typealias Index = Int
@@ -1977,6 +1979,7 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     /// - parameter base64String: The string to parse.
     /// - parameter options: Encoding options. Default value is `[]`.
     @inlinable // This is @inlinable as a convenience initializer.
+    @available(macOS 10.9, iOS 7.0, *)
     public init?(base64Encoded base64String: __shared String, options: Data.Base64DecodingOptions = []) {
 #if LEGACY_IOS5
         // iOS < 7 has no initWithBase64EncodedString:options: (only initWithBase64Encoding:); use Apple's
@@ -2000,6 +2003,7 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     /// - parameter base64Data: Base-64, UTF-8 encoded input data.
     /// - parameter options: Decoding options. Default value is `[]`.
     @inlinable // This is @inlinable as a convenience initializer.
+    @available(macOS 10.9, iOS 7.0, *)
     public init?(base64Encoded base64Data: __shared Data, options: Data.Base64DecodingOptions = []) {
 #if LEGACY_IOS5
         guard let bytes = _LegacyBase64.base64DecodeBytes([UInt8](base64Data),
@@ -2474,6 +2478,7 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     /// - parameter options: The options to use for the encoding. Default value is `[]`.
     /// - returns: The Base-64 encoded string.
     @inlinable // This is @inlinable as trivially forwarding.
+    @available(macOS 10.9, iOS 7.0, *)
     public func base64EncodedString(options: Data.Base64EncodingOptions = []) -> String {
 #if LEGACY_IOS5
         // `base64EncodedStringWithOptions:` is iOS 7+. Apple's swift-corelibs-foundation encoder (LegacyBase64.swift).
@@ -2492,6 +2497,7 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     /// - parameter options: The options to use for the encoding. Default value is `[]`.
     /// - returns: The Base-64 encoded data.
     @inlinable // This is @inlinable as trivially forwarding.
+    @available(macOS 10.9, iOS 7.0, *)
     public func base64EncodedData(options: Data.Base64EncodingOptions = []) -> Data {
 #if LEGACY_IOS5
         return Data(_LegacyBase64.base64EncodeBytes([UInt8](self),
