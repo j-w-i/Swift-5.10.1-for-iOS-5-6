@@ -34,12 +34,23 @@ for prefix, normal, old in (('_DATA_',128,65664),('_METACLASS_DATA_',129,65665))
     assert ro_flag(stock, prefix, 'Plain') == [normal], (prefix, 'stock Plain')
     assert ro_flag(legacy, prefix, 'Plain') == [old], (prefix, 'legacy Plain')
 # The generic class RO objects live in the copied extra-data pattern and may be
-# unnamed; require an increased marked count rather than inventing a name.
+# unnamed or byte-packed; count both i32 and little-endian i8 encodings instead
+# of inventing a symbol name.
+def marker_hits(text, value):
+    hits = len(re.findall(r'\bi32 '+str(value)+r'\b', text))
+    octets = [(value >> (8 * i)) & 0xFF for i in range(4)]
+    signed = [(o - 256 if o >= 128 else o) for o in octets]
+    packed = ', '.join('i8 '+str(x) for x in signed)
+    return hits + len(re.findall(re.escape(packed), text))
+
 for marker in (65664, 65665):
-    stock_hits = len(re.findall(r'\bi32 '+str(marker)+r'\b', stock))
-    legacy_hits = len(re.findall(r'\bi32 '+str(marker)+r'\b', legacy))
-    assert stock_hits == 0, ('unexpected legacy marker in stock', marker)
-    assert legacy_hits >= 2, ('generic class RO marker missing', marker, legacy_hits)
+    assert marker_hits(stock, marker) == 0, ('unexpected legacy marker in stock', marker)
+    assert marker_hits(legacy, marker) >= 2, ('generic class RO marker missing', marker, marker_hits(legacy, marker))
+# Every class in this fixture is either Plain or Generic, so no stock flag may
+# survive in the legacy output.
+assert marker_hits(stock, 128) and marker_hits(stock, 129), 'stock class flags absent'
+assert marker_hits(legacy, 128) == 0, 'stock flag 128 survived legacy marking'
+assert marker_hits(legacy, 129) == 0, 'stock flag 129 survived legacy marking'
 assert re.search(r'i32 add \(i32 ptrtoint \(ptr @_DATA_[^\n]*Plain[^\n]*to i32\), i32 1\)', stock), 'stock low-bit'
 assert re.search(r'i32 ptrtoint \(ptr @_DATA_[^\n]*Plain[^\n]*to i32\)',legacy), 'legacy bare pointer'
 assert not re.search(r'i32 add \(i32 ptrtoint \(ptr @_DATA_',legacy), 'legacy low-bit unexpectedly set'
