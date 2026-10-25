@@ -7,8 +7,10 @@ STAGE=${1:?stage}; SWIFTC=${2:?swiftc}; SDK=${3:?sdk}; MODE=${4:-}
 [ -d "$STAGE/probes/modules510" ] && [ -x "$SWIFTC" ] && [ -d "$SDK" ] || { echo 'Missing prepared stage/compiler/SDK.' >&2; exit 1; }
 [ -z "$MODE" ] || [ "$MODE" = --legacy-marking ] || { echo 'Unknown mode.' >&2; exit 64; }
 R="$STAGE/probes/modules510"
-EXTRA=()
-[ -z "$MODE" ] || EXTRA=(-enable-legacy-ios5-class-marking)
+EXTRA=(); TARGET=7.0
+if [ "$MODE" = --legacy-marking ]; then
+  EXTRA=(-enable-legacy-ios5-runtime); TARGET=5.0
+fi
 mkdir -p "$STAGE/logs"
 for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
   lower=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
@@ -22,7 +24,7 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # forced Swift-runtime-library dependency. Do not replace its module; suppress
   # that unused library for legacy clients which cannot use FileProvider anyway.
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" -j1 -parse-as-library -module-name "$NAME" -autolink-force-load \
-    -target armv7-apple-ios7.0 -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
+    -target "armv7-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
     -I "$STAGE/probes/dispatch-shims" \
     -Xfrontend -disable-autolink-library -Xfrontend swiftFileProvider \
     -runtime-compatibility-version none -disable-autolinking-runtime-compatibility-dynamic-replacements \

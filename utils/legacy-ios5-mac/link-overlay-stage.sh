@@ -122,7 +122,9 @@ run() {
 }
 # Match the successful probes' SDK/link triple; it does NOT establish an iOS 5
 # deployment target. Availability/import/load-command/device audits remain required.
-COMMON=(-target armv7-apple-ios7.0 -isysroot "$SDK")
+DEPLOYMENT=${IOS_DEPLOYMENT_TARGET:-7.0}
+case "$DEPLOYMENT" in 5.0|5.1|5.1.1|7.0) ;; *) fail 'Unsupported IOS_DEPLOYMENT_TARGET; use 5.0/5.1/5.1.1 or probe7.0.' ;; esac
+COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 NATIVE=(-O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
   -DSWIFT_RUNTIME -DSWIFT_STDLIB_BUILDING_OVERLAY -DOS_OBJECT_USE_OBJC=0 -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
   -I "$OUT/include" -I "$SWIFT51_SOURCE/include"
