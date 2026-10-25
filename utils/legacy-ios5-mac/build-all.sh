@@ -35,6 +35,19 @@ SWIFT515_REPO=https://github.com/j-w-i/Swift-5.1.5-for-iOS-6.git; SWIFT515_BRANC
 LLVM515_REPO=https://github.com/j-w-i/llvm-project.git;            LLVM515_REF=swift/swift-5.1-branch
 CMARK515_REPO=https://github.com/apple/swift-cmark.git;           CMARK515_REF=swift-5.1.5-RELEASE
 
+fetch() { # url destination - resumable download with retries; never leaves a partial file in place
+  local url="$1" dest="$2" part="$2.part" attempt
+  [ -s "$dest" ] && return 0
+  for attempt in 1 2 3; do
+    if /usr/bin/curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --continue-at - -o "$part" "$url"; then
+      /bin/mv -f "$part" "$dest"; return 0
+    fi
+    echo "download attempt $attempt failed: $url" >&2
+    /bin/sleep 5
+  done
+  return 1
+}
+
 stage() { # name  command...
   local n=$1; shift
   [ -e "$ROOT/.stamps/$n" ] && { echo "== $n: done (skip)"; return; }
@@ -49,8 +62,8 @@ clone() { [ -d "$S/$1/.git" ] || git clone -q --depth 1 --branch "$3" "$2" "$S/$
 # ---- stages -----------------------------------------------------------------------------------------
 tools() {
   cd "$ROOT/tools"
-  [ -x cmake/CMake.app/Contents/bin/cmake ] || { curl -fsSL -o "$ROOT/downloads/cmake.tgz" "$CMAKE_URL"; tar xzf "$ROOT/downloads/cmake.tgz"; mv cmake-3.31.6-macos-universal cmake; }
-  [ -x ninja ] || { curl -fsSL -o "$ROOT/downloads/ninja.zip" "$NINJA_URL"; unzip -oq "$ROOT/downloads/ninja.zip"; chmod +x ninja; }
+  [ -x cmake/CMake.app/Contents/bin/cmake ] || { fetch "$CMAKE_URL" "$ROOT/downloads/cmake.tgz" || exit 1; tar xzf "$ROOT/downloads/cmake.tgz"; mv cmake-3.31.6-macos-universal cmake; }
+  [ -x ninja ] || { fetch "$NINJA_URL" "$ROOT/downloads/ninja.zip" || exit 1; unzip -oq "$ROOT/downloads/ninja.zip"; chmod +x ninja; }
   mkdir -p shim; ln -sf "$XC/usr/bin/python3" shim/python; ln -sf "$XC/usr/bin/python3" shim/python3
   # Only two SDKs are needed (9.3 for crt1.3.1.o, 13.7 for the iOS runtime build); sparse-checkout avoids fetching them all.
   if [ ! -d "$S/theos-sdks/iPhoneOS13.7.sdk" ]; then
@@ -61,21 +74,38 @@ tools() {
 }
 host_toolchain() { # official swift.org 5.10.1 toolchain: host compiler for the build and the baseline of the assembly
   cd "$ROOT/downloads"
-  [ -s swift-5.10.1.pkg ] || curl -fsSL -o swift-5.10.1.pkg "$SWIFT510_PKG_URL"
   if [ ! -d "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain" ]; then
-    rm -rf pkgx && /usr/sbin/pkgutil --expand-full swift-5.10.1.pkg pkgx
-    mkdir -p "$ROOT/host"; mv pkgx/*-package.pkg/Payload "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain" 2>/dev/null || mv pkgx/*/Payload "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"
-    rm -rf pkgx
+    for attempt in 1 2; do
+      fetch "$SWIFT510_PKG_URL" swift-5.10.1.pkg || exit 1
+      rm -rf pkgx
+      if /usr/sbin/pkgutil --expand-full swift-5.10.1.pkg pkgx; then
+        mkdir -p "$ROOT/host"; mv pkgx/*-package.pkg/Payload "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain" 2>/dev/null || mv pkgx/*/Payload "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"
+        rm -rf pkgx
+        break
+      fi
+      echo "swift-5.10.1.pkg does not expand (attempt $attempt); discarding it and downloading again" >&2
+      rm -rf pkgx swift-5.10.1.pkg swift-5.10.1.pkg.part
+    done
   fi
   [ -x "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain/usr/bin/swiftc" ]
 }
 baseline_toolchain() {
   cd "$ROOT/downloads"
-  [ -s ios6.pkg ] || curl -fsSL -o ios6.pkg "$BASELINE_PKG_URL"
-  [ "$(shasum -a 256 ios6.pkg | cut -d' ' -f1)" = "$BASELINE_PKG_SHA256" ] || { echo "baseline pkg checksum mismatch" >&2; exit 1; }
   if [ ! -d "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain" ]; then
-    rm -rf x6 && /usr/sbin/pkgutil --expand-full ios6.pkg x6
-    mkdir -p "$ROOT/baseline"; mv x6/Payload/Library/Developer/Toolchains/swift-5.10.1-RELEASE.xctoolchain "$ROOT/baseline/"; rm -rf x6
+    for attempt in 1 2; do
+      fetch "$BASELINE_PKG_URL" ios6.pkg || exit 1
+      if [ "$(shasum -a 256 ios6.pkg | cut -d' ' -f1)" != "$BASELINE_PKG_SHA256" ]; then
+        echo "baseline pkg checksum mismatch (attempt $attempt); discarding it and downloading again" >&2
+        rm -f ios6.pkg ios6.pkg.part; continue
+      fi
+      rm -rf x6
+      if /usr/sbin/pkgutil --expand-full ios6.pkg x6; then
+        mkdir -p "$ROOT/baseline"; mv x6/Payload/Library/Developer/Toolchains/swift-5.10.1-RELEASE.xctoolchain "$ROOT/baseline/"; rm -rf x6
+        break
+      fi
+      echo "baseline pkg does not expand (attempt $attempt); discarding it and downloading again" >&2
+      rm -rf x6 ios6.pkg ios6.pkg.part
+    done
   fi
   [ -d "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain/usr/lib/swift/iphoneos/Swift.swiftmodule" ]
   ls "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain/usr/lib/swift/iphoneos/Swift.swiftmodule" | grep -q armv7-apple-ios.swiftmodule
