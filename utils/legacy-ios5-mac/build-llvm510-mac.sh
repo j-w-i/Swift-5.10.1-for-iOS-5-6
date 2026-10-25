@@ -16,4 +16,4 @@ mkdir -p "$B/build/llvm" "$B/logs"
  -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF \
  -DCLANG_INCLUDE_TESTS=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_ZLIB=OFF \
  -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_PARALLEL_LINK_JOBS=1
-exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$TOOLS/ninja" -C "$B/build/llvm" -j1 clang llvm-tblgen llvm-config llvm-ar llvm-ranlib llvm-nm llvm-objdump
+exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$TOOLS/ninja" -C "$B/build/llvm" -j4 clang llvm-tblgen llvm-config llvm-ar llvm-ranlib llvm-nm llvm-objdump
