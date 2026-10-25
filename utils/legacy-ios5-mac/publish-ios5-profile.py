@@ -8,8 +8,23 @@ Usage (all three paths must be explicit and absolute):
 Evidence contract (JSON; duplicate keys and non-finite numbers are rejected):
   schemaVersion: 1
   staticBuildVerified, abiClassMarkingVerified, ios5ArchiveVerified,
-  defaultIOS6ArchiveVerified, importsVerified: true (actual JSON booleans)
+  defaultIOS6ArchiveVerified, importsVerified, hostSignaturesVerified: true
+    (actual JSON booleans)
   compilerSHA256, driverSHA256, assemblyReceiptSHA256: SHA-256 hex strings
+  resourceSHA256: object mapping EXACT toolchain-relative filenames to SHA-256
+    hex strings captured when the supplied qualification checks were performed:
+    Info.plist
+    usr/lib/swift/iphoneos/libswiftCore.dylib (preserved default iOS 6 core)
+    usr/lib/swift_ios5/iphoneos/crt1.3.1.o
+    usr/lib/swift_ios5/iphoneos/libswiftLegacyIOS5Backports.a
+    usr/lib/swift_ios5/iphoneos/libswift{Core,Darwin,ObjectiveC,CoreFoundation,
+      Dispatch,CoreGraphics,Foundation,Metal,QuartzCore,CoreImage,UIKit}.dylib
+    usr/lib/swift_ios5/iphoneos/{Swift,Darwin,Dispatch,CoreGraphics,Foundation,
+      Metal,QuartzCore,CoreImage,UIKit}.swiftmodule/{armv7,armv7-apple-ios}.swiftmodule
+    Braces above describe expansions, NOT literal keys. Each of the nine module
+    directories requires at least one listed armv7 spelling; include BOTH when
+    both exist. No missing or additional keys are allowed. Hash final assembled
+    resources at qualification time, not freshly substituted publication inputs.
   deviceExecution: "pending" or "observed"
   provenance: {
     staticBuild: {logPath: "/.../build.log", artifactPath: "/.../product"},
@@ -28,7 +43,14 @@ reproduce qualification. No boolean assertion alone is accepted as evidence.
 --validate-only validates evidence structure, hashes' syntax and provenance files
 without invoking the compiler or any external tool, and NEVER writes a profile.
 It does not mean the toolchain is qualified. Normal publication additionally
-checks the assembled toolchain and binds current binaries/resources by hash.
+compares current binaries/resources with the qualification-time expected hashes.
+Normal publication also requires the assembly receipt's adhocSignedAndVerified
+list to contain exactly usr/bin/{swift-frontend,swift-driver,swiftc,swift}, and
+runs codesign --verify --strict on all four current host binaries. The evidence
+hostSignaturesVerified assertion is mandatory even for --validate-only, which
+checks its structure but does not run codesign or inspect the toolchain.
+Signature verification here is an ad-hoc integrity check only: it does NOT claim
+cryptographic publisher identity, Developer ID signing, notarization, or trust.
 """
 
 import argparse
@@ -48,6 +70,17 @@ OVERLAYS = ("Dispatch", "CoreGraphics", "Foundation", "Metal", "QuartzCore", "Co
 CHECKS = ("staticBuild", "abiClassMarking", "ios5Archive", "defaultIOS6Archive", "imports")
 PROFILE = "ios5-profile.json"
 FLAG = "-enable-legacy-ios5-runtime"
+HOST_BINARIES = ("swift-frontend", "swift-driver", "swiftc", "swift")
+RESOURCE_PREFIX = "usr/lib/swift_ios5/iphoneos/"
+FIXED_RESOURCES = ("Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib") + tuple(
+    RESOURCE_PREFIX + name for name in
+    ("crt1.3.1.o", "libswiftLegacyIOS5Backports.a") + tuple(
+        "libswift" + name + ".dylib"
+        for name in ("Core", "Darwin", "ObjectiveC", "CoreFoundation") + OVERLAYS))
+MODULE_RESOURCES = tuple(
+    tuple(RESOURCE_PREFIX + name + ".swiftmodule/" + arch + ".swiftmodule"
+          for arch in ("armv7", "armv7-apple-ios"))
+    for name in ("Swift", "Darwin") + OVERLAYS)
 
 
 class Rejected(ValueError):
@@ -107,6 +140,20 @@ def sha_field(document, key):
     return value.lower()
 
 
+def resource_hashes(evidence):
+    """Validate the qualification-time inventory without inspecting a toolchain."""
+    values = evidence.get("resourceSHA256")
+    require(isinstance(values, dict), "Evidence requires resourceSHA256 object")
+    allowed = set(FIXED_RESOURCES).union(*(set(group) for group in MODULE_RESOURCES))
+    require(set(values) <= allowed, "resourceSHA256 contains unexpected filenames")
+    require(set(FIXED_RESOURCES) <= set(values),
+            "resourceSHA256 lacks required startup/archive/dylib/default/identity files")
+    for group in MODULE_RESOURCES:
+        require(any(name in values for name in group),
+                "resourceSHA256 lacks rebuilt armv7 module: " + group[0])
+    return {name: sha_field(values, name) for name in values}
+
+
 def artifact_record(path):
     """Hash preserved artifacts, including a directory's complete file inventory."""
     path = path.resolve(strict=True)
@@ -141,8 +188,11 @@ def validate_evidence(path):
     for check in CHECKS:
         require(evidence.get(check + "Verified") is True,
                 "Evidence requires " + check + "Verified: true")
+    require(evidence.get("hostSignaturesVerified") is True,
+            "Evidence requires hostSignaturesVerified: true (ad-hoc integrity only)")
     for key in ("compilerSHA256", "driverSHA256", "assemblyReceiptSHA256"):
         sha_field(evidence, key)
+    resource_hashes(evidence)
     device = evidence.get("deviceExecution")
     require(isinstance(device, str) and device in ("pending", "observed"),
             'deviceExecution must be "pending" or "observed"; pending is NOT verified')
@@ -185,6 +235,11 @@ def check_toolchain(toolchain, evidence):
             "Assembly receipt does not describe an isolated opt-in iOS 5 assembly")
     require(isinstance(receipt.get("overlays"), list) and
             set(receipt["overlays"]) == set(OVERLAYS), "Assembly receipt lacks all seven overlays")
+    signed = receipt.get("adhocSignedAndVerified")
+    expected_signed = {"usr/bin/" + name for name in HOST_BINARIES}
+    require(isinstance(signed, list) and all(isinstance(name, str) for name in signed)
+            and len(signed) == len(expected_signed) and set(signed) == expected_signed,
+            "Assembly receipt must record ad-hoc signing and verification of all four host binaries")
     inputs = receipt.get("inputs")
     require(isinstance(inputs, dict) and len(inputs) >= 4,
             "Assembly receipt requires original input paths and hashes")
@@ -217,25 +272,29 @@ def check_toolchain(toolchain, evidence):
                 "Current " + name + " SHA-256 does not match qualification evidence")
 
     resources = toolchain / "usr/lib/swift_ios5"
-    required = ["crt1.3.1.o", "libswiftLegacyIOS5Backports.a"]
-    required += ["libswift" + name + ".dylib"
-                 for name in ("Core", "Darwin", "ObjectiveC", "CoreFoundation") + OVERLAYS]
-    for name in ("Swift", "Darwin") + OVERLAYS:
-        candidates = [name + ".swiftmodule/" + arch + ".swiftmodule"
-                      for arch in ("armv7", "armv7-apple-ios")]
-        present = [p for p in candidates if (resources / "iphoneos" / p).is_file()
-                   and (resources / "iphoneos" / p).stat().st_size > 0]
-        require(present, "Missing nonempty rebuilt armv7 module: " + name)
-        required.extend(present)
-    for name in required:
-        relative = "usr/lib/swift_ios5/iphoneos/" + name
+    expected_resources = resource_hashes(evidence)
+    required = set(FIXED_RESOURCES)
+    for group in MODULE_RESOURCES:
+        present = {name for name in group if (toolchain / name).exists()}
+        require(present, "Missing rebuilt armv7 module: " + group[0])
+        required.update(present)
+    require(required == set(expected_resources),
+            "Current resource inventory does not match qualification-time resourceSHA256")
+    for relative in sorted(required):
         files[relative] = digest(inside_file(toolchain, relative))
+        require(files[relative] == expected_resources[relative],
+                "Current resource SHA-256 does not match qualification evidence: " + relative)
     # The default profile must still exist, independently of opt-in resources.
     default = inside_file(toolchain, "usr/lib/swift/iphoneos/libswiftCore.dylib")
     require(default.resolve() != (resources / "iphoneos/libswiftCore.dylib").resolve(),
             "Default iOS 6 resources alias the opt-in iOS 5 core")
-    files["usr/lib/swift/iphoneos/libswiftCore.dylib"] = digest(default)
-    files["Info.plist"] = digest(info_path)
+    for name in HOST_BINARIES:
+        result = subprocess.run(["codesign", "--verify", "--strict",
+                                 str(toolchain / "usr/bin" / name)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", timeout=60, check=False)
+        require(result.returncode == 0,
+                "Host ad-hoc signature verification failed for " + name + ": " + result.stdout)
     result = subprocess.run([str(toolchain / "usr/bin/swift-frontend"), "-help"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors="replace", timeout=60, check=False)
@@ -314,8 +373,10 @@ def main(argv=None):
                    "assemblyReceiptPath": str(receipt), "assemblyReceiptSHA256": receipt_hash,
                    "compilerSHA256": sha_field(evidence, "compilerSHA256"),
                    "driverSHA256": sha_field(evidence, "driverSHA256"),
+                   "hostSignaturesVerified": True,
                    "qualifiedFilesSHA256": files, "provenance": provenance,
-                   "limitations": ["Static qualification is not proof of device compatibility.",
+                   "limitations": ["Host signatures provide ad-hoc integrity only, not publisher identity or notarization.",
+                                    "Static qualification is not proof of device compatibility.",
                                    "Device execution: " + evidence["deviceExecution"] + ".",
                                    "No environment receipt, global installation or selection modified."]}
         publish(root, profile)
