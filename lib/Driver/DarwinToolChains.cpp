@@ -793,23 +793,35 @@ toolchains::Darwin::constructInvocation(const DynamicLinkJobAction &job,
     Arguments.push_back(context.Args.MakeArgString(context.OI.SDKPath));
   }
 
-  if (job.getKind() == LinkKind::Executable &&
-      context.Args.hasArg(options::OPT_enable_legacy_ios5_runtime) &&
+  if (context.Args.hasArg(options::OPT_enable_legacy_ios5_runtime) &&
       Triple.getArch() == llvm::Triple::arm &&
       Triple.getSubArch() == llvm::Triple::ARMSubArch_v7 &&
       Triple.isiOS() && !Triple.isTvOS() &&
       !Triple.isSimulatorEnvironment() && !Triple.isMacCatalystEnvironment()) {
-    // iOS 5 dyld needs LC_UNIXTHREAD, even when the source is compiled with
-    // a newer deployment floor. Do not rewrite the resulting Mach-O.
-    SmallString<128> crtPath;
-    getResourceDirPath(crtPath, context.Args, /*shared=*/true);
-    llvm::sys::path::append(crtPath, "crt1.3.1.o");
-    if (!llvm::sys::fs::exists(crtPath))
+    SmallString<128> resourcePath;
+    getResourceDirPath(resourcePath, context.Args, /*shared=*/true);
+    if (job.getKind() == LinkKind::Executable) {
+      // iOS 5 dyld needs LC_UNIXTHREAD, even when the source is compiled with
+      // a newer deployment floor. Do not rewrite the resulting Mach-O.
+      SmallString<128> crtPath(resourcePath);
+      llvm::sys::path::append(crtPath, "crt1.3.1.o");
+      if (!llvm::sys::fs::exists(crtPath))
+        context.C.getDiags().diagnose(SourceLoc(),
+                                     diag::error_legacy_ios5_crt_missing,
+                                     crtPath.str());
+      Arguments.push_back("-no_new_main");
+      Arguments.push_back(context.Args.MakeArgString(crtPath));
+    }
+
+    // Extract only referenced compiler entry-point backports from the archive;
+    // never force-load replacements into an otherwise compatible program.
+    SmallString<128> backportsPath(resourcePath);
+    llvm::sys::path::append(backportsPath, "libswiftLegacyIOS5Backports.a");
+    if (!llvm::sys::fs::exists(backportsPath))
       context.C.getDiags().diagnose(SourceLoc(),
-                                    diag::error_legacy_ios5_crt_missing,
-                                    crtPath.str());
-    Arguments.push_back("-no_new_main");
-    Arguments.push_back(context.Args.MakeArgString(crtPath));
+                                   diag::error_legacy_ios5_backports_missing,
+                                   backportsPath.str());
+    Arguments.push_back(context.Args.MakeArgString(backportsPath));
   }
 
   Arguments.push_back("-lobjc");

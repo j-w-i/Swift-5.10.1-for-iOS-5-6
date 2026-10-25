@@ -59,6 +59,11 @@ ERROR(error_legacy_ios5_crt_missing,none,
       "legacy iOS 5 executable startup object is missing: '%0'; install the "
       "iOS 5 crt1.3.1.o in the selected runtime resource directory", (StringRef))
 
+ERROR(error_legacy_ios5_backports_missing,none,
+      "legacy iOS 5 runtime backports archive is missing: '%0'; install "
+      "libswiftLegacyIOS5Backports.a in the selected runtime resource directory",
+      (StringRef))
+
 ERROR(error_no_input_files,none,
       "no input files", ())
 
