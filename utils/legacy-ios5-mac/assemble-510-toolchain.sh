@@ -145,7 +145,7 @@ try:
             for candidate in candidates:
                 resolved = candidate.resolve()
                 if (baseline in resolved.parents and resolved.is_file()) or (
-                    str(resolved).startswith(('/usr/lib/', '/System/Library/')) and resolved.is_file()):
+                    str(resolved).startswith(('/usr/lib/', '/System/Library/'))):
                     valid = True
             if not valid:
                 fail('Unresolved/nonrelocatable compiler dependency: ' + dep)
@@ -154,12 +154,20 @@ try:
 
     for name in ('Core', 'Darwin', 'ObjectiveC', 'CoreFoundation'):
         nonempty(oldlib / ('libswift' + name + '.dylib'))
-        nonempty(modules / 'iphoneos' / (('Swift' if name == 'Core' else name) + '.swiftmodule') / 'armv7.swiftmodule')
+        # ObjectiveC/CoreFoundation import from the real selected SDK (Clang or
+        # SDK overlay), not fabricated local Swift modules. Core/Darwin ship
+        # with this compiler and must be present in its resource tree.
+        if name not in ('Core', 'Darwin'):
+            continue
+        module = modules / 'iphoneos' / (('Swift' if name == 'Core' else name) + '.swiftmodule')
+        if not any((module / candidate).is_file() and (module / candidate).stat().st_size > 0
+                   for candidate in ('armv7.swiftmodule', 'armv7-apple-ios.swiftmodule')):
+            fail('Missing actual armv7 import module: ' + str(module))
     for name in OVERLAYS:
         nonempty(modules / 'iphoneos' / (name + '.swiftmodule') / 'armv7.swiftmodule')
         dylib = linked / ('libswift' + name + '.dylib')
         nonempty(dylib)
-        if 'armv7' not in run(FILE, '-b', dylib) or 'DYLIB' not in run(OTOOL, '-hv', dylib):
+        if not re.search(r'arm_?v7\b', run(FILE, '-b', dylib)) or 'DYLIB' not in run(OTOOL, '-hv', dylib):
             fail('Expected a rebuilt armv7 Mach-O dylib: ' + str(dylib))
         ids = run(OTOOL, '-D', dylib).splitlines()[1:]
         if ids != ['@rpath/' + dylib.name]:
@@ -177,7 +185,7 @@ try:
         fail('Backports archive lacks the rebuilt stack-allocation helper.')
     if not re.search(r'\bARM\s+V7\b', run(OTOOL, '-hv', backports)):
         fail('Backports archive must contain armv7 Mach-O objects.')
-    if 'armv7' not in run(FILE, '-b', crt1) or 'OBJECT' not in run(OTOOL, '-hv', crt1):
+    if not re.search(r'arm_?v7\b', run(FILE, '-b', crt1)) or 'OBJECT' not in run(OTOOL, '-hv', crt1):
         fail('CRT1 input must be a real armv7 Mach-O object.')
 
     # Atomic claim. Failed outputs are deliberately retained; never delete/reuse.
