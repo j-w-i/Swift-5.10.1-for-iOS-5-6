@@ -67,7 +67,7 @@ host_toolchain() { # official swift.org 5.10.1 toolchain: host compiler for the 
 fetch510() { bash "$HERE/fetch-deps.sh"; }
 llvm510() { bash "$HERE/build-llvm510-mac.sh"; }
 swift510() { export SWIFT_5_10_1_HOST_TOOLCHAIN="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"; bash "$HERE/configure-swift510-mac.sh"; }
-driver510() { cd "$S/swift-driver" && X86 env DEVELOPER_DIR="$XC" PATH="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain/usr/bin:$PATH" swift build -c debug --product swift-driver -j"$SWIFT_JOBS"; }
+driver510() { cd "$S/swift-driver" && X86 env DEVELOPER_DIR="$XC" PATH="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain/usr/bin:$PATH" swift build -c debug --product swift-driver -j "$SWIFT_JOBS"; }
 fetch515() {
   export LEGACY_515_ROOT="$ROOT/b515"; mkdir -p "$LEGACY_515_ROOT/src" "$LEGACY_515_ROOT/build" "$LEGACY_515_ROOT/tools"
   P="$LEGACY_515_ROOT/src"
