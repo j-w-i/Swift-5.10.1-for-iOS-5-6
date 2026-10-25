@@ -25,6 +25,10 @@ X86() { /usr/bin/arch -x86_64 "$@"; }
 CMAKE_URL=https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz
 NINJA_URL=https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-mac.zip
 SWIFT510_PKG_URL=https://download.swift.org/swift-5.10.1-release/xcode/swift-5.10.1-RELEASE/swift-5.10.1-RELEASE-osx.pkg
+# The official swift.org package ships arm64 modules only. The armv7/armv7s Swift 5.10.1 stdlib modules come from the
+# author's published release (a pinned PREBUILT input; building them from source is a tracked TODO, see README).
+BASELINE_PKG_URL=https://github.com/j-w-i/Swift-5.10.1-for-iOS-6/releases/download/0.0.2/swift-5.10.1-ios6.pkg
+BASELINE_PKG_SHA256=fe4cbc22a7167ba99fdb9ce6989392d8e067d03a30f03c77416fa55c25695a9a
 THEOS_SDKS_URL=https://github.com/theos/sdks.git
 THEOS_SDKS_REF=0222fd5413cf4b9af096f37b4621afa2688572f7
 SWIFT515_REPO=https://github.com/j-w-i/Swift-5.1.5-for-iOS-6.git; SWIFT515_BRANCH=ios5-mac
@@ -65,6 +69,17 @@ host_toolchain() { # official swift.org 5.10.1 toolchain: host compiler for the 
   fi
   [ -x "$ROOT/host/swift-5.10.1-RELEASE.xctoolchain/usr/bin/swiftc" ]
 }
+baseline_toolchain() {
+  cd "$ROOT/downloads"
+  [ -s ios6.pkg ] || curl -fsSL -o ios6.pkg "$BASELINE_PKG_URL"
+  [ "$(shasum -a 256 ios6.pkg | cut -d' ' -f1)" = "$BASELINE_PKG_SHA256" ] || { echo "baseline pkg checksum mismatch" >&2; exit 1; }
+  if [ ! -d "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain" ]; then
+    rm -rf x6 && /usr/sbin/pkgutil --expand-full ios6.pkg x6
+    mkdir -p "$ROOT/baseline"; mv x6/Payload/Library/Developer/Toolchains/swift-5.10.1-RELEASE.xctoolchain "$ROOT/baseline/"; rm -rf x6
+  fi
+  [ -d "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain/usr/lib/swift/iphoneos/Swift.swiftmodule" ]
+  ls "$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain/usr/lib/swift/iphoneos/Swift.swiftmodule" | grep -q armv7-apple-ios.swiftmodule
+}
 fetch510() { bash "$HERE/fetch-deps.sh"; }
 llvm510() { bash "$HERE/build-llvm510-mac.sh"; }
 swift510() { export SWIFT_5_10_1_HOST_TOOLCHAIN="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"; bash "$HERE/configure-swift510-mac.sh"; }
@@ -92,7 +107,7 @@ crt515() { export LEGACY_515_ROOT="$ROOT/b515"; bash "$LEGACY_515_ROOT/src/swift
 runtime515() { export LEGACY_515_ROOT="$ROOT/b515"; M="$LEGACY_515_ROOT/src/swift/utils/legacy-ios5-mac"
   bash "$M/configure-ios-runtime.sh" ios5 -k 0; bash "$M/configure-ios-runtime.sh" default -k 0; }
 overlays() { # prepare + build + link the rewritten overlays
-  export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"
+  export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
   bash "$HERE/prepare-legacy-resources.sh" --swift510-resource "$H/usr/lib/swift" --swift51-source "$LEGACY_515_ROOT/src/swift" --output "$ROOT/bootstrap"
   bash "$HERE/build-overlay-stage.sh" "$ROOT/bootstrap" "$ROOT/build/swift/bin/swift-frontend" "$SDK" --legacy-marking
@@ -102,7 +117,7 @@ overlays() { # prepare + build + link the rewritten overlays
     "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
 }
 assemble() {
-  H="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"; export LEGACY_515_ROOT="$ROOT/b515"
+  H="$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain"; export LEGACY_515_ROOT="$ROOT/b515"
   LINK_OUTPUT_NAME=linked510-legacy bash "$HERE/assemble-510-toolchain.sh" "$H" "$ROOT/build/swift/bin/swift-frontend" \
     "$S/swift-driver/.build/x86_64-apple-macosx/debug/swift-driver" "$ROOT/bootstrap" "$LEGACY_515_ROOT/build/runtime-ios5" \
     "$ROOT/bootstrap/probes/linked510-legacy/libLegacyRuntimeBackports.a" "$S/theos-sdks/iPhoneOS9.3.sdk/usr/lib/crt1.3.1.o" \
@@ -110,6 +125,7 @@ assemble() {
 }
 stage tools tools
 stage host-toolchain host_toolchain
+stage baseline-toolchain baseline_toolchain
 stage fetch-510 fetch510
 stage llvm-510 llvm510
 stage swift-510 swift510
