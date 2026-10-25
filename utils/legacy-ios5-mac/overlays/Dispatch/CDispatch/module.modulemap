@@ -1,0 +1,11 @@
+// Legacy-iOS (< 6): swift-corelibs-libdispatch's overlay imports the C API as `CDispatch`, built from
+// corelibs' own public headers (not the SDK's, whose DISPATCH_SWIFT3_OVERLAY renames and ObjC-object
+// typedefs would hide the raw C API this overlay wraps).
+//
+// The headers live in `cdispatch/` (not `dispatch/`) on purpose: this directory is on the include path
+// of every overlay, and a `dispatch/` directory here would shadow the SDK's <dispatch/dispatch.h> that
+// Foundation.h includes - Foundation would then stop importing the real `Dispatch` module.
+module CDispatch [system] [extern_c] {
+  umbrella header "cdispatch/dispatch.h"
+  export *
+}
