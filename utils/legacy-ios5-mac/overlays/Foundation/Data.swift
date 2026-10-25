@@ -604,7 +604,9 @@ public struct Data : ReferenceConvertible, Equatable, Hashable, RandomAccessColl
     public typealias ReadingOptions = NSData.ReadingOptions
     public typealias WritingOptions = NSData.WritingOptions
     public typealias SearchOptions = NSData.SearchOptions
+    @available(macOS 10.9, iOS 7.0, *)
     public typealias Base64EncodingOptions = NSData.Base64EncodingOptions
+    @available(macOS 10.9, iOS 7.0, *)
     public typealias Base64DecodingOptions = NSData.Base64DecodingOptions
 
     public typealias Index = Int

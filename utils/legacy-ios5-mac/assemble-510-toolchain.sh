@@ -208,9 +208,25 @@ try:
     # The staged clang link points into its original host tree: do not copy it.
     shutil.copytree(modules, slot, symlinks=True,
                     ignore=lambda root, names: ['clang'] if Path(root) == modules else [])
-    (slot / 'clang').symlink_to('../clang', target_is_directory=True)
-    if (slot / 'clang').resolve() != (out / 'usr/lib/clang').resolve():
-        fail('Incorrect clang resource link.')
+    # Swift derives Clang's resource directory as <swift-resource-dir>/clang, so
+    # that entry must itself be a Clang resource directory (the one containing
+    # include/stdarg.h), not the directory that holds version subdirectories.
+    clang_resources = []
+    for candidate in sorted((out / 'usr/lib/clang').iterdir()):
+        if candidate.is_dir() and (candidate / 'include/stdarg.h').is_file():
+            clang_resources.append(candidate)
+    if not clang_resources:
+        fail('Baseline toolchain has no usr/lib/clang/<version>/include/stdarg.h.')
+    chosen = clang_resources[-1]
+    (slot / 'clang').symlink_to(os.path.relpath(chosen, slot), target_is_directory=True)
+    if not (slot / 'clang/include/stdarg.h').is_file():
+        fail('Slot clang resource link does not expose Clang builtin headers.')
+    # The rebuilt overlays import the legacy Swift 5.1 overlay shim modules, so
+    # they must ship with the toolchain for clients to compile.
+    shims_source = stage / 'probes/dispatch-shims'
+    if not (shims_source / 'module.modulemap').is_file():
+        fail('Stage lacks probes/dispatch-shims/module.modulemap.')
+    shutil.copytree(shims_source, slot / 'legacy-overlay-shims', symlinks=True)
     ios = slot / 'iphoneos'
     # Modules always come from the rebuilt tree, never from OLD_RUNTIME_DIR.
     for source in sorted(oldlib.glob('*.dylib')):
