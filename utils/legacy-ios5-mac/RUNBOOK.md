@@ -105,18 +105,21 @@ LINK_OUTPUT_NAME=linked510-min5 bash src/swift/utils/legacy-ios5-mac/assemble-51
 Default resources stay the untouched baseline; iOS 5 resources live in the
 separate `usr/lib/swift_ios5` slot.
 
-## 8. Publish the opt-in app profile only after real evidence
+## 8. Qualify iOS 5 (one command, no hand-written evidence)
 
 ```bash
-python3 src/swift/utils/legacy-ios5-mac/publish-ios5-profile.py \
-  --environment-root "$HOME/Library/Application Support/Legacy Swift Development Kit/Environments/<env>" \
-  --toolchain "$B/out/swift-5.10.1-ios5-EXPERIMENTAL.xctoolchain" \
-  --evidence /absolute/qualification-evidence.json
+LEGACY_BUILD_ROOT="$B" bash src/swift/utils/legacy-ios5-mac/qualify-ios5.sh \
+  --environment-root "$HOME/Library/Application Support/Legacy Swift Development Kit/Environments/<env>"
 ```
 
-Evidence must carry reviewable logs/artifacts, qualification-time resource
-hashes, host signature verification and an explicit device status. `pending`
-stays `pending`; the publisher never claims device validation.
+It installs the assembled toolchain, runs all five checks (static build, ABI
+class marking, iOS 5 link with LC_UNIXTHREAD, default iOS 6 resource tree, import
+closure), writes hash-bound evidence under `<env>/Qualification/` and publishes
+`<env>/ios5-profile.json` through `publish-ios5-profile.py`, which re-verifies
+every hash and host signature. `build-all.sh` runs the same evidence step
+(`qualify-ios5`) and publishes when `LEGACY_ENVIRONMENT_ROOT` is set; the kit runs
+it automatically at Install Environment using its bundled copy. `pending` stays
+`pending`; nothing claims device validation.
 
 ## 9. Device execution
 

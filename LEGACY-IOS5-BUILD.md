@@ -25,12 +25,16 @@ cd utils/legacy-ios5-mac
 # 4. swift-driver:  swift build -c debug  inside $LEGACY_BUILD_ROOT/src/swift-driver
 # 5. prepare-legacy-resources.sh -> build-overlay-stage.sh -> build-atomic-backport.sh
 #    -> link-overlay-stage.sh -> assemble-510-toolchain.sh  (see BOOTSTRAP.md for arguments)
-# 6. check-class-marking.sh / check-driver-routing.sh, then publish-ios5-profile.py
+# 6. check-class-marking.sh / check-driver-routing.sh, then qualify-ios5.sh (runs every iOS 5
+#    qualification check, writes evidence and publishes the environment profile; the kit does this
+#    automatically at Install Environment too)
 ```
-`build-all.sh` wraps all of it, including the 5.1.5 compiler/runtime stages and `package-runtime-515.sh`, which packages the
-from-source 5.1.5 runtime as `out/swift-5.1.5-ios6-runtime.xctoolchain[.tar.gz]` - the Swift 5.1.5 runtime asset the
-Legacy Swift Development Kit environment imports for the iOS 6 guide route. The packaging step refuses any runtime whose
-dylibs still import `___atomic_*`, because such a runtime traps in dyld on iOS 6.
+`build-all.sh` wraps all of it, including the 5.1.5 compiler/runtime stages, `package-runtime-515.sh` (from-source 5.1.5
+runtime for the iOS 6 guide route, refusing any runtime whose dylibs still import `___atomic_*`) and `qualify-ios5.sh`
+(every iOS 5 qualification check plus the hash-bound `ios5-profile.json`). Set `LEGACY_ENVIRONMENT_ROOT` to an installed
+kit environment and the final stage publishes the iOS 5 profile into it; otherwise it leaves the evidence in
+`out/ios5-qualification` and the same one command publishes later:
+`LEGACY_BUILD_ROOT=<root> utils/legacy-ios5-mac/qualify-ios5.sh --environment-root "<env>"`.
 Inputs for step 5 that are NOT in git: `crt1.3.1.o` from an iPhoneOS 9.3 SDK (theos/sdks).
 
 ## Honest status

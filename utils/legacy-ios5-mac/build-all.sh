@@ -109,6 +109,13 @@ runtime515() { export LEGACY_515_ROOT="$ROOT/b515"; M="$LEGACY_515_ROOT/src/swif
 runtime515package() { # runtime-only 5.1.5 .xctoolchain for the iOS 6 guide route (compiler-rt atomics inside)
   bash "$HERE/package-runtime-515.sh"
 }
+qualify515() { # run the five iOS 5 qualification checks; publish the profile when the environment is known
+  if [ -n "${LEGACY_ENVIRONMENT_ROOT:-}" ]; then
+    LEGACY_BUILD_ROOT="$ROOT" bash "$HERE/qualify-ios5.sh" --environment-root "$LEGACY_ENVIRONMENT_ROOT"
+  else
+    LEGACY_BUILD_ROOT="$ROOT" bash "$HERE/qualify-ios5.sh" --check-only
+  fi
+}
 overlays() { # prepare + build + link the rewritten overlays
   export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
@@ -139,6 +146,13 @@ stage crt-515 crt515
 stage runtime-515 runtime515
 stage runtime-package-515 runtime515package
 stage overlays overlays
+stage qualify-ios5 qualify515
 stage assemble assemble
 echo "DONE: $ROOT/out/swift-5.10.1-ios5.xctoolchain"
 echo "      $ROOT/out/swift-5.1.5-ios6-runtime.xctoolchain.tar.gz (Swift 5.1.5 runtime for the iOS 6 guide route; import it as the environment's 5.1.5 runtime)"
+if [ -n "${LEGACY_ENVIRONMENT_ROOT:-}" ]; then
+  echo "      iOS 5 qualified in $LEGACY_ENVIRONMENT_ROOT (profile published by the qualify-ios5 stage)"
+else
+  echo "      iOS 5 qualification evidence: $ROOT/out/ios5-qualification; publish with:"
+  echo "        LEGACY_BUILD_ROOT=$ROOT $HERE/qualify-ios5.sh --environment-root "<env>""
+fi
