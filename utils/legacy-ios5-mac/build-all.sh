@@ -106,6 +106,9 @@ crt515() { export LEGACY_515_ROOT="$ROOT/b515"; bash "$LEGACY_515_ROOT/src/swift
   cp "$B515/build/crt-armv7-ios50/lib/darwin/libclang_rt.ios.a" "$D/"; }
 runtime515() { export LEGACY_515_ROOT="$ROOT/b515"; M="$LEGACY_515_ROOT/src/swift/utils/legacy-ios5-mac"
   bash "$M/configure-ios-runtime.sh" ios5 -k 0; bash "$M/configure-ios-runtime.sh" default -k 0; }
+runtime515package() { # runtime-only 5.1.5 .xctoolchain for the iOS 6 guide route (compiler-rt atomics inside)
+  bash "$HERE/package-runtime-515.sh"
+}
 overlays() { # prepare + build + link the rewritten overlays
   export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/baseline/swift-5.10.1-RELEASE.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
@@ -134,6 +137,8 @@ stage fetch-515 fetch515
 stage compiler-515 compiler515
 stage crt-515 crt515
 stage runtime-515 runtime515
+stage runtime-package-515 runtime515package
 stage overlays overlays
 stage assemble assemble
 echo "DONE: $ROOT/out/swift-5.10.1-ios5.xctoolchain"
+echo "      $ROOT/out/swift-5.1.5-ios6-runtime.xctoolchain.tar.gz (Swift 5.1.5 runtime for the iOS 6 guide route; import it as the environment's 5.1.5 runtime)"
