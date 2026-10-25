@@ -96,5 +96,6 @@ and real iOS 5 device execution remain separate required stages.
 
 Linux-only: `bash -n`, embedded Python AST parsing, verification of all committed
 CMake-listed Swift/GYB inputs, and successful Python 3 generation of all four GYB
-templates against the original Swift 5.1 source utility. No Mac operations,
-Swift compilation, full installed-resource copy, link or device tests were run.
+templates against the original Swift 5.1 source utility.
+
+Lead integration on the Mac subsequently passed the full resource bootstrap into a fresh stage and serial compilation of all seven actual overlay modules/objects with installed Swift 5.10. A separate proof linked the full ApiTest app against migrated overlays and the old runtime (including the exact upstream stack-allocation helper backport) and passed the existing import screen. These are source/ABI probes using the stock compiler: patched class marking and device execution remain pending. The original installed environment is unchanged.

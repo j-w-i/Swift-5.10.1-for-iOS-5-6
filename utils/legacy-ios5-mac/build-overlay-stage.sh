@@ -10,7 +10,7 @@ R="$STAGE/probes/modules510"
 EXTRA=()
 [ -z "$MODE" ] || EXTRA=(-enable-legacy-ios5-class-marking)
 mkdir -p "$STAGE/logs"
-for NAME in Dispatch Foundation CoreGraphics Metal QuartzCore CoreImage UIKit; do
+for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
   lower=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
   [ -s "$STAGE/probes/${lower}510-sources.txt" ] || { echo "Missing source response: $NAME" >&2; exit 1; }
   mkdir -p "$R/iphoneos/$NAME.swiftmodule"
@@ -21,7 +21,7 @@ for NAME in Dispatch Foundation CoreGraphics Metal QuartzCore CoreImage UIKit; d
   # The SDK FileProvider overlay has no declarations, only a reexport and a
   # forced Swift-runtime-library dependency. Do not replace its module; suppress
   # that unused library for legacy clients which cannot use FileProvider anyway.
-  /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" -j1 -parse-as-library -module-name "$NAME" \
+  /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" -j1 -parse-as-library -module-name "$NAME" -autolink-force-load \
     -target armv7-apple-ios7.0 -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
     -I "$STAGE/probes/dispatch-shims" \
     -Xfrontend -disable-autolink-library -Xfrontend swiftFileProvider \
