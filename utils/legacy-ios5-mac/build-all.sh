@@ -47,7 +47,12 @@ tools() {
   [ -x cmake/CMake.app/Contents/bin/cmake ] || { curl -fsSL -o "$ROOT/downloads/cmake.tgz" "$CMAKE_URL"; tar xzf "$ROOT/downloads/cmake.tgz"; mv cmake-3.31.6-macos-universal cmake; }
   [ -x ninja ] || { curl -fsSL -o "$ROOT/downloads/ninja.zip" "$NINJA_URL"; unzip -oq "$ROOT/downloads/ninja.zip"; chmod +x ninja; }
   mkdir -p shim; ln -sf "$XC/usr/bin/python3" shim/python; ln -sf "$XC/usr/bin/python3" shim/python3
-  [ -d "$S/theos-sdks" ] || { git clone -q --filter=blob:none "$THEOS_SDKS_URL" "$S/theos-sdks"; git -C "$S/theos-sdks" checkout -q "$THEOS_SDKS_REF"; }
+  # Only two SDKs are needed (9.3 for crt1.3.1.o, 13.7 for the iOS runtime build); sparse-checkout avoids fetching them all.
+  if [ ! -d "$S/theos-sdks/iPhoneOS13.7.sdk" ]; then
+    rm -rf "$S/theos-sdks"; git clone -q --filter=blob:none --no-checkout "$THEOS_SDKS_URL" "$S/theos-sdks"
+    git -C "$S/theos-sdks" sparse-checkout set iPhoneOS9.3.sdk iPhoneOS13.7.sdk
+    git -C "$S/theos-sdks" checkout -q "$THEOS_SDKS_REF"
+  fi
 }
 host_toolchain() { # official swift.org 5.10.1 toolchain: host compiler for the build and the baseline of the assembly
   cd "$ROOT/downloads"
