@@ -201,8 +201,11 @@ try:
             shutil.copyfileobj(src, dst)
         shutil.copymode(source, temporary)
         os.replace(temporary, destination)
-    for name, source in (('swift-frontend', frontend), ('swift-driver', driver),
-                         ('swift', driver), ('swiftc', driver)):
+    # swift/swiftc are aliases of the driver. They must stay byte-identical (the
+    # qualification evidence binds one driver hash for all three), and ad-hoc
+    # signing produces a different signature per file, so the signed driver is
+    # copied over the aliases below instead of being signed separately.
+    for name, source in (('swift-frontend', frontend), ('swift-driver', driver)):
         replace_copy(source, out / 'usr/bin' / name)
     slot = out / 'usr/lib/swift_ios5'
     # The staged clang link points into its original host tree: do not copy it.
@@ -247,7 +250,7 @@ try:
     os.replace(temporary, out / 'Info.plist')
 
     signed = []
-    for name in ('swift-frontend', 'swift-driver', 'swift', 'swiftc'):
+    for name in ('swift-frontend', 'swift-driver'):
         p = out / 'usr/bin' / name
         run(FILE, '-b', p)
         run(OTOOL, '-L', p)
@@ -255,6 +258,11 @@ try:
             run(CODESIGN, '--force', '--sign', '-', p)
             run(CODESIGN, '--verify', '--strict', '--verbose=2', p)
             signed.append(str(p.relative_to(out)))
+    for alias in ('swift', 'swiftc'):
+        replace_copy(out / 'usr/bin' / 'swift-driver', out / 'usr/bin' / alias)
+        if CODESIGN:
+            run(CODESIGN, '--verify', '--strict', '--verbose=2', out / 'usr/bin' / alias)
+            signed.append('usr/bin/' + alias)
     def digest(p):
         h = hashlib.sha256()
         with p.open('rb') as stream:
