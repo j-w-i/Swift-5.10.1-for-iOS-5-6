@@ -17,10 +17,30 @@ run "$CM" -S "$B/src/swift" -B "$B/build/swift" -G Ninja -DCMAKE_MAKE_PROGRAM="$
  -DLLVM_DIR="$B/build/llvm/lib/cmake/llvm" -DClang_DIR="$B/build/llvm/lib/cmake/clang" \
  -DSWIFT_PATH_TO_CMARK_SOURCE="$B/src/cmark" -DSWIFT_PATH_TO_CMARK_BUILD="$B/build/cmark" \
  -DSWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE="$B/src/swift-syntax" \
+ -DSWIFT_PATH_TO_STRING_PROCESSING_SOURCE="$B/src/string-processing" \
  -DBOOTSTRAPPING_MODE=HOSTTOOLS -DSWIFT_BUILD_SWIFT_SYNTAX=ON -DSWIFT_HOST_TRIPLE=x86_64-apple-macosx12.0 \
  -DSWIFT_HOST_VARIANT_SDK=OSX -DSWIFT_HOST_VARIANT_ARCH=x86_64 -DSWIFT_SDKS=OSX \
  -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_SOURCEKIT=OFF \
  -DSWIFT_BUILD_DYNAMIC_STDLIB=OFF -DSWIFT_BUILD_STATIC_STDLIB=OFF \
  -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
  -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_LIBEXEC=OFF -DSWIFT_ENABLE_ASSERTIONS=OFF
+if [ "${1:-}" = --configure-only ]; then
+  echo 'Configured Swift only; no compiler compilation started.'
+  exit 0
+fi
+# Clang's executable target omits JIT/LTO archives needed by Swift's frontend.
+# Derive the actual archive closure from the generated Swift build graph.
+MISSING_TARGETS=()
+while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < <(python3 - "$B/build/swift/build.ninja" "$B/build/llvm" <<'PY'
+from pathlib import Path
+import re,sys
+text=Path(sys.argv[1]).read_text(); root=Path(sys.argv[2])
+for p in sorted(set(re.findall(r'/[^\s|]+/lib[^\s|]+\.a',text))):
+    path=Path(p)
+    if root in path.parents and not path.exists(): print(path.stem[3:])
+PY
+)
+if [ "${#MISSING_TARGETS[@]}" -gt 0 ]; then
+  run "$TOOLS/ninja" -C "$B/build/llvm" -j1 "${MISSING_TARGETS[@]}"
+fi
 exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$TOOLS/ninja" -C "$B/build/swift" -j1 swift-frontend swift-demangle
