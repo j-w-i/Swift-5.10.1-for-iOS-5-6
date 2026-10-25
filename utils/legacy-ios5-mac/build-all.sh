@@ -13,6 +13,7 @@ ROOT="${LEGACY_BUILD_ROOT:?set LEGACY_BUILD_ROOT to a directory (created if miss
 XC="${XCODE_13_4_1_DEVELOPER_DIR:?set XCODE_13_4_1_DEVELOPER_DIR to Xcode 13.4.1.app/Contents/Developer}"
 HERE="$(cd "$(dirname "$0")" && pwd -P)"; REPO="$(cd "$HERE/../.." && pwd -P)"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"; SWIFT_JOBS="${SWIFT_JOBS:-$JOBS}"; export JOBS
+case "$XC$ROOT" in *" "*) echo "Paths containing spaces are not supported by the LLVM/Swift build systems (XCODE_13_4_1_DEVELOPER_DIR, LEGACY_BUILD_ROOT)." >&2; exit 64;; esac
 mkdir -p "$ROOT"; ROOT="$(cd "$ROOT" && pwd -P)"
 export LEGACY_BUILD_ROOT="$ROOT" XCODE_13_4_1_DEVELOPER_DIR="$XC" DEVELOPER_DIR="$XC"
 mkdir -p "$ROOT"/{src,build,logs,out,downloads,tools,.stamps}
