@@ -51,7 +51,7 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def run(label, backend, args, failure=False):
+def run(label, backend, args, failure=False, expect=None):
     selector = [] if backend == 'modern' else ['-disallow-use-new-driver']
     command = [str(swiftc), *selector, '-sdk', str(sdk), *args]
     commands.append({'label': label, 'backend': backend, 'argv': command})
@@ -69,6 +69,10 @@ def run(label, backend, args, failure=False):
                 f'{label}: failed for an unrelated reason, not a legacy-mode diagnostic')
         require('unknown argument' not in diagnostic and 'unknown option' not in diagnostic,
                 f'{label}: backend does not recognize the legacy flags')
+        if expect is not None:
+            require(any(needle.lower() in diagnostic for needle in expect),
+                    f'{label}: diagnostic did not explain the required opt-in: '
+                    + result.stderr.strip()[:300])
     return result.stdout
 
 
@@ -134,10 +138,13 @@ try:
                 f'{backend}: legacy iOS 5 must select parallel lib/swift_ios5')
         require(stock / 'iphoneos' in stock_libs and old / 'iphoneos' in old_libs,
                 f'{backend}: runtime library paths do not follow resource selection')
-        # Deployment floor alone must not opt in; opt-in must survive newer floor.
-        stock5, _ = info(backend + '-default5', backend, 'armv7-apple-ios5.0', [])
+        # A bare iOS 5 deployment floor must be refused with an actionable message
+        # rather than silently selecting the iOS 5 resources.
+        run(backend + '-default5', backend,
+            ['-target', 'armv7-apple-ios5.0', '-print-target-info'], failure=True,
+            expect=[legacy, 'legacy iOS 5', 'requires'])
         old7, _ = info(backend + '-legacy7', backend, 'armv7-apple-ios7.0', [legacy])
-        require(stock5 == stock and old7 == old, f'{backend}: deployment target changed opt-in routing')
+        require(old7 == old, f'{backend}: deployment target changed opt-in routing')
         for name, flags in (('default', []), ('legacy', [legacy])):
             resource, libs = info(backend + '-explicit-' + name, backend, 'armv7-apple-ios7.0',
                                   [*flags, '-resource-dir', str(fixture)])

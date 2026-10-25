@@ -12,6 +12,9 @@
 
 @_exported import Foundation // Clang module
 
+// Foundation.Progress itself is iOS 7+/macOS 10.9+; without this annotation the
+// extension cannot even name the type at a 5.0 deployment floor.
+@available(macOS 10.9, iOS 7.0, *)
 extension Progress {
     @available(macOS 10.13, iOS 11.0, watchOS 4.0, tvOS 11.0, *)
     public var estimatedTimeRemaining: TimeInterval? {

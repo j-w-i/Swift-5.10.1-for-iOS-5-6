@@ -1,9 +1,18 @@
 #!/bin/bash
-# Standalone ABI regression; no runtime modules or SDK needed.
+# Standalone ABI regression; needs real armv7 layout data but no stdlib modules.
+# Usage: check-class-marking.sh SWIFT_FRONTEND NEW_OUT [RESOURCE_DIR]
+# Build-tree frontends have no generated iphoneos layouts; pass an installed
+# Swift 5.10 usr/lib/swift (or any tree containing iphoneos/layouts-armv7.yaml).
 set -euo pipefail
-SWIFTC=${1:?swiftc executable}; OUT=${2:?new output directory}
+SWIFTC=${1:?swiftc executable}; OUT=${2:?new output directory}; RESOURCE_DIR=${3:-}
 [ ! -e "$OUT" ] && [ ! -L "$OUT" ] || { echo 'Choose new output directory.' >&2; exit 1; }
 [ -x "$SWIFTC" ] || exit 1
+RESOURCE_ARGS=()
+if [ -n "$RESOURCE_DIR" ]; then
+  [[ "$RESOURCE_DIR" = /* ]] && [ -s "$RESOURCE_DIR/iphoneos/layouts-armv7.yaml" ] || {
+    echo 'RESOURCE_DIR must be absolute and contain iphoneos/layouts-armv7.yaml.' >&2; exit 1; }
+  RESOURCE_ARGS=(-resource-dir "$RESOURCE_DIR")
+fi
 mkdir "$OUT"
 printf 'public class Plain {}\npublic class Generic<T> {}\n' > "$OUT/classes.swift"
 for MODE in stock legacy runtime disabled; do
@@ -15,10 +24,13 @@ for MODE in stock legacy runtime disabled; do
   esac
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" -target armv7-apple-ios7.0 \
     -parse-stdlib -parse-as-library -module-name LegacyClasses -emit-ir \
+    ${RESOURCE_ARGS[@]+"${RESOURCE_ARGS[@]}"} \
     ${FLAGS[@]+"${FLAGS[@]}"} "$OUT/classes.swift" -o "$OUT/$MODE.ll"
 done
-diff "$OUT/stock.ll" "$OUT/disabled.ll"
-diff "$OUT/legacy.ll" "$OUT/runtime.ll"
+# The emitted IR embeds the input filename; compare module content only.
+normalize() { /usr/bin/grep -v -E '^(; ModuleID|source_filename)' "$1"; }
+diff <(normalize "$OUT/stock.ll") <(normalize "$OUT/disabled.ll")
+diff <(normalize "$OUT/legacy.ll") <(normalize "$OUT/runtime.ll")
 python3 - "$OUT" <<'PY'
 from pathlib import Path
 import re, sys
@@ -45,12 +57,24 @@ def marker_hits(text, value):
 
 for marker in (65664, 65665):
     assert marker_hits(stock, marker) == 0, ('unexpected legacy marker in stock', marker)
-    assert marker_hits(legacy, marker) >= 2, ('generic class RO marker missing', marker, marker_hits(legacy, marker))
-# Every class in this fixture is either Plain or Generic, so no stock flag may
-# survive in the legacy output.
-assert marker_hits(stock, 128) and marker_hits(stock, 129), 'stock class flags absent'
-assert marker_hits(legacy, 128) == 0, 'stock flag 128 survived legacy marking'
-assert marker_hits(legacy, 129) == 0, 'stock flag 129 survived legacy marking'
+    assert marker_hits(legacy, marker) >= 2, ('legacy RO marker missing', marker, marker_hits(legacy, marker))
+
+# Two marked occurrences per flag are expected: Plain's own RO global and the
+# generic class metadata template's embedded RO object. Exact IR formatting is
+# not asserted, so a formatting change cannot masquerade as an ABI failure.
+assert marker_hits(legacy, 65664) >= 2 and marker_hits(legacy, 65665) >= 2, 'generic template marker missing'
+
+assert stock.count('@_DATA__TtC13LegacyClasses5Plain'), 'stock Plain RO global absent'
+assert re.search(r'@_DATA_[^\n]*Plain[^\n]*\{ i32 128', stock), 'stock Plain flag changed'
+assert re.search(r'@_DATA_[^\n]*Plain[^\n]*\{ i32 65664', legacy), 'legacy Plain flag missing'
+assert re.search(r'@_METACLASS_DATA_[^\n]*Plain[^\n]*\{ i32 65665', legacy), 'legacy Plain metaclass flag missing'
+# Every class in this fixture is either Plain or Generic; the legacy output must
+# not keep Plain's stock flags. Unrelated constants are not asserted absent, so
+# the generic pattern's non-RO bytes never cause a false failure.
+assert stock.count('@_DATA__TtC13LegacyClasses5Plain') , 'stock Plain RO global absent'
+assert re.search(r'@_DATA_[^\n]*Plain[^\n]*\{ i32 128', stock), 'stock Plain flag changed'
+assert re.search(r'@_DATA_[^\n]*Plain[^\n]*\{ i32 65664', legacy), 'legacy Plain flag missing'
+assert re.search(r'@_METACLASS_DATA_[^\n]*Plain[^\n]*\{ i32 65665', legacy), 'legacy Plain metaclass flag missing'
 assert re.search(r'i32 add \(i32 ptrtoint \(ptr @_DATA_[^\n]*Plain[^\n]*to i32\), i32 1\)', stock), 'stock low-bit'
 assert re.search(r'i32 ptrtoint \(ptr @_DATA_[^\n]*Plain[^\n]*to i32\)',legacy), 'legacy bare pointer'
 assert not re.search(r'i32 add \(i32 ptrtoint \(ptr @_DATA_',legacy), 'legacy low-bit unexpectedly set'

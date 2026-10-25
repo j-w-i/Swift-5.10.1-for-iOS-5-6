@@ -261,20 +261,26 @@ extension URLRequest : CustomStringConvertible, CustomDebugStringConvertible, Cu
     }
     
     public var customMirror: Mirror {
-        let c: [(label: String?, value: Any)] = [
+        var c: [(label: String?, value: Any)] = [
           ("url", url as Any),
           ("cachePolicy", cachePolicy.rawValue),
           ("timeoutInterval", timeoutInterval),
           ("mainDocumentURL", mainDocumentURL as Any),
           ("networkServiceType", networkServiceType),
-          ("allowsCellularAccess", allowsCellularAccess),
+        ]
+        // NSURLRequest.allowsCellularAccess is iOS 6+/macOS 10.8+; omit the field
+        // on older OSes rather than calling an absent accessor.
+        if #available(macOS 10.8, iOS 6.0, *) {
+          c.append(("allowsCellularAccess", allowsCellularAccess))
+        }
+        c.append(contentsOf: [
           ("httpMethod", httpMethod as Any),
           ("allHTTPHeaderFields", allHTTPHeaderFields as Any),
           ("httpBody", httpBody as Any),
           ("httpBodyStream", httpBodyStream as Any),
           ("httpShouldHandleCookies", httpShouldHandleCookies),
           ("httpShouldUsePipelining", httpShouldUsePipelining),
-        ]
+        ])
         return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
 }
