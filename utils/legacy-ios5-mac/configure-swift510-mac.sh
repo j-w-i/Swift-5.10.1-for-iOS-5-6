@@ -41,6 +41,6 @@ for p in sorted(set(re.findall(r'/[^\s|]+/lib[^\s|]+\.a',text))):
 PY
 while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < "$B/build/swift/missing-llvm-targets.txt"
 if [ "${#MISSING_TARGETS[@]}" -gt 0 ]; then
-  run "$TOOLS/ninja" -C "$B/build/llvm" -j1 "${MISSING_TARGETS[@]}"
+  run "$TOOLS/ninja" -C "$B/build/llvm" -j4 "${MISSING_TARGETS[@]}"
 fi
 exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$TOOLS/ninja" -C "$B/build/swift" -j1 swift-frontend swift-demangle
