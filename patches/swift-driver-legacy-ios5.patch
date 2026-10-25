@@ -1,0 +1,764 @@
+diff --git a/LEGACY_IOS5.md b/LEGACY_IOS5.md
+new file mode 100644
+index 0000000..59a1339
+--- /dev/null
++++ b/LEGACY_IOS5.md
+@@ -0,0 +1,85 @@
++# Explicit legacy iOS 5 driver support
++
++`-enable-legacy-ios5-runtime` opts into the matching patched Swift frontend and
++runtime. It does not activate merely because the deployment target is old.
++Supported targets are Apple armv7 iOS devices (not armv7s, simulator, Catalyst,
++tvOS or target variants). The minimum driver deployment target becomes iOS 5;
++the normal 32-bit upper deployment restriction is unchanged. Marking-only mode
++does not lower the driver's deployment floor.
++
++The runtime implies legacy Objective-C class marking. The driver also accepts
++`-enable-legacy-ios5-class-marking` and `-disable-legacy-ios5-class-marking`;
++the last marking switch wins. Runtime plus effective disable is an error.
++Static output/runtime/resource modes are unsupported. These three options all
++participate in incremental build argument hashing.
++
++The runtime option is sent to both frontend compilation and target-info queries,
++including explicit `-print-target-info`. The host-triple query is unchanged.
++The matching frontend chooses `usr/lib/swift_ios5`, relative to the compiler,
++unless `-resource-dir` explicitly overrides it. The driver uses that returned
++resource directory for modules, runtime libraries and the legacy CRT. SDK library
++search and default system rpath use `usr/lib/swift_ios5` (explicit rpath policy
++switches retain their normal precedence).
++
++Legacy dynamic links include `-lobjc -lSystem`; existing Swift autolink and
++compatibility-library processing is retained. Executables additionally use
++`-Wl,-no_new_main` and `<resource-dir>/iphoneos/crt1.3.1.o`, with an actionable
++error if the CRT is absent. Dylibs do not receive executable startup arguments.
++Both legacy executables and dylibs also require
++`<resource-dir>/iphoneos/libswiftLegacyIOS5Backports.a`, passed as a normal archive
++input (lazy extraction, never force-loaded). Missing archives produce an
++actionable install/build error; absent-flag links do not require the archive.
++Build it from the Swift fork's `utils/legacy-ios5-mac/LegacyRuntimeBackports.c` for
++armv7 iOS 5. The current backport reproduces upstream Swift 5.10's
++`swift_stdlib_isStackAllocationSafe` implementation: return false to select the
++real heap fallback, not an invented stack-safety check.
++The CRT must actually be a correctly built armv7 iOS 5 startup object; an empty
++file is not a usable runtime. `-no_new_main` requests the legacy UNIXTHREAD
++startup path; verifying the resulting Mach-O load commands is still required.
++
++## Option source and regeneration
++
++`Sources/SwiftOptions/Options.swift` is checked-in generated code. The canonical
++source is the compiler's `include/swift/Option/Options.td`, not a driver-local
++TableGen file. The corresponding three definitions have been synchronized by
++hand here because no supported Swift host compiler or generated Options.inc is
++available in this environment. With the matching patched compiler's generated
++headers available, follow the repository's normal generation process:
++
++```sh
++swift build -Xcc -I/path/to/compiler-build/include --product makeOptions
++.build/debug/makeOptions > Sources/SwiftOptions/Options.swift
++```
++
++Review regenerated output for unrelated upstream option drift. Do not mark these
++options `DoesNotAffectIncrementalBuild` in either tree.
++
++## Build dependencies and validation
++
++A host Swift toolchain supporting the package's Swift tools version 5.7 is
++required (Swift 5.10 recommended), including SwiftPM and XCTest. Swift 5.1.5 is
++too old. A C/C++ compiler and normal host build tools are needed for llbuild,
++Yams and the option generator. No Apple SDK is required for the focused
++in-memory unit tests:
++
++```sh
++swift test --filter LegacyIOS5Tests
++```
++
++SwiftPM dependencies declared by Package.swift are swift-llbuild release/5.10,
++swift-tools-support-core release/5.10, Yams 5.0.x, swift-argument-parser 1.2.x,
++and transitive swift-system. Alternatively SWIFTCI_USE_LOCAL_DEPS uses the
++existing sibling llbuild, swift-tools-support-core, yams and
++swift-argument-parser directories; provisioning them is outside this patch.
++The checked-in Package.resolved has main-branch pins for llbuild/TSC that differ
++from the manifest's release/5.10 requirements; do not assume it is an exact
++release/5.10 lockfile without checking SwiftPM resolution.
++
++Only `git diff --check` and source review were performed here: neither `swift`
++nor `swiftc` is on PATH. Unit tests and actual frontend integration tests remain
++pending. The test suite covers parsing/incremental attributes, explicit opt-in,
++unsupported target/mode validation, deployment-floor isolation, target-info
++forwarding/explicit resource overrides, library paths/rpaths, missing CRT, and
++executable-versus-dylib startup flags. Actual armv7 compile/link, Mach-O
++UNIXTHREAD inspection, and real iOS 5 device execution remain pending. No Mac
++access, builds, other repository changes or commits are part of this work.
+diff --git a/Package.resolved b/Package.resolved
+index eac64de..70bb519 100644
+--- a/Package.resolved
++++ b/Package.resolved
+@@ -1,52 +1,50 @@
+ {
+-  "object": {
+-    "pins": [
+-      {
+-        "package": "swift-argument-parser",
+-        "repositoryURL": "https://github.com/apple/swift-argument-parser.git",
+-        "state": {
+-          "branch": null,
+-          "revision": "fee6933f37fde9a5e12a1e4aeaa93fe60116ff2a",
+-          "version": "1.2.2"
+-        }
+-      },
+-      {
+-        "package": "llbuild",
+-        "repositoryURL": "https://github.com/apple/swift-llbuild.git",
+-        "state": {
+-          "branch": "main",
+-          "revision": "efb176d866e3e99855a5b799da224a9f95058f2e",
+-          "version": null
+-        }
+-      },
+-      {
+-        "package": "swift-system",
+-        "repositoryURL": "https://github.com/apple/swift-system.git",
+-        "state": {
+-          "branch": null,
+-          "revision": "836bc4557b74fe6d2660218d56e3ce96aff76574",
+-          "version": "1.1.1"
+-        }
+-      },
+-      {
+-        "package": "swift-tools-support-core",
+-        "repositoryURL": "https://github.com/apple/swift-tools-support-core.git",
+-        "state": {
+-          "branch": "main",
+-          "revision": "7c8bcf3eab7286855a2eb0cd0df103ea2761e259",
+-          "version": null
+-        }
+-      },
+-      {
+-        "package": "Yams",
+-        "repositoryURL": "https://github.com/jpsim/Yams.git",
+-        "state": {
+-          "branch": null,
+-          "revision": "01835dc202670b5bb90d07f3eae41867e9ed29f6",
+-          "version": "5.0.1"
+-        }
++  "pins" : [
++    {
++      "identity" : "swift-argument-parser",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/apple/swift-argument-parser.git",
++      "state" : {
++        "revision" : "fee6933f37fde9a5e12a1e4aeaa93fe60116ff2a",
++        "version" : "1.2.2"
+       }
+-    ]
+-  },
+-  "version": 1
++    },
++    {
++      "identity" : "swift-llbuild",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/apple/swift-llbuild.git",
++      "state" : {
++        "branch" : "release/5.10",
++        "revision" : "fd7c2e0d9279edd023ced6b0a590f8407f5472f9"
++      }
++    },
++    {
++      "identity" : "swift-system",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/apple/swift-system.git",
++      "state" : {
++        "revision" : "836bc4557b74fe6d2660218d56e3ce96aff76574",
++        "version" : "1.1.1"
++      }
++    },
++    {
++      "identity" : "swift-tools-support-core",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/apple/swift-tools-support-core.git",
++      "state" : {
++        "branch" : "release/5.10",
++        "revision" : "90bdc2a157ebacc5d3de0c83e085d05d22ca5fa0"
++      }
++    },
++    {
++      "identity" : "yams",
++      "kind" : "remoteSourceControl",
++      "location" : "https://github.com/jpsim/Yams.git",
++      "state" : {
++        "revision" : "01835dc202670b5bb90d07f3eae41867e9ed29f6",
++        "version" : "5.0.1"
++      }
++    }
++  ],
++  "version" : 2
+ }
+diff --git a/Sources/SwiftDriver/CMakeLists.txt b/Sources/SwiftDriver/CMakeLists.txt
+index d7785e7..f0086b5 100644
+--- a/Sources/SwiftDriver/CMakeLists.txt
++++ b/Sources/SwiftDriver/CMakeLists.txt
+@@ -22,6 +22,7 @@ add_library(SwiftDriver
+   Driver/CompilerMode.swift
+   Driver/DebugInfo.swift
+   Driver/Driver.swift
++  Driver/LegacyIOS5.swift
+   Driver/LinkKind.swift
+   Driver/ModuleOutputInfo.swift
+   Driver/OutputFileMap.swift
+diff --git a/Sources/SwiftDriver/Driver/Driver.swift b/Sources/SwiftDriver/Driver/Driver.swift
+index 5b2cb48..0ec94ef 100644
+--- a/Sources/SwiftDriver/Driver/Driver.swift
++++ b/Sources/SwiftDriver/Driver/Driver.swift
+@@ -3090,6 +3090,8 @@ extension Driver {
+         Triple($0, normalizing: true)
+       }
+ 
++    try LegacyIOS5.validate(&parsedOptions, target: explicitTarget, targetVariant: explicitTargetVariant)
++
+     // Determine the resource directory.
+     let resourceDirPath: VirtualPath?
+     if let resourceDirArg = parsedOptions.getLastArgument(.resourceDir) {
+@@ -3128,6 +3130,8 @@ extension Driver {
+                                    runtimeCompatibilityVersion:
+                                      parsedOptions.getLastArgument(.runtimeCompatibilityVersion)?.asSingle,
+                                    useStaticResourceDir: useStaticResourceDir,
++                                   legacyIOS5Runtime: parsedOptions.hasArgument(.enableLegacyIos5Runtime),
++                                   legacyIOS5ClassMarking: parsedOptions.arguments(for: .enableLegacyIos5ClassMarking, .disableLegacyIos5ClassMarking).last?.option.spelling,
+                                    swiftCompilerPrefixArgs: frontendOverride.prefixArgsForTargetInfo,
+                                    toolchain: toolchain, fileSystem: fileSystem,
+                                    workingDirectory: workingDirectory,
+diff --git a/Sources/SwiftDriver/Driver/LegacyIOS5.swift b/Sources/SwiftDriver/Driver/LegacyIOS5.swift
+new file mode 100644
+index 0000000..129e238
+--- /dev/null
++++ b/Sources/SwiftDriver/Driver/LegacyIOS5.swift
+@@ -0,0 +1,59 @@
++//===--------------- LegacyIOS5.swift - Explicit legacy runtime ------------===//
++//
++// Licensed under Apache License v2.0 with Runtime Library Exception
++// See https://swift.org/LICENSE.txt for license information
++//
++//===----------------------------------------------------------------------===//
++
++import SwiftOptions
++import TSCBasic
++
++/// Validation is deliberately performed before querying the frontend, including
++/// for link-only invocations. Selecting an old deployment target alone must not
++/// select the legacy ABI or resource directory.
++enum LegacyIOS5 {
++  enum ValidationError: Error, DiagnosticData {
++    case unsupportedTarget
++    case disabledClassMarking
++    case staticMode
++    case missingCRT(String)
++    case missingBackports(String)
++
++    var description: String {
++      switch self {
++      case .unsupportedTarget:
++        return "legacy iOS 5 modes require an armv7 Apple iOS device target without a target variant"
++      case .disabledClassMarking:
++        return "-enable-legacy-ios5-runtime requires legacy iOS 5 class marking; remove -disable-legacy-ios5-class-marking"
++      case .staticMode:
++        return "-enable-legacy-ios5-runtime does not support -static, -static-stdlib, -static-executable, or -use-static-resource-dir"
++      case .missingBackports(let path):
++        return "legacy iOS 5 link requires '\(path)'; build and install libswiftLegacyIOS5Backports.a from LegacyRuntimeBackports.c in the legacy resource directory or specify -resource-dir"
++      case .missingCRT(let path):
++        return "legacy iOS 5 executable requires '\(path)'; install crt1.3.1.o in the legacy resource directory or specify -resource-dir"
++      }
++    }
++  }
++
++  static func validate(_ options: inout ParsedOptions, target: Triple?, targetVariant: Triple?) throws {
++    let runtime = options.hasArgument(.enableLegacyIos5Runtime)
++    let marking = options.hasFlag(positive: .enableLegacyIos5ClassMarking,
++                                  negative: .disableLegacyIos5ClassMarking,
++                                  default: runtime)
++    if runtime && !marking {
++      throw ValidationError.disabledClassMarking
++    }
++    guard runtime || marking else { return }
++    guard let target = target, target.vendor == .apple,
++          target.archName == "armv7", target.darwinPlatform == .iOS(.device),
++          targetVariant == nil else {
++      throw ValidationError.unsupportedTarget
++    }
++    if runtime && (options.hasArgument(.static) ||
++        options.hasFlag(positive: .staticStdlib, negative: .noStaticStdlib, default: false) ||
++        options.hasFlag(positive: .staticExecutable, negative: .noStaticExecutable, default: false) ||
++        options.hasArgument(.useStaticResourceDir)) {
++      throw ValidationError.staticMode
++    }
++  }
++}
+diff --git a/Sources/SwiftDriver/Jobs/CompileJob.swift b/Sources/SwiftDriver/Jobs/CompileJob.swift
+index dd9a7e3..86ed9ce 100644
+--- a/Sources/SwiftDriver/Jobs/CompileJob.swift
++++ b/Sources/SwiftDriver/Jobs/CompileJob.swift
+@@ -288,7 +288,11 @@ extension Driver {
+ 
+     // FIXME: MSVC runtime flags
+ 
+-    if Driver.canDoCrossModuleOptimization(parsedOptions: &parsedOptions) &&
++    // Default CMO requires whole-module compilation: primary-file jobs may
++    // emit their module separately and cannot serialize the optimized module.
++    // Keep this consistent with computeEmitModuleSeparately's singleCompile case.
++    if compilerMode == .singleCompile &&
++       Driver.canDoCrossModuleOptimization(parsedOptions: &parsedOptions) &&
+        // For historical reasons, -cross-module-optimization turns on "aggressive" CMO
+        // which is different from "default" CMO.
+        !parsedOptions.hasArgument(.CrossModuleOptimization) {
+diff --git a/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift b/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
+index 0fae4a2..1cde808 100644
+--- a/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
++++ b/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
+@@ -237,6 +237,30 @@ extension DarwinToolchain {
+       commandLine.appendFlag("-darwin-target-variant=\(variantTriple.triple)")
+     }
+ 
++    if parsedOptions.hasArgument(.enableLegacyIos5Runtime) {
++      // Clang must not synthesize an LC_MAIN startup (iOS 6+). Supply the
++      // legacy crt explicitly, even when building the stdlib at a newer floor.
++      if linkerOutputType == .executable {
++        let crt = VirtualPath.lookup(targetInfo.runtimeResourcePath.path)
++          .appending(components: "iphoneos", "crt1.3.1.o")
++        guard try fileSystem.exists(crt) else {
++          throw LegacyIOS5.ValidationError.missingCRT(crt.description)
++        }
++        commandLine.appendFlag("-Wl,-no_new_main")
++        commandLine.appendPath(crt)
++      }
++      let backports = VirtualPath.lookup(targetInfo.runtimeResourcePath.path)
++        .appending(components: "iphoneos", "libswiftLegacyIOS5Backports.a")
++      guard try fileSystem.exists(backports) else {
++        throw LegacyIOS5.ValidationError.missingBackports(backports.description)
++      }
++      // A normal archive input, not -force_load: extract only referenced
++      // backports, and permit newer runtimes to satisfy symbols themselves.
++      commandLine.appendPath(backports)
++      commandLine.appendFlag("-lobjc")
++      commandLine.appendFlag("-lSystem")
++    }
++
+     // On Darwin, we only support libc++.
+     var cxxCompatEnabled = parsedOptions.hasArgument(.enableExperimentalCxxInterop)
+     if let cxxInteropMode = parsedOptions.getLastArgument(.cxxInteroperabilityMode) {
+diff --git a/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift b/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
+index 21cdc65..20b37e3 100644
+--- a/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
++++ b/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
+@@ -309,6 +309,12 @@ extension Driver {
+       commandLine.appendPath(.absolute(workingDirectory))
+     }
+ 
++    // These change the ABI and must reach every frontend compilation job.
++    try commandLine.appendLast(.enableLegacyIos5Runtime, from: &parsedOptions)
++    if let marking = parsedOptions.arguments(for: .enableLegacyIos5ClassMarking, .disableLegacyIos5ClassMarking).last {
++      commandLine.appendFlag(marking.option.spelling)
++    }
++
+     // Resource directory.
+     commandLine.appendFlag(.resourceDir)
+     commandLine.appendPath(VirtualPath.lookup(frontendTargetInfo.runtimeResourcePath.path))
+diff --git a/Sources/SwiftDriver/Jobs/Planning.swift b/Sources/SwiftDriver/Jobs/Planning.swift
+index c52d034..45c3ffd 100644
+--- a/Sources/SwiftDriver/Jobs/Planning.swift
++++ b/Sources/SwiftDriver/Jobs/Planning.swift
+@@ -711,6 +711,8 @@ extension Driver {
+                                               resourceDirPath: resourceDirPath,
+                                               requiresInPlaceExecution: true,
+                                               useStaticResourceDir: useStaticResourceDir,
++                                              legacyIOS5Runtime: parsedOptions.hasArgument(.enableLegacyIos5Runtime),
++                                              legacyIOS5ClassMarking: parsedOptions.last(for: .enableLegacyIos5ClassMarking, .disableLegacyIos5ClassMarking)?.option.spelling,
+                                               swiftCompilerPrefixArgs: swiftCompilerPrefixArgs)
+     }
+ 
+diff --git a/Sources/SwiftDriver/Jobs/PrintTargetInfoJob.swift b/Sources/SwiftDriver/Jobs/PrintTargetInfoJob.swift
+index 066eaad..4db682a 100644
+--- a/Sources/SwiftDriver/Jobs/PrintTargetInfoJob.swift
++++ b/Sources/SwiftDriver/Jobs/PrintTargetInfoJob.swift
+@@ -132,6 +132,8 @@ extension Toolchain {
+                                                 runtimeCompatibilityVersion: String? = nil,
+                                                 requiresInPlaceExecution: Bool = false,
+                                                 useStaticResourceDir: Bool = false,
++                                                legacyIOS5Runtime: Bool = false,
++                                                legacyIOS5ClassMarking: String? = nil,
+                                                 swiftCompilerPrefixArgs: [String]) throws -> Job {
+     var commandLine: [Job.ArgTemplate] = swiftCompilerPrefixArgs.map { Job.ArgTemplate.flag($0) }
+     commandLine.append(contentsOf: [.flag("-frontend"),
+@@ -162,6 +164,13 @@ extension Toolchain {
+       ]
+     }
+ 
++    if legacyIOS5Runtime {
++      commandLine.appendFlag("-enable-legacy-ios5-runtime")
++    }
++    if let legacyIOS5ClassMarking = legacyIOS5ClassMarking {
++      commandLine.appendFlag(legacyIOS5ClassMarking)
++    }
++
+     if useStaticResourceDir {
+        commandLine += [.flag("-use-static-resource-dir")]
+      }
+@@ -230,6 +239,8 @@ extension Driver {
+                                 runtimeCompatibilityVersion: String? = nil,
+                                 requiresInPlaceExecution: Bool = false,
+                                 useStaticResourceDir: Bool = false,
++                                legacyIOS5Runtime: Bool = false,
++                                legacyIOS5ClassMarking: String? = nil,
+                                 swiftCompilerPrefixArgs: [String],
+                                 toolchain: Toolchain,
+                                 fileSystem: FileSystem,
+@@ -242,6 +253,8 @@ extension Driver {
+                                        runtimeCompatibilityVersion: runtimeCompatibilityVersion,
+                                        requiresInPlaceExecution: requiresInPlaceExecution,
+                                        useStaticResourceDir: useStaticResourceDir,
++                                       legacyIOS5Runtime: legacyIOS5Runtime,
++                                       legacyIOS5ClassMarking: legacyIOS5ClassMarking,
+                                        swiftCompilerPrefixArgs: swiftCompilerPrefixArgs)
+     var command = try Self.itemizedJobCommand(of: frontendTargetInfoJob,
+                                               useResponseFiles: .disabled,
+diff --git a/Sources/SwiftDriver/Jobs/Toolchain+LinkerSupport.swift b/Sources/SwiftDriver/Jobs/Toolchain+LinkerSupport.swift
+index 5b73fc1..0bb9e63 100644
+--- a/Sources/SwiftDriver/Jobs/Toolchain+LinkerSupport.swift
++++ b/Sources/SwiftDriver/Jobs/Toolchain+LinkerSupport.swift
+@@ -58,7 +58,8 @@ extension Toolchain {
+         result.append(sdkPath.appending(components: "System", "iOSSupport", "usr", "lib", "swift"))
+       }
+ 
+-      result.append(sdkPath.appending(components: "usr", "lib", "swift"))
++      result.append(sdkPath.appending(components: "usr", "lib",
++        parsedOptions.hasArgument(.enableLegacyIos5Runtime) ? "swift_ios5" : "swift"))
+     }
+ 
+     return result
+@@ -168,6 +169,7 @@ extension DarwinToolchain {
+     /// Add an rpath that will search Swift-in-the-OS dylibs, but not
+     /// compiler resource directory dylibs.
+     case os
++    case legacyIOS5
+ 
+     /// Do not add any rpaths at all.
+     case none
+@@ -199,6 +201,9 @@ extension DarwinToolchain {
+         // what they're doing and do not add one here.
+         self = .none
+       }
++      else if parsedOptions.hasArgument(.enableLegacyIos5Runtime) {
++        self = .legacyIOS5
++      }
+       else {
+         // The remaining cases are back-deploying (to OSs predating
+         // Swift-in-the-OS). In these cases, the stdlib will be giving us (via
+@@ -224,6 +229,8 @@ extension DarwinToolchain {
+       switch self {
+       case .toolchain:
+         return runtimeLibraryPaths
++      case .legacyIOS5:
++        return [.absolute(try .init(validating: "/usr/lib/swift_ios5"))]
+       case .os:
+         return [.absolute(try .init(validating: "/usr/lib/swift"))]
+       case .none:
+diff --git a/Sources/SwiftDriver/Toolchains/DarwinToolchain.swift b/Sources/SwiftDriver/Toolchains/DarwinToolchain.swift
+index fd52365..b27fa18 100644
+--- a/Sources/SwiftDriver/Toolchains/DarwinToolchain.swift
++++ b/Sources/SwiftDriver/Toolchains/DarwinToolchain.swift
+@@ -166,6 +166,7 @@ public final class DarwinToolchain: Toolchain {
+     case invalidDeploymentTargetForIR(platform: DarwinPlatform, version: Triple.Version, archName: String)
+     case unsupportedTargetVariant(variant: Triple)
+     case darwinOnlySupportsLibCxx
++    case legacyIOSDeploymentRequiresOptIn
+ 
+     public var description: String {
+       switch self {
+@@ -177,6 +178,8 @@ public final class DarwinToolchain: Toolchain {
+         return "unsupported '\(variant.isiOS ? "-target-variant" : "-target")' value '\(variant.triple)'; use 'ios-macabi' instead"
+       case .argumentNotSupported(let argument):
+         return "\(argument) is no longer supported for Apple platforms"
++      case .legacyIOSDeploymentRequiresOptIn:
++        return "legacy iOS 5/6 deployment targets require -enable-legacy-ios5-runtime; Swift otherwise requires a minimum deployment target of iOS 7.0.0"
+       case .darwinOnlySupportsLibCxx:
+         return "The only C++ standard library supported on Apple platforms is libc++"
+       }
+@@ -228,11 +231,20 @@ public final class DarwinToolchain: Toolchain {
+     // Check minimum supported OS versions. Note that Mac Catalyst falls into the iOS device case. The driver automatically uplevels the deployment target to iOS >= 13.1.
+     let minVersions: [Triple.OS: (DarwinPlatform, Triple.Version)] = [
+       .macosx: (.macOS, Triple.Version(10, 9, 0)),
+-      .ios: (.iOS(targetTriple._isSimulatorEnvironment ? .simulator : .device), Triple.Version(7, 0, 0)),
++      .ios: (.iOS(targetTriple._isSimulatorEnvironment ? .simulator : .device),
++              Triple.Version(parsedOptions.hasArgument(.enableLegacyIos5Runtime) ? 5 : 7, 0, 0)),
+       .tvos: (.tvOS(targetTriple._isSimulatorEnvironment ? .simulator : .device), Triple.Version(9, 0, 0)),
+       .watchos: (.watchOS(targetTriple._isSimulatorEnvironment ? .simulator : .device), Triple.Version(2, 0, 0))
+     ]
+     if let (platform, minVersion) = minVersions[os], targetTriple.version(for: platform) < minVersion {
++      // Advertise the explicit opt-in only where it can support this target.
++      // Older-than-iOS-5 and other architectures/platforms retain the generic error.
++      if !parsedOptions.hasArgument(.enableLegacyIos5Runtime),
++         targetTriple.vendor == .apple, targetTriple.archName == "armv7",
++         targetTriple.darwinPlatform == .iOS(.device),
++         targetTriple.version(for: platform) >= Triple.Version(5, 0, 0) {
++        throw ToolchainValidationError.legacyIOSDeploymentRequiresOptIn
++      }
+       throw ToolchainValidationError.osVersionBelowMinimumDeploymentTarget(platform: platform, version: minVersion)
+     }
+ 
+diff --git a/Sources/SwiftOptions/Options.swift b/Sources/SwiftOptions/Options.swift
+index c2f5b9c..ff0a590 100644
+--- a/Sources/SwiftOptions/Options.swift
++++ b/Sources/SwiftOptions/Options.swift
+@@ -18,6 +18,10 @@
+ //===----------------------------------------------------------------------===//
+ 
+ extension Option {
++  // Keep synchronized with the legacy iOS5 options in the compiler's Options.td.
++  public static let enableLegacyIos5Runtime: Option = Option("-enable-legacy-ios5-runtime", .flag, attributes: [.frontend], helpText: "Use the parallel lib/swift_ios5 resource tree and legacy iOS 5 class marking (off by default)")
++  public static let enableLegacyIos5ClassMarking: Option = Option("-enable-legacy-ios5-class-marking", .flag, attributes: [.frontend], helpText: "Mark Swift classes in Objective-C class_ro_t flags instead of class data pointer low bits")
++  public static let disableLegacyIos5ClassMarking: Option = Option("-disable-legacy-ios5-class-marking", .flag, attributes: [.frontend], helpText: "Use standard Swift class marking (incompatible with -enable-legacy-ios5-runtime)")
+   public static let INPUT: Option = Option("<input>", .input, attributes: [.argumentIsPath])
+   public static let HASHHASHHASH: Option = Option("-###", .flag, alias: Option.driverPrintJobs)
+   public static let abi: Option = Option("-abi", .flag, attributes: [.noDriver], helpText: "Dumping ABI interface")
+@@ -824,6 +828,9 @@ extension Option {
+ extension Option {
+   public static var allOptions: [Option] {
+     return [
++      Option.enableLegacyIos5Runtime,
++      Option.enableLegacyIos5ClassMarking,
++      Option.disableLegacyIos5ClassMarking,
+       Option.INPUT,
+       Option.HASHHASHHASH,
+       Option.abi,
+diff --git a/Tests/SwiftDriverTests/LegacyIOS5Tests.swift b/Tests/SwiftDriverTests/LegacyIOS5Tests.swift
+new file mode 100644
+index 0000000..06f8d38
+--- /dev/null
++++ b/Tests/SwiftDriverTests/LegacyIOS5Tests.swift
+@@ -0,0 +1,181 @@
++//===--------------- LegacyIOS5Tests.swift --------------------------------===//
++// Licensed under Apache License v2.0 with Runtime Library Exception
++
++import Foundation
++@_spi(Testing) @testable import SwiftDriver
++import SwiftDriverExecution
++import SwiftOptions
++import TSCBasic
++import XCTest
++
++final class LegacyIOS5Tests: XCTestCase {
++  private func options(_ args: [String]) throws -> ParsedOptions {
++    try OptionTable().parse(args, for: .batch)
++  }
++
++  func testOptionsAffectIncrementalBuild() throws {
++    for option in [Option.enableLegacyIos5Runtime, .enableLegacyIos5ClassMarking,
++                   .disableLegacyIos5ClassMarking] {
++      XCTAssertTrue(option.affectsIncrementalBuild)
++      var parsed = try options([option.spelling])
++      XCTAssertTrue(parsed.hasArgument(option))
++    }
++  }
++
++  func testValidationIsOptIn() throws {
++    for target in ["armv7-apple-ios5.0", "armv7-apple-ios7.0"] {
++      var parsed = try options(["-enable-legacy-ios5-runtime"])
++      try LegacyIOS5.validate(&parsed, target: Triple(target), targetVariant: nil)
++    }
++    var ordinary = try options([])
++    try LegacyIOS5.validate(&ordinary, target: Triple("x86_64-unknown-linux"), targetVariant: nil)
++    var disabled = try options(["-disable-legacy-ios5-class-marking"])
++    try LegacyIOS5.validate(&disabled, target: nil, targetVariant: nil)
++  }
++
++  func testInvalidTargetsAndModes() throws {
++    for target in ["arm64-apple-ios5.0", "armv7s-apple-ios5.0", "armv7-apple-ios5.0-simulator",
++                   "armv7-apple-tvos9.0", "armv7-apple-ios13.0-macabi", "armv7-unknown-linux"] {
++      var parsed = try options(["-enable-legacy-ios5-runtime"])
++      XCTAssertThrowsError(try LegacyIOS5.validate(&parsed, target: Triple(target), targetVariant: nil))
++    }
++    for mode in ["-static", "-static-stdlib", "-static-executable", "-disable-legacy-ios5-class-marking"] {
++      var parsed = try options(["-enable-legacy-ios5-runtime", mode])
++      XCTAssertThrowsError(try LegacyIOS5.validate(&parsed, target: Triple("armv7-apple-ios5.0"), targetVariant: nil))
++    }
++    var missingTarget = try options(["-enable-legacy-ios5-runtime"])
++    XCTAssertThrowsError(try LegacyIOS5.validate(&missingTarget, target: nil, targetVariant: nil))
++    var variant = try options(["-enable-legacy-ios5-runtime"])
++    XCTAssertThrowsError(try LegacyIOS5.validate(&variant, target: Triple("armv7-apple-ios5.0"),
++                                               targetVariant: Triple("arm64-apple-ios13.0-macabi")))
++  }
++
++  private func toolchain(_ fs: InMemoryFileSystem) throws -> DarwinToolchain {
++    let executor = try SwiftDriverExecutor(diagnosticsEngine: DiagnosticsEngine(),
++      processSet: ProcessSet(), fileSystem: fs, env: [:])
++    let result = DarwinToolchain(env: [:], executor: executor, fileSystem: fs)
++    result.overrideToolPath(.swiftCompiler, path: AbsolutePath("/toolchain/usr/bin/swift-frontend"))
++    result.overrideToolPath(.dynamicLinker, path: AbsolutePath("/toolchain/usr/bin/clang"))
++    return result
++  }
++
++  func testDeploymentFloorRequiresRuntimeOptIn() throws {
++    let tc = try toolchain(InMemoryFileSystem())
++    var ordinary = try options([])
++    XCTAssertThrowsError(try tc.validateDeploymentTarget(&ordinary,
++      targetTriple: Triple("armv7-apple-ios5.0"), compilerOutputType: .object))
++    var legacy = try options(["-enable-legacy-ios5-runtime"])
++    try tc.validateDeploymentTarget(&legacy, targetTriple: Triple("armv7-apple-ios5.0"), compilerOutputType: .object)
++    XCTAssertThrowsError(try tc.validateDeploymentTarget(&legacy,
++      targetTriple: Triple("armv7-apple-ios4.0"), compilerOutputType: .object))
++    var markingOnly = try options(["-enable-legacy-ios5-class-marking"])
++    XCTAssertThrowsError(try tc.validateDeploymentTarget(&markingOnly,
++      targetTriple: Triple("armv7-apple-ios5.0"), compilerOutputType: .object))
++  }
++
++  func testLegacyDeploymentDiagnosticNamesOptInOnlyForSupportedTargets() throws {
++    let tc = try toolchain(InMemoryFileSystem())
++    for target in ["armv7-apple-ios5.0", "armv7-apple-ios5.1.1", "armv7-apple-ios6.0"] {
++      for arguments in [[], ["-enable-legacy-ios5-class-marking"]] {
++        var parsed = try options(arguments)
++        XCTAssertThrowsError(try tc.validateDeploymentTarget(&parsed,
++          targetTriple: Triple(target), compilerOutputType: .object)) { error in
++          guard case DarwinToolchain.ToolchainValidationError.legacyIOSDeploymentRequiresOptIn = error else {
++            return XCTFail("Expected actionable opt-in diagnostic for \(target), got \(error)")
++          }
++          XCTAssertTrue(DarwinToolchain.ToolchainValidationError.legacyIOSDeploymentRequiresOptIn.description.contains("-enable-legacy-ios5-runtime"))
++        }
++      }
++    }
++    for target in ["arm64-apple-ios5.0", "armv7s-apple-ios6.0", "armv7-apple-ios6.0-simulator",
++                   "armv7-apple-ios6.0-macabi", "armv7-apple-ios4.0"] {
++      var parsed = try options([])
++      XCTAssertThrowsError(try tc.validateDeploymentTarget(&parsed,
++        targetTriple: Triple(target), compilerOutputType: .object)) { error in
++        guard case DarwinToolchain.ToolchainValidationError.osVersionBelowMinimumDeploymentTarget = error else {
++          return XCTFail("Expected unchanged generic deployment diagnostic for \(target), got \(error)")
++        }
++        XCTAssertFalse(String(describing: error).contains("-enable-legacy-ios5-runtime"))
++      }
++    }
++    var ordinary = try options([])
++    try tc.validateDeploymentTarget(&ordinary, targetTriple: Triple("armv7-apple-ios7.0"), compilerOutputType: .object)
++    for target in ["armv7-apple-ios5.0", "armv7-apple-ios6.0", "armv7-apple-ios7.0"] {
++      var legacy = try options(["-enable-legacy-ios5-runtime"])
++      try tc.validateDeploymentTarget(&legacy, targetTriple: Triple(target), compilerOutputType: .object)
++    }
++  }
++
++  func testTargetInfoForwardingAndExplicitResourceDirectory() throws {
++    let tc = try toolchain(InMemoryFileSystem())
++    let job = try tc.printTargetInfoJob(target: Triple("armv7-apple-ios5.0"), targetVariant: nil,
++      resourceDirPath: .absolute(AbsolutePath("/custom/resources")),
++      legacyIOS5Runtime: true, legacyIOS5ClassMarking: "-enable-legacy-ios5-class-marking",
++      swiftCompilerPrefixArgs: [])
++    XCTAssertTrue(job.commandLine.contains(.flag("-enable-legacy-ios5-runtime")))
++    XCTAssertTrue(job.commandLine.contains(.flag("-enable-legacy-ios5-class-marking")))
++    XCTAssertTrue(job.commandLine.contains(.path(.absolute(AbsolutePath("/custom/resources")))))
++    let ordinary = try tc.printTargetInfoJob(target: nil, targetVariant: nil, swiftCompilerPrefixArgs: [])
++    XCTAssertFalse(ordinary.commandLine.contains(.flag("-enable-legacy-ios5-runtime")))
++  }
++
++  private func targetInfo() throws -> FrontendTargetInfo {
++    let json = """
++    {"compilerVersion":"test", "target": {
++      "triple":"armv7-apple-ios5.0", "unversionedTriple":"armv7-apple-ios",
++      "moduleTriple":"armv7-apple-ios", "compatibilityLibraries":[], "librariesRequireRPath":true},
++      "paths":{"sdkPath":"/sdk", "runtimeLibraryPaths":[], "runtimeLibraryImportPaths":[],
++      "runtimeResourcePath":"/toolchain/usr/lib/swift_ios5"}}
++    """
++    return try JSONDecoder().decode(FrontendTargetInfo.self, from: Data(json.utf8))
++  }
++
++  func testLegacyLinkAndMissingCRT() throws {
++    let fs = InMemoryFileSystem()
++    let tc = try toolchain(fs)
++    let info = try targetInfo()
++    func link(_ legacy: Bool, _ type: LinkOutputType) throws -> [Job.ArgTemplate] {
++      var parsed = try options(legacy ? ["-enable-legacy-ios5-runtime"] : [])
++      var command: [Job.ArgTemplate] = []
++      _ = try tc.addPlatformSpecificLinkerArgs(to: &command, parsedOptions: &parsed,
++        linkerOutputType: type, inputs: [], outputFile: .absolute(AbsolutePath("/app")),
++        shouldUseInputFileList: false, lto: nil, sanitizers: [], targetInfo: info)
++      return command
++    }
++    XCTAssertThrowsError(try link(true, .executable))
++    let crt = AbsolutePath("/toolchain/usr/lib/swift_ios5/iphoneos/crt1.3.1.o")
++    try fs.createDirectory(crt.parentDirectory, recursive: true)
++    try fs.writeFileContents(crt, bytes: ByteString("crt"))
++    let backports = crt.parentDirectory.appending(component: "libswiftLegacyIOS5Backports.a")
++    for type in [LinkOutputType.executable, .dynamicLibrary] {
++      XCTAssertThrowsError(try link(true, type)) { error in
++        guard case LegacyIOS5.ValidationError.missingBackports(let path) = error else {
++          return XCTFail("Expected missing backports diagnostic, got \(error)")
++        }
++        XCTAssertTrue(path.contains("libswiftLegacyIOS5Backports.a"))
++        XCTAssertTrue(LegacyIOS5.ValidationError.missingBackports(path).description.contains("LegacyRuntimeBackports.c"))
++      }
++    }
++    // The absent-flag path must not require the archive.
++    XCTAssertNoThrow(try link(false, .executable))
++    try fs.writeFileContents(backports, bytes: ByteString("archive"))
++    let command = try link(true, .executable)
++    XCTAssertTrue(command.contains(.flag("-Wl,-no_new_main")))
++    XCTAssertTrue(command.contains(.path(.absolute(crt))))
++    XCTAssertTrue(command.contains(.flag("-lobjc")))
++    XCTAssertTrue(command.contains(.flag("-lSystem")))
++    XCTAssertTrue(command.contains(.path(.absolute(AbsolutePath("/sdk/usr/lib/swift_ios5")))))
++    XCTAssertTrue(command.contains(.path(.absolute(AbsolutePath("/usr/lib/swift_ios5")))))
++    for command in [command, try link(true, .dynamicLibrary)] {
++      XCTAssertEqual(command.filter { $0 == .path(.absolute(backports)) }.count, 1)
++      XCTAssertFalse(command.contains(.flag("-force_load")))
++      XCTAssertFalse(command.contains(.flag("-Wl,-force_load")))
++      XCTAssertFalse(command.contains(.flag("-all_load")))
++    }
++    XCTAssertFalse(try link(false, .executable).contains(.path(.absolute(backports))))
++    for command in [try link(false, .executable), try link(true, .dynamicLibrary)] {
++      XCTAssertFalse(command.contains(.flag("-Wl,-no_new_main")))
++      XCTAssertFalse(command.contains(.path(.absolute(crt))))
++    }
++  }
++}
+diff --git a/Tests/SwiftDriverTests/SwiftDriverTests.swift b/Tests/SwiftDriverTests/SwiftDriverTests.swift
+index a20fc93..3b8268a 100644
+--- a/Tests/SwiftDriverTests/SwiftDriverTests.swift
++++ b/Tests/SwiftDriverTests/SwiftDriverTests.swift
+@@ -3358,6 +3358,24 @@ final class SwiftDriverTests: XCTestCase {
+       }
+     }
+ 
++    // Optimized primary-file compilations must not enable default CMO, even
++    // when module emission is explicitly combined with the compile jobs. Xcode
++    // Release builds use -O -enable-batch-mode without necessarily requesting WMO.
++    for mode in ["-disable-batch-mode", "-enable-batch-mode"] {
++      for moduleEmission in ["-experimental-emit-module-separately", "-no-emit-module-separately"] {
++        var driver = try Driver(args: ["swiftc", "foo.swift", "bar.swift",
++          "-module-name", "Test", "-emit-module-path", rebase("Test.swiftmodule", at: root),
++          "-c", "-O", mode, moduleEmission])
++        let plannedJobs = try driver.planBuild()
++        XCTAssertFalse(plannedJobs.filter { $0.kind == .compile }.isEmpty)
++        XCTAssertEqual(plannedJobs.contains { $0.kind == .emitModule },
++                       moduleEmission == "-experimental-emit-module-separately")
++        for job in plannedJobs {
++          XCTAssertFalse(job.commandLine.contains(.flag("-enable-default-cmo")))
++        }
++      }
++    }
++
+     do {
+       // non library-evolution builds require a single job, because cross-module-optimization is enabled by default.
+       var driver = try Driver(args: ["swiftc", "foo.swift", "bar.swift", "-module-name", "Test", "-emit-module-path", rebase("Test.swiftmodule", at: root), "-c", "-o", rebase("test.o", at: root), "-wmo", "-O" ])
+@@ -3366,6 +3384,17 @@ final class SwiftDriverTests: XCTestCase {
+       XCTAssertTrue(plannedJobs[0].commandLine.contains(.flag("-enable-default-cmo")))
+     }
+ 
++    do {
++      // Explicit aggressive CMO retains its own frontend option, not default CMO.
++      var driver = try Driver(args: ["swiftc", "foo.swift", "bar.swift", "-module-name", "Test",
++        "-emit-module-path", rebase("Test.swiftmodule", at: root), "-c", "-o",
++        rebase("test.o", at: root), "-wmo", "-O", "-cross-module-optimization"])
++      let plannedJobs = try driver.planBuild()
++      XCTAssertEqual(plannedJobs.count, 1)
++      XCTAssertTrue(plannedJobs[0].commandLine.contains(.flag("-cross-module-optimization")))
++      XCTAssertFalse(plannedJobs[0].commandLine.contains(.flag("-enable-default-cmo")))
++    }
++
+     do {
+       // library-evolution builds can emit the module in a separate job.
+       var driver = try Driver(args: ["swiftc", "foo.swift", "bar.swift", "-module-name", "Test", "-emit-module-path", rebase("Test.swiftmodule", at: root), "-c", "-o", rebase("test.o", at: root), "-wmo", "-O", "-enable-library-evolution" ])

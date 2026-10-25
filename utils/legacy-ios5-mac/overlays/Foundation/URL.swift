@@ -232,8 +232,6 @@ public struct URLResourceValues {
     /// True if resource should be excluded from backups, false otherwise.
     ///
     /// This property is only useful for excluding cache and other application support files which are not needed in a backup. Some operations commonly made to user documents will cause this property to be reset to false and so this property should not be used on user documents.
-    // NSURLIsExcludedFromBackupKey is iOS 5.1+/macOS 10.8+.
-    @available(macOS 10.8, iOS 5.1, *)
     public var isExcludedFromBackup: Bool? {
         get { return _get(.isExcludedFromBackupKey) }
         set { _set(.isExcludedFromBackupKey, newValue: newValue) }
@@ -585,8 +583,6 @@ public struct URL : ReferenceConvertible, Equatable {
     }
 
     /// Initializes a newly created URL referencing the local file or directory at the file system representation of the path. File system representation is a null-terminated C string with canonical UTF-8 encoding.
-    // NSURL -initFileURLWithFileSystemRepresentation:isDirectory:relativeTo: is iOS 7+/macOS 10.9+.
-    @available(macOS 10.9, iOS 7.0, *)
     public init(fileURLWithFileSystemRepresentation path: UnsafePointer<Int8>, isDirectory: Bool, relativeTo baseURL: __shared URL?) {
         _url = URL._converted(from: NSURL(fileURLWithFileSystemRepresentation: path, isDirectory: isDirectory, relativeTo: baseURL))
     }
@@ -892,8 +888,6 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Temporary resource values are for client use. Temporary resource values exist only in memory and are never written to the resource's backing store. Once set, a temporary resource value can be copied from the URL object with `func resourceValues(forKeys:)`. The values are stored in the loosely-typed `allValues` dictionary property.
     ///
     /// To remove a temporary resource value from the URL object, use `func removeCachedResourceValue(forKey:)`. Care should be taken to ensure the key that identifies a temporary resource value is unique and does not conflict with system defined keys (using reverse domain name notation in your temporary resource value keys is recommended). This method is currently applicable only to URLs for file system resources.
-    // NSURL -setTemporaryResourceValue:forKey: is iOS 7+/macOS 10.9+.
-    @available(macOS 10.9, iOS 7.0, *)
     public mutating func setTemporaryResourceValue(_ value : Any, forKey key: URLResourceKey) {
         _url.setTemporaryResourceValue(value, forKey: key)
     }
@@ -901,8 +895,6 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Removes all cached resource values and all temporary resource values from the URL object.
     /// 
     /// This method is currently applicable only to URLs for file system resources.
-    // NSURL -removeAllCachedResourceValues is iOS 7+/macOS 10.9+.
-    @available(macOS 10.9, iOS 7.0, *)
     public mutating func removeAllCachedResourceValues() {
         _url.removeAllCachedResourceValues()
     }
@@ -910,9 +902,6 @@ public struct URL : ReferenceConvertible, Equatable {
     /// Removes the cached resource value identified by a given resource value key from the URL object.
     /// 
     /// Removing a cached resource value may remove other cached resource values because some resource values are cached as a set of values, and because some resource values depend on other resource values (temporary resource values have no dependencies). This method is currently applicable only to URLs for file system resources.
-    // NSURL's -removeCachedResourceValueForValue:key: is iOS 7+/macOS 10.9+. Keep the
-    // wrapper unavailable on older OSes instead of calling an absent selector there.
-    @available(macOS 10.9, iOS 7.0, *)
     public mutating func removeCachedResourceValue(forKey key: URLResourceKey) {
         _url.removeCachedResourceValue(forKey: key)
     }

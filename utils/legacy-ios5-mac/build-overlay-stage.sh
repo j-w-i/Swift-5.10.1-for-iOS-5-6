@@ -25,15 +25,11 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
     swift-frontend) JOB_FLAGS=(-disable-autolink-library swiftFileProvider) ;;
     *) JOB_FLAGS=(-j1 -Xfrontend -disable-autolink-library -Xfrontend swiftFileProvider) ;;
   esac
-  # At an iOS 5 deployment target <os/object.h> already sets
-  # OS_OBJECT_HAVE_OBJC_SUPPORT=0, so both our CDispatch and the SDK's Dispatch
-  # Clang module expose raw C pointers. Keep -DOS_OBJECT_USE_OBJC=0 explicit so
-  # the cache key does not depend on that SDK default. The old
-  # dispatch_object_t ODR error was not a macro mismatch: the Swift module
-  # `Dispatch` is an overlay of the SDK's Clang `Dispatch` module, so loading it
-  # also loads the SDK module; CDispatch/cdispatch/object.h now mirrors the
-  # SDK's pointer-only `_dch` member so clang's module ODR check accepts both
-  # definitions. A per-stage cache still avoids stale dispatch/os_object state.
+  # OS_OBJECT_USE_OBJC must agree between our CDispatch shim, the SDK's Dispatch
+  # Clang module, and every overlay that imports dispatch headers; otherwise
+  # clang reports dispatch_object_t as two incompatible module definitions.
+  # A per-stage Clang module cache keeps builds reproducible and avoids stale
+  # dispatch/os_object modules built under different macro state.
   CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache")
   if [ "$NAME" = Dispatch ]; then CC_FLAGS+=(-Xcc -DSWIFT_LEGACY_IOS5_CDISPATCH=1); fi
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" ${JOB_FLAGS[@]+"${JOB_FLAGS[@]}"} \

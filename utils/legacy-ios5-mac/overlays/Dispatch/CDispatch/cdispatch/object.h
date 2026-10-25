@@ -95,12 +95,6 @@ typedef union {
 	struct dispatch_queue_attr_s *_dqa;
 	struct dispatch_group_s *_dg;
 	struct dispatch_source_s *_ds;
-	/* Keep this member in sync with the SDK's <dispatch/object.h>. The Swift
-	 * module `Dispatch` is an overlay of the SDK's Clang `Dispatch` module, so
-	 * loading it also loads the SDK module; clang's module ODR check then
-	 * compares both definitions of dispatch_object_t. Every member is a
-	 * pointer, so this does not change the union's size, alignment or ABI. */
-	struct dispatch_channel_s *_dch;
 	struct dispatch_mach_s *_dm;
 	struct dispatch_mach_msg_s *_dmsg;
 	struct dispatch_semaphore_s *_dsema;

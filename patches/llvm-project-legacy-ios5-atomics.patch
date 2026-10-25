@@ -1,0 +1,81 @@
+From 7f79383b70e0c219871d1d4f852cdb7ac8e34045 Mon Sep 17 00:00:00 2001
+From: jwalr <jwalr@localhost>
+Date: Sun, 25 Oct 2026 22:52:52 +1100
+Subject: [PATCH] Permit real backported atomic libcalls for armv7 iOS5 and
+ iOS6 devices
+
+---
+ clang/lib/AST/ASTContext.cpp          | 11 ++++++++
+ clang/test/Sema/legacy-ios5-atomics.c | 38 +++++++++++++++++++++++++++
+ 2 files changed, 49 insertions(+)
+ create mode 100644 clang/test/Sema/legacy-ios5-atomics.c
+
+diff --git a/clang/lib/AST/ASTContext.cpp b/clang/lib/AST/ASTContext.cpp
+index ae1d5203c..95b9dfde6 100644
+--- a/clang/lib/AST/ASTContext.cpp
++++ b/clang/lib/AST/ASTContext.cpp
+@@ -12160,6 +12160,17 @@ bool ASTContext::AtomicUsesUnsupportedLibcall(const AtomicExpr *E) const {
+       !(T.isMacOSX() && T.isOSVersionLT(10, 9)))
+     return false;
+ 
++  // This fork backports the generic __atomic_* libcalls in compiler-rt for
++  // armv7/armv7s iOS 5 and 6 devices. Accepting these operations still requires
++  // linking that genuine compiler-rt atomic implementation (including its locks);
++  // this exemption alone does not provide runtime support.
++  if (T.getOS() == llvm::Triple::IOS && !T.isSimulatorEnvironment() &&
++      !T.isMacCatalystEnvironment() && !T.isOSVersionLT(5) &&
++      T.isOSVersionLT(7) && (T.isARM() || T.isThumb()) &&
++      (T.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
++       T.getSubArch() == llvm::Triple::ARMSubArch_v7s))
++    return false;
++
+   QualType AtomicTy = E->getPtr()->getType()->getPointeeType();
+   CharUnits sizeChars = getTypeSizeInChars(AtomicTy);
+   uint64_t Size = sizeChars.getQuantity();
+diff --git a/clang/test/Sema/legacy-ios5-atomics.c b/clang/test/Sema/legacy-ios5-atomics.c
+new file mode 100644
+index 000000000..c8d1c3a78
+--- /dev/null
++++ b/clang/test/Sema/legacy-ios5-atomics.c
+@@ -0,0 +1,38 @@
++// RUN: %clang_cc1 -triple armv7-apple-ios5.0 -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple thumbv7-apple-ios5.1 -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple armv7-apple-ios6.0 -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple thumbv7s-apple-ios6.1 -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple armv7-apple-ios7.0 -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple armv7-unknown-linux-gnueabihf -std=c11 -emit-llvm -o - %s -verify=libcall | FileCheck %s
++// RUN: %clang_cc1 -triple arm64-apple-ios6.0 -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple i386-apple-ios5.0-simulator -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple armv7-apple-ios5.0-simulator -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple armv7-apple-ios6.0-macabi -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple armv7-apple-tvos6.0 -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple armv7-apple-ios4.3 -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple armv6-apple-ios5.0 -std=c11 -fsyntax-only %s -verify=unavailable
++// RUN: %clang_cc1 -triple x86_64-apple-macosx10.8 -std=c11 -fsyntax-only %s -verify=unavailable
++
++// The fork's genuine compiler-rt atomic backport must supply these libcalls at
++// link/run time. This checks acceptance AND libcall emission, not runtime safety.
++struct payload {
++  int words[3];
++};
++typedef _Atomic(struct payload) atomic_payload __attribute__((aligned(8)));
++_Static_assert(sizeof(struct payload) == 12, "exercise a 12-byte payload");
++#if __SIZEOF_POINTER__ == 4
++_Static_assert(sizeof(atomic_payload) == 12, "exercise a 12-byte libcall");
++#endif
++_Static_assert(_Alignof(atomic_payload) == 8, "exercise 8-byte alignment");
++
++// CHECK-LABEL: define{{.*}} @store_payload(
++// CHECK: call void @__atomic_store(i{{[0-9]+}} {{.*}}12,
++void store_payload(atomic_payload *p, struct payload value) {
++  __c11_atomic_store(p, value, __ATOMIC_SEQ_CST); // unavailable-error {{atomic store requires runtime support that is not available for this target}} libcall-warning {{large atomic operation may incur significant performance penalty}} libcall-warning {{misaligned atomic operation may incur significant performance penalty}}
++}
++
++// CHECK-LABEL: define{{.*}} @load_payload(
++// CHECK: call void @__atomic_load(i{{[0-9]+}} {{.*}}12,
++struct payload load_payload(atomic_payload *p) {
++  return __c11_atomic_load(p, __ATOMIC_SEQ_CST); // unavailable-error {{atomic load requires runtime support that is not available for this target}} libcall-warning {{large atomic operation may incur significant performance penalty}} libcall-warning {{misaligned atomic operation may incur significant performance penalty}}
++}
+-- 
+2.54.0 (Apple Git-157)
+

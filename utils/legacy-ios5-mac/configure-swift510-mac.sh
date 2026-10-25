@@ -1,17 +1,16 @@
 #!/bin/bash
 set -euo pipefail
-B="$HOME/swift-5.10-ios5-build"
-export DEVELOPER_DIR="$HOME/Applications/Xcode-13.4.1.app/Contents/Developer"
-TOOLS="$HOME/swift-ios5-build/tools"
-CM="$TOOLS/cmake/CMake.app/Contents/bin/cmake"
+B="${LEGACY_BUILD_ROOT:?set LEGACY_BUILD_ROOT (see README)}"
+export DEVELOPER_DIR="${XCODE_13_4_1_DEVELOPER_DIR:?set XCODE_13_4_1_DEVELOPER_DIR to Xcode 13.4.1/Contents/Developer}"
+CM="$(command -v cmake)"; NINJA="$(command -v ninja)"
 SDK="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
 CC="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
-HOST="$HOME/Library/Developer/Toolchains/swift-5.10.1-RELEASE.xctoolchain/usr"
+HOST="${SWIFT_5_10_1_HOST_TOOLCHAIN:?set SWIFT_5_10_1_HOST_TOOLCHAIN to a swift-5.10.1 .xctoolchain}/usr"
 run() { /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$@"; }
-run "$CM" -S "$B/src/cmark" -B "$B/build/cmark" -G Ninja -DCMAKE_MAKE_PROGRAM="$TOOLS/ninja" \
+run "$CM" -S "$B/src/cmark" -B "$B/build/cmark" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" \
  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_OSX_SYSROOT="$SDK" -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
-run "$TOOLS/ninja" -C "$B/build/cmark" -j1
-run "$CM" -S "$B/src/swift" -B "$B/build/swift" -G Ninja -DCMAKE_MAKE_PROGRAM="$TOOLS/ninja" \
+run "$NINJA" -C "$B/build/cmark" -j1
+run "$CM" -S "$B/src/swift" -B "$B/build/swift" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" \
  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="${CC}++" \
  -DCMAKE_Swift_COMPILER="$HOST/bin/swiftc" -DCMAKE_OSX_SYSROOT="$SDK" -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
  -DLLVM_DIR="$B/build/llvm/lib/cmake/llvm" -DClang_DIR="$B/build/llvm/lib/cmake/clang" \
@@ -41,6 +40,6 @@ for p in sorted(set(re.findall(r'/[^\s|]+/lib[^\s|]+\.a',text))):
 PY
 while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < "$B/build/swift/missing-llvm-targets.txt"
 if [ "${#MISSING_TARGETS[@]}" -gt 0 ]; then
-  run "$TOOLS/ninja" -C "$B/build/llvm" -j4 "${MISSING_TARGETS[@]}"
+  run "$NINJA" -C "$B/build/llvm" -j4 "${MISSING_TARGETS[@]}"
 fi
-exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$TOOLS/ninja" -C "$B/build/swift" -j1 swift-frontend swift-demangle
+exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$NINJA" -C "$B/build/swift" -j1 swift-frontend swift-demangle

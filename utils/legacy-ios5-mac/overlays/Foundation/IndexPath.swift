@@ -700,13 +700,7 @@ public struct IndexPath : ReferenceConvertible, Equatable, Hashable, MutableColl
         } else {
             var indexes = Array<Int>(repeating: 0, count: count)
             indexes.withUnsafeMutableBufferPointer { (buffer: inout UnsafeMutableBufferPointer<Int>) -> Void in
-#if LEGACY_IOS5
-                // -getIndexes:range: is iOS 7+; the range-less -getIndexes: exists
-                // on every supported iOS and fills from position 0.
-                nsIndexPath.getIndexes(buffer.baseAddress!)
-#else
                 nsIndexPath.getIndexes(buffer.baseAddress!, range: NSRange(location: 0, length: count))
-#endif
             }
             _indexes = .array(indexes)
         }

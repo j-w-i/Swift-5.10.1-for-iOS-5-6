@@ -8,18 +8,12 @@ Why: before iOS 6, libdispatch objects are plain C pointers (`OS_OBJECT_HAVE_OBJ
 Darwin overlay (ARC-managed ObjC objects) cannot be built. corelibs' overlay wraps the C handles in Swift
 classes and calls `dispatch_retain/release` itself, which is the model iOS 5 needs.
 
-`CDispatch/` is the only addition: a module map and corelibs' own dispatch headers under the module name
-`CDispatch`, which corelibs imports on every platform (not the SDK's headers: their
-`DISPATCH_SWIFT3_OVERLAY` renames and ObjC-object typedefs would hide the raw C API this overlay wraps).
+`CDispatch/` is the only addition: a module map exposing the SDK's dispatch headers under the module name
+`CDispatch`, which corelibs imports on every platform.
 
 Selected only when `SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING` and deployment < 6.0; every other configuration
 builds Apple's Darwin overlay exactly as before.
 
-Deliberate deviations from upstream bytes:
-* `Dispatch.swift` does not `@_exported import Dispatch` (see comment there).
-* `CDispatch/cdispatch/object.h` adds the SDK's `_dch` member to the legacy `dispatch_object_t` union. The
-  Swift module `Dispatch` is treated as a Swift overlay of the SDK's Clang `Dispatch` module, so importing it
-  also loads the SDK module; clang's module ODR check compares both union definitions. Every member is a
-  pointer, so size, alignment and ABI are unchanged.
+One deliberate deviation from upstream bytes: `Dispatch.swift` does not `@_exported import Dispatch` (see comment there).
 The shared shim header `stdlib/public/SwiftShims/DispatchOverlayShims.h` includes `<cdispatch/dispatch.h>` only when
 `SWIFT_LEGACY_IOS5_CDISPATCH` is defined (set only for this overlay).

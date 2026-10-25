@@ -17,9 +17,6 @@
 
 import Foundation
 
-// NSData.Base64EncodingOptions/Base64DecodingOptions are iOS 7+ SDK types, so the
-// helper namespace is only usable where those option types are available.
-@available(macOS 10.9, iOS 7.0, *)
 @usableFromInline
 internal enum _LegacyBase64 {
     @usableFromInline typealias Base64EncodingOptions = NSData.Base64EncodingOptions
