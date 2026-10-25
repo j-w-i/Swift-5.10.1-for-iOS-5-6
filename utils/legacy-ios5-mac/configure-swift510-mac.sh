@@ -6,10 +6,10 @@ CM="$(command -v cmake)"; NINJA="$(command -v ninja)"
 SDK="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
 CC="$DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
 HOST="${SWIFT_5_10_1_HOST_TOOLCHAIN:?set SWIFT_5_10_1_HOST_TOOLCHAIN to a swift-5.10.1 .xctoolchain}/usr"
-run() { /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$@"; }
+run() { /usr/bin/arch -x86_64 "$@"; }
 run "$CM" -S "$B/src/cmark" -B "$B/build/cmark" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" \
  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_OSX_SYSROOT="$SDK" -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
-run "$NINJA" -C "$B/build/cmark" -j1
+run "$NINJA" -C "$B/build/cmark" -j"${JOBS:-$(sysctl -n hw.ncpu)}"
 run "$CM" -S "$B/src/swift" -B "$B/build/swift" -G Ninja -DCMAKE_MAKE_PROGRAM="$NINJA" \
  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="${CC}++" \
  -DCMAKE_Swift_COMPILER="$HOST/bin/swiftc" -DCMAKE_OSX_SYSROOT="$SDK" -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
@@ -40,6 +40,6 @@ for p in sorted(set(re.findall(r'/[^\s|]+/lib[^\s|]+\.a',text))):
 PY
 while IFS= read -r target; do MISSING_TARGETS+=("$target"); done < "$B/build/swift/missing-llvm-targets.txt"
 if [ "${#MISSING_TARGETS[@]}" -gt 0 ]; then
-  run "$NINJA" -C "$B/build/llvm" -j4 "${MISSING_TARGETS[@]}"
+  run "$NINJA" -C "$B/build/llvm" -j"${JOBS:-$(sysctl -n hw.ncpu)}" "${MISSING_TARGETS[@]}"
 fi
-exec /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$NINJA" -C "$B/build/swift" -j1 swift-frontend swift-demangle
+exec /usr/bin/arch -x86_64 "$NINJA" -C "$B/build/swift" -j"${JOBS:-$(sysctl -n hw.ncpu)}" swift-frontend swift-demangle

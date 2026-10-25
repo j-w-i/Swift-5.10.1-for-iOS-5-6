@@ -12,13 +12,13 @@ set -euo pipefail
 ROOT="${LEGACY_BUILD_ROOT:?set LEGACY_BUILD_ROOT to a directory (created if missing)}"
 XC="${XCODE_13_4_1_DEVELOPER_DIR:?set XCODE_13_4_1_DEVELOPER_DIR to Xcode 13.4.1.app/Contents/Developer}"
 HERE="$(cd "$(dirname "$0")" && pwd -P)"; REPO="$(cd "$HERE/../.." && pwd -P)"
-JOBS="${JOBS:-4}"; SWIFT_JOBS="${SWIFT_JOBS:-2}"
+JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"; SWIFT_JOBS="${SWIFT_JOBS:-$JOBS}"; export JOBS
 mkdir -p "$ROOT"; ROOT="$(cd "$ROOT" && pwd -P)"
 export LEGACY_BUILD_ROOT="$ROOT" XCODE_13_4_1_DEVELOPER_DIR="$XC" DEVELOPER_DIR="$XC"
 mkdir -p "$ROOT"/{src,build,logs,out,downloads,tools,.stamps}
 S="$ROOT/src"; L="$ROOT/logs"
 export PATH="$ROOT/tools:$ROOT/tools/cmake/CMake.app/Contents/bin:$PATH"
-X86() { /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$@"; }
+X86() { /usr/bin/arch -x86_64 "$@"; }
 
 # ---- pinned inputs --------------------------------------------------------------------------------
 CMAKE_URL=https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz
