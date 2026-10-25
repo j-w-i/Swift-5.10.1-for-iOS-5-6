@@ -99,3 +99,5 @@ CMake-listed Swift/GYB inputs, and successful Python 3 generation of all four GY
 templates against the original Swift 5.1 source utility.
 
 Lead integration on the Mac subsequently passed the full resource bootstrap into a fresh stage and serial compilation of all seven actual overlay modules/objects with installed Swift 5.10. A separate proof linked the full ApiTest app against migrated overlays and the old runtime (including the exact upstream stack-allocation helper backport) and passed the existing import screen. These are source/ABI probes using the stock compiler: patched class marking and device execution remain pending. The original installed environment is unchanged.
+
+`GenericRuntimeSmoke.swift` compiles and links as armv7 against the migrated imports/runtime without missing strong or lazy-bound symbols in the existing screen. Its 22 checks also pass as a **modern macOS host-only** fixture sanity run (Xcode13 compiler/system runtime); that does not test iOS5 class marking, old ObjC realization, legacy allocation, or device behavior. Run the same fixture in the final iOS5 app before making those claims.
