@@ -15,7 +15,13 @@ if [ "$#" -ne 8 ]; then
   exit 64
 fi
 command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'python3 is required.' >&2; exit 1; }
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# The python block is read from stdin, so it cannot use __file__; pass the helper
+# location explicitly for the dylib version normalization step.
+export LEGACY_NORMALIZE_DYLIB_VERSIONS="$HERE/normalize-dylib-versions.py"
+[ -f "$LEGACY_NORMALIZE_DYLIB_VERSIONS" ] || { printf '%s\n' 'missing normalize-dylib-versions.py beside this script' >&2; exit 1; }
 exec python3 - "$@" <<'PY'
+
 import hashlib
 import json
 import os
@@ -241,7 +247,7 @@ try:
     # The overlays are linked by a different toolchain than the runtime they sit
     # beside, so the LC_ID_DYLIB versions can be lower than what their consumers
     # require; iOS 5 dyld rejects that ("requires 1.0.0 ... provides 0.0.0").
-    run(tool('python3'), str(Path(__file__).with_name('normalize-dylib-versions.py')), str(ios))
+    run(sys.executable, os.environ['LEGACY_NORMALIZE_DYLIB_VERSIONS'], str(ios))
 
     replace_copy(crt1, ios / 'crt1.3.1.o')
     info['CFBundleIdentifier'] = ID
