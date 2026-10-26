@@ -125,22 +125,4 @@ public extension UIView {
     var rightAnchor: Anchor { Anchor(item: self, attribute: .right) }
 }
 
-// MARK: - UILayoutGuide anchor accessors
-
-// `UILayoutGuide` is an iOS 9 class; the legacy compiler lowers it to the iOS 5
-// deployment target because the runtime supplies the class. The anchor pair form
-// must match the UIView one above so ordinary guide code keeps type-checking.
-@available(iOS, introduced: 5.0, obsoleted: 9.0)
-public extension UILayoutGuide {
-    var leadingAnchor: Anchor { Anchor(item: self, attribute: .leading) }
-    var trailingAnchor: Anchor { Anchor(item: self, attribute: .trailing) }
-    var topAnchor: Anchor { Anchor(item: self, attribute: .top) }
-    var bottomAnchor: Anchor { Anchor(item: self, attribute: .bottom) }
-    var widthAnchor: Anchor { Anchor(item: self, attribute: .width) }
-    var heightAnchor: Anchor { Anchor(item: self, attribute: .height) }
-    var centerXAnchor: Anchor { Anchor(item: self, attribute: .centerX) }
-    var centerYAnchor: Anchor { Anchor(item: self, attribute: .centerY) }
-    var leftAnchor: Anchor { Anchor(item: self, attribute: .left) }
-    var rightAnchor: Anchor { Anchor(item: self, attribute: .right) }
-}
 #endif

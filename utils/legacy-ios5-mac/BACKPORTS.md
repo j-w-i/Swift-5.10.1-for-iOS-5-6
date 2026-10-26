@@ -8,7 +8,7 @@ version gating works.
 
 | Family | Native availability | Backport provides |
 |---|---|---|
-| Auto Layout | iOS 6 (constraints); `UILayoutGuide` iOS 9; `contentLayoutGuide`/`frameLayoutGuide` iOS 11 | Cassowary-based engine, `NSLayoutConstraint`, `UIView` constraint members and anchors, `NSLayoutConstraint.activate`/`deactivate`, `UILayoutGuide`, scroll-view layout guides |
+| Auto Layout | iOS 6 (constraints); `UILayoutGuide` iOS 9 | Cassowary-based engine, `NSLayoutConstraint` (incl. VFL), `UIView` constraint members and anchors, `NSLayoutConstraint.activate`/`deactivate`, `UILayoutGuide` (+ `addLayoutGuide`, `layoutMarginsGuide`) |
 | `UIStackView` | iOS 9 | stack view implementation with the documented iOS 9 API |
 | Refresh control | iOS 6 | `UIRefreshControl` and `UIScrollView.refreshControl` |
 | Compositional layout | iOS 13 | `UICollectionViewCompositionalLayout`(+`Configuration`), `NSCollectionLayout*` types, `NSDirectionalEdgeInsets`, orthogonal scrolling behaviour |

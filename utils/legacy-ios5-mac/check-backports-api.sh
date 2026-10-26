@@ -45,6 +45,11 @@ public final class BackportsController: UIViewController {
         ])
         NSLayoutConstraint.deactivate(child.constraints)
         child.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let guide = UILayoutGuide()
+        view.addLayoutGuide(guide)
+        guide.leadingAnchor.constraint(equalTo: view.leadingAnchor).isActive = true
+        let _: CGRect = guide.layoutFrame
+        _ = view.layoutMarginsGuide
 
         let stack = UIStackView(arrangedSubviews: [child])
         stack.axis = .vertical
@@ -107,18 +112,6 @@ SWIFT
 if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-library -typecheck \
      "$OUT/LaterMember.swift" > "$OUT/ios5.0-negative/build.log" 2>&1; then
   echo 'FAIL: UIStackView.setCustomSpacing(after:) (iOS 11) must stay unavailable at a backported iOS 5 floor' >&2
-  exit 1
-fi
-# UILayoutGuide has no runtime implementation in this toolchain, so it must not
-# compile at a legacy target (a visible-but-unimplemented API is worse than absent).
-mkdir -p "$OUT/ios5.0-unguided"
-cat > "$OUT/UnimplementedGuide.swift" <<'SWIFT'
-import UIKit
-func useGuide(_ view: UIView) { let guide = UILayoutGuide(); view.addLayoutGuide(guide) }
-SWIFT
-if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-library -typecheck \
-     "$OUT/UnimplementedGuide.swift" > "$OUT/ios5.0-unguided/build.log" 2>&1; then
-  echo 'FAIL: UILayoutGuide must stay unavailable until the runtime implements it' >&2
   exit 1
 fi
 # The user excluded visual effects: they must stay natively unavailable.
