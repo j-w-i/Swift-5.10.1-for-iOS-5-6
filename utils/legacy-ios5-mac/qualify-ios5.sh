@@ -142,7 +142,12 @@ ensure_log "$OUTPUT/logs/class-marking.log" "PASS: class-marking check completed
 echo "== 3/5 iOS 5 armv7 link (LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN)"
 mkdir -p "$OUTPUT/ios5-app"
 cat > "$OUTPUT/ios5-app/main.swift" <<'SW'
+// Keep the SDK's transitive os/log import covered: this failed at an iOS 5
+// deployment target even though Foundation/UIKit alone could compile.
 import Foundation
+import UIKit
+import Dispatch
+import Accelerate
 final class QualificationMarker { var value = 41; func bump() -> Int { value + 1 } }
 let marker = QualificationMarker()
 print("ios5-qualification \(marker.bump()) \(String(describing: Date.init(timeIntervalSince1970: 0)))")
@@ -284,4 +289,4 @@ fi
   --evidence "$OUTPUT/qualification-evidence.json"
 echo
 echo "iOS 5 is now available in the kit for that environment (device execution: pending, static checks only)."
-[ "$INSTALLED" -eq 1 ] && echo "Toolchain installed at $TC"
+if [ "$INSTALLED" -eq 1 ]; then echo "Toolchain installed at $TC"; fi

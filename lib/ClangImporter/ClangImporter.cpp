@@ -869,6 +869,17 @@ importer::addCommonInvocationArguments(
     invocationArgStrs.push_back("-fbuild-session-file=" + importerOpts.BuildSessionFilePath);
   }
 
+  // Before iOS 6, os/object.h disables Objective-C OS objects and leaves
+  // DECL_SWIFT undefined, but __swift__ still enables OS_OBJECT_SWIFT3. Keep
+  // os/log.h on its C declarations in opt-in legacy mode for native devices.
+  // Use the actual Clang target and precede ExtraArgs so -Xcc can override this
+  // default without changing any other target's SDK configuration.
+  if (ctx.LangOpts.LegacyIOS5ClassMarking && triple.isiOS() &&
+      !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
+      !triple.isMacCatalystEnvironment() && triple.isOSVersionLT(6)) {
+    invocationArgStrs.push_back("-DOS_OBJECT_SWIFT3=0");
+  }
+
   for (auto extraArg : importerOpts.ExtraArgs) {
     invocationArgStrs.push_back(extraArg);
   }
