@@ -227,6 +227,16 @@ try:
     if not clang_resources:
         fail('Baseline toolchain has no usr/lib/clang/<version>/include/stdarg.h.')
     chosen = clang_resources[-1]
+    # Clang emits __isPlatformVersionAtLeast for @available checks on iOS, and the
+    # baseline only ships macOS builtins. Without the armv7 iOS compiler-rt archive
+    # any Objective-C dependency using availability fails to link with
+    # "Undefined symbols: ___isPlatformVersionAtLeast".
+    builtins = Path(os.environ.get('LEGACY_515_ROOT', '')) / 'build/crt-armv7-ios50/lib/darwin/libclang_rt.ios.a'
+    if not builtins.is_file():
+        fail('iOS compiler-rt builtins missing (run the crt-515 stage): ' + str(builtins))
+    builtins_dir = chosen / 'lib' / 'darwin'
+    builtins_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(builtins, builtins_dir / 'libclang_rt.ios.a')
     (slot / 'clang').symlink_to(os.path.relpath(chosen, slot), target_is_directory=True)
     if not (slot / 'clang/include/stdarg.h').is_file():
         fail('Slot clang resource link does not expose Clang builtin headers.')
