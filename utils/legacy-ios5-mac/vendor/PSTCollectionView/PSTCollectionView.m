@@ -9,6 +9,7 @@
 #import "PSTCollectionViewData.h"
 #import "PSTCollectionViewLayout+Internals.h"
 #import "PSTCollectionViewItemKey.h"
+#import "PSTCollectionViewStats.h"
 
 #import <objc/runtime.h>
 #if TARGET_IPHONE_SIMULATOR
@@ -114,6 +115,20 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
         unsigned int doneFirstLayout : 1;
     }_collectionViewFlags;
     CGPoint _lastLayoutOffset;
+    // Scratch collections reused by updateVisibleCellsNow: one pass used to
+    // allocate two NSSets, an NSArray and an NSMutableDictionary.
+    NSMutableSet *_pstVisibleItemKeysScratch;
+    NSMutableArray *_pstVisibleItemKeysToRemoveScratch;
+    NSMutableArray *_pstFloatingViewsScratch;
+    // Identity of the last completed visible-cell pass.  When the data cache
+    // hands back the same attribute generation for the same bounds and no view
+    // was added/removed since, repeating the pass can not change anything.
+    NSUInteger _pstLastVisibleLayoutAttributesGeneration;
+    CGRect _pstLastVisibleBounds;
+    BOOL _pstVisibleViewsMatchAttributes;
+    // Layout attributes currently being applied while a data-source creates a
+    // cell; dequeueReusableCell... reuses them instead of deriving a second copy.
+    PSTCollectionViewLayoutAttributes *_pstLayoutAttributesBeingApplied;
     char filler[232]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 @property (nonatomic, strong) PSTCollectionViewData *collectionViewData;
@@ -147,6 +162,34 @@ const char kPSTColletionViewExt;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - NSObject
+
+// YES when applying `attributes` to `view` would be a complete no-op: the view
+// already stores an attribute set with the same visible geometry and every view
+// property applyLayoutAttributes: writes already has those values.  This lets a
+// scroll pass skip CoreAnimation property writes for the cells that stay put.
+static BOOL PSTLayoutAttributesAlreadyApplied(PSTCollectionViewLayoutAttributes *attributes, PSTCollectionReusableView *view) {
+    PSTCollectionViewLayoutAttributes *current = view.layoutAttributes;
+    if (!current) return NO;
+    if (current == attributes) return YES;
+    // Identity matters even when the frame is unchanged: cells can be re-indexed
+    // by an insert/delete while keeping their geometry.
+    if (![current.indexPath isEqual:attributes.indexPath]) return NO;
+    if (current.representedElementCategory != attributes.representedElementCategory) return NO;
+    if (![current.representedElementKind isEqual:attributes.representedElementKind]) return NO;
+    if (!CGRectEqualToRect(current.frame, attributes.frame)) return NO;
+    if (current.hidden != attributes.hidden) return NO;
+    if (current.alpha != attributes.alpha) return NO;
+    if (current.zIndex != attributes.zIndex) return NO;
+    if (!CATransform3DEqualToTransform(current.transform3D, attributes.transform3D)) return NO;
+    // The view itself must still match as well; otherwise re-apply (and repair).
+    if (!CGSizeEqualToSize(view.bounds.size, attributes.size)) return NO;
+    if (!CGPointEqualToPoint(view.center, attributes.center)) return NO;
+    if (view.hidden != attributes.hidden) return NO;
+    if (view.layer.opacity != attributes.alpha) return NO;
+    if (view.layer.zPosition != attributes.zIndex) return NO;
+    if (!CATransform3DEqualToTransform(view.layer.transform, attributes.transform3D)) return NO;
+    return YES;
+}
 
 static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _self.allowsSelection = YES;
@@ -258,11 +301,20 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // do we need to update contentSize?
     CGSize contentSize = [_collectionViewData collectionViewContentRect].size;
     if (!CGSizeEqualToSize(self.contentSize, contentSize)) {
+        CGPoint previousContentOffset = self.contentOffset;
+        CGSize previousBoundsSize = self.bounds.size;
         self.contentSize = contentSize;
 
-        // if contentSize is different, we need to re-evaluate layout, bounds (contentOffset) might changed
+        // if contentSize is different, we need to re-evaluate layout, bounds (contentOffset) might changed.
+        // Only run the (expensive) visible-cell pass when the scroll position or
+        // size actually moved; a pure content-size change cannot alter which
+        // attributes are visible.
         [_collectionViewData validateLayoutInRect:self.bounds];
-        [self updateVisibleCellsNow:YES];
+        if (_collectionViewFlags.updatingLayout ||
+            !CGPointEqualToPoint(previousContentOffset, self.contentOffset) ||
+            !CGSizeEqualToSize(previousBoundsSize, self.bounds.size)) {
+            [self updateVisibleCellsNow:YES];
+        }
     }
 
     if (_backgroundView) {
@@ -439,7 +491,17 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // de-queue cell (if available)
     NSMutableArray *reusableCells = [_cellReuseQueues objectForKey:identifier];
     PSTCollectionViewCell *cell = [reusableCells lastObject];
-    PSTCollectionViewLayoutAttributes *attributes = [self.collectionViewLayout layoutAttributesForItemAtIndexPath:indexPath];
+    PSTCollectionViewLayoutAttributes *attributes = nil;
+    if (_pstLayoutAttributesBeingApplied &&
+        _pstLayoutAttributesBeingApplied.isCell &&
+        [_pstLayoutAttributesBeingApplied.indexPath isEqual:indexPath]) {
+        // Cell creation from updateVisibleCellsNow: this pass already computed the
+        // attributes, no need to derive them a second time.
+        attributes = _pstLayoutAttributesBeingApplied;
+        PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+    } else {
+        attributes = [self.collectionViewLayout layoutAttributesForItemAtIndexPath:indexPath];
+    }
 
     if (cell) {
         [reusableCells removeObjectAtIndex:reusableCells.count - 1];
@@ -504,7 +566,16 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 @throw [NSException exceptionWithName:NSInvalidArgumentException reason:[NSString stringWithFormat:@"Class not registered for kind/identifier %@", kindAndIdentifier] userInfo:nil];
             }
             if (self.collectionViewLayout) {
-                PSTCollectionViewLayoutAttributes *attributes = [self.collectionViewLayout layoutAttributesForSupplementaryViewOfKind:elementKind atIndexPath:indexPath];
+                PSTCollectionViewLayoutAttributes *attributes = nil;
+                if (_pstLayoutAttributesBeingApplied &&
+                    !_pstLayoutAttributesBeingApplied.isCell &&
+                    [_pstLayoutAttributesBeingApplied.representedElementKind isEqual:elementKind] &&
+                    [_pstLayoutAttributesBeingApplied.indexPath isEqual:indexPath]) {
+                    attributes = _pstLayoutAttributesBeingApplied;
+                    PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+                } else {
+                    attributes = [self.collectionViewLayout layoutAttributesForSupplementaryViewOfKind:elementKind atIndexPath:indexPath];
+                }
                 if (attributes) {
                     view = [[viewClass alloc] initWithFrame:attributes.frame];
                 }
@@ -565,15 +636,27 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 }
 
 - (NSArray *)allCells {
-    return [[_allVisibleViewsDict allValues] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id evaluatedObject, NSDictionary *bindings) {
-        return [evaluatedObject isKindOfClass:PSTCollectionViewCell.class];
-    }]];
+    NSMutableArray *cells = [NSMutableArray arrayWithCapacity:_allVisibleViewsDict.count];
+    NSEnumerator *enumerator = [_allVisibleViewsDict objectEnumerator];
+    id evaluatedObject = nil;
+    while ((evaluatedObject = [enumerator nextObject]) != nil) {
+        if ([evaluatedObject isKindOfClass:PSTCollectionViewCell.class]) {
+            [cells addObject:evaluatedObject];
+        }
+    }
+    return cells;
 }
 
 - (NSArray *)visibleCells {
-    return [[_allVisibleViewsDict allValues] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id evaluatedObject, NSDictionary *bindings) {
-        return [evaluatedObject isKindOfClass:PSTCollectionViewCell.class] && CGRectIntersectsRect(self.bounds, [evaluatedObject frame]);
-    }]];
+    NSMutableArray *cells = [NSMutableArray arrayWithCapacity:_allVisibleViewsDict.count];
+    NSEnumerator *enumerator = [_allVisibleViewsDict objectEnumerator];
+    id evaluatedObject = nil;
+    while ((evaluatedObject = [enumerator nextObject]) != nil) {
+        if ([evaluatedObject isKindOfClass:PSTCollectionViewCell.class] && CGRectIntersectsRect(self.bounds, [evaluatedObject frame])) {
+            [cells addObject:evaluatedObject];
+        }
+    }
+    return cells;
 }
 
 - (void)reloadData {
@@ -593,6 +676,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     }
     [_indexPathsForSelectedItems removeAllObjects];
     [_indexPathsForHighlightedItems removeAllObjects];
+    _pstVisibleViewsMatchAttributes = NO;
 
     [self setNeedsLayout];
 }
@@ -1076,10 +1160,12 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
         _collectionViewFlags.scheduledUpdateVisibleCells = YES;
         _collectionViewFlags.scheduledUpdateVisibleCellLayoutAttributes = NO;
-
+        _pstVisibleViewsMatchAttributes = NO;
         [self setNeedsDisplay];
     }
     else {
+        _pstVisibleViewsMatchAttributes = NO;
+
         layout.collectionView = self;
 
         _layout.collectionView = nil;
@@ -1108,7 +1194,13 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         CGPoint targetOffset = self.contentOffset;
         CGPoint centerPoint = CGPointMake(self.bounds.origin.x + self.bounds.size.width / 2.f,
                 self.bounds.origin.y + self.bounds.size.height / 2.f);
-        NSIndexPath *centerItemIndexPath = [self indexPathForItemAtPoint:centerPoint];
+        // Resolve the centre item once.  indexPathForItemAtPoint: performed the
+        // 1x1 scan and threw the attributes away, just to derive an identical
+        // attributes object again below; keep the attribute that the scan already
+        // returned instead.
+        CGRect centerRect = CGRectMake(centerPoint.x, centerPoint.y, 1.f, 1.f);
+        PSTCollectionViewLayoutAttributes *centerItemLayoutAttributes = [[layout layoutAttributesForElementsInRect:centerRect] lastObject];
+        NSIndexPath *centerItemIndexPath = centerItemLayoutAttributes.indexPath;
 
         if (!centerItemIndexPath) {
             NSArray *visibleItems = [self indexPathsForVisibleItems];
@@ -1118,7 +1210,10 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }
 
         if (centerItemIndexPath) {
-            PSTCollectionViewLayoutAttributes *layoutAttributes = [layout layoutAttributesForItemAtIndexPath:centerItemIndexPath];
+            PSTCollectionViewLayoutAttributes *layoutAttributes = centerItemLayoutAttributes;
+            if (!layoutAttributes) {
+                layoutAttributes = [layout layoutAttributesForItemAtIndexPath:centerItemIndexPath];
+            }
             if (layoutAttributes) {
                 PSTCollectionViewScrollPosition scrollPosition = PSTCollectionViewScrollPositionCenteredVertically|PSTCollectionViewScrollPositionCenteredHorizontally;
                 CGRect targetRect = [self makeRect:layoutAttributes.frame toScrollPosition:scrollPosition];
@@ -1133,40 +1228,45 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 newlyVisibleLayoutAttrs.count + previouslyVisibleItemsKeysSet.count];
 
         NSMutableSet *newlyVisibleItemsKeys = [NSMutableSet set];
+        NSMutableDictionary *newlyVisibleAttrsByKey = [NSMutableDictionary dictionaryWithCapacity:previouslyVisibleItemsKeysSet.count];
         for (PSTCollectionViewLayoutAttributes *attr in newlyVisibleLayoutAttrs) {
             PSTCollectionViewItemKey *newKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:attr];
             [newlyVisibleItemsKeys addObject:newKey];
 
-            PSTCollectionViewLayoutAttributes *prevAttr = nil;
-            PSTCollectionViewLayoutAttributes *newAttr = nil;
-
-            if (newKey.type == PSTCollectionViewItemTypeDecorationView) {
-                prevAttr = [self.collectionViewLayout layoutAttributesForDecorationViewOfKind:attr.representedElementKind
-                        atIndexPath:newKey.indexPath];
-                newAttr = [layout layoutAttributesForDecorationViewOfKind:attr.representedElementKind
-                        atIndexPath:newKey.indexPath];
-            }
-            else if (newKey.type == PSTCollectionViewItemTypeCell) {
-                prevAttr = [self.collectionViewLayout layoutAttributesForItemAtIndexPath:newKey.indexPath];
-                newAttr = [layout layoutAttributesForItemAtIndexPath:newKey.indexPath];
-            }
-            else {
-                prevAttr = [self.collectionViewLayout layoutAttributesForSupplementaryViewOfKind:attr.representedElementKind
-                        atIndexPath:newKey.indexPath];
-                newAttr = [layout layoutAttributesForSupplementaryViewOfKind:attr.representedElementKind
-                        atIndexPath:newKey.indexPath];
+            // The second loop fills the interchange entry for every previously
+            // visible key (and used to overwrite the entry written here), so
+            // deriving prev/new attributes for those keys is pure duplicate work.
+            // Keep the already-fetched attribute for that loop instead.
+            if ([previouslyVisibleItemsKeysSet containsObject:newKey]) {
+                [newlyVisibleAttrsByKey setObject:attr forKey:newKey];
+                continue;
             }
 
-            if (prevAttr != nil && newAttr != nil) {
-                [layoutInterchangeData setObject:@{@"previousLayoutInfos": prevAttr, @"newLayoutInfos": newAttr} forKey:newKey];
-            }
+            // This attribute already is the new layout's attribute for the key;
+            // the old code derived two more, value-identical copies by asking the
+            // same layout object again.  Use the fetched attribute for both
+            // animation endpoints (the second application becomes a no-op).
+            PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+            PSTCollectionViewStatsCountersStorage[PSTStatLayoutAttributeDiffs]++;
+            [layoutInterchangeData setObject:@{@"previousLayoutInfos": attr, @"newLayoutInfos": attr} forKey:newKey];
         }
 
         for (PSTCollectionViewItemKey *key in previouslyVisibleItemsKeysSet) {
             PSTCollectionViewLayoutAttributes *prevAttr = nil;
             PSTCollectionViewLayoutAttributes *newAttr = nil;
+            PSTCollectionViewLayoutAttributes *alreadyFetchedAttrs = [newlyVisibleAttrsByKey objectForKey:key];
 
-            if (key.type == PSTCollectionViewItemTypeDecorationView) {
+            if (alreadyFetchedAttrs) {
+                // The old code derived two separate, value-identical attributes
+                // from the new layout for every key that stays visible.  Reuse the
+                // one fetched for the new bounds; the second application is then a
+                // no-op on the view (same pointer) and the final geometry is
+                // unchanged.
+                prevAttr = alreadyFetchedAttrs;
+                newAttr = alreadyFetchedAttrs;
+                PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached] += 2;
+            }
+            else if (key.type == PSTCollectionViewItemTypeDecorationView) {
                 PSTCollectionReusableView *decorView = [_allVisibleViewsDict objectForKey:key];
                 prevAttr = [self.collectionViewLayout layoutAttributesForDecorationViewOfKind:decorView.reuseIdentifier
                         atIndexPath:key.indexPath];
@@ -1188,6 +1288,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             NSMutableDictionary *layoutInterchangeDataValue = [NSMutableDictionary dictionary];
             if (prevAttr) [layoutInterchangeDataValue setObject:prevAttr forKey:@"previousLayoutInfos"];
             if (newAttr) [layoutInterchangeDataValue setObject:newAttr forKey:@"newLayoutInfos"];
+            PSTCollectionViewStatsCountersStorage[PSTStatLayoutAttributeDiffs]++;
             [layoutInterchangeData setObject:layoutInterchangeDataValue forKey:key];
         }
 
@@ -1383,21 +1484,42 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 // update currently visible cells, fetches new cells if needed
 // TODO: use now parameter.
 - (void)updateVisibleCellsNow:(BOOL)now {
+    PSTCollectionViewStatsCountersStorage[PSTStatPasses]++;
+    uint64_t pstPassStart = PSTCollectionViewStatsNowNanoseconds();
+#define PST_STATS_END_PASS() do { \
+    PSTCollectionViewStatsCountersStorage[PSTStatLayoutPassNanoseconds] += PSTCollectionViewStatsNowNanoseconds() - pstPassStart; \
+} while (0)
     NSArray *layoutAttributesArray = [_collectionViewData layoutAttributesForElementsInRect:self.bounds];
 
     if (layoutAttributesArray == nil || layoutAttributesArray.count == 0) {
         // If our layout source isn't providing any layout information, we should just
         // stop, otherwise we'll blow away all the currently existing cells.
+        PST_STATS_END_PASS();
         return;
     }
 
-    // create ItemKey/Attributes dictionary
-    NSMutableDictionary *itemKeysToAddDict = [NSMutableDictionary dictionary];
+    // Steady state: the data cache already produced this exact attribute set for
+    // this exact bounds and the visible views are known to be in sync with it.
+    // Re-building the key set and re-applying every attribute can not change a
+    // single view, so skip the whole pass.
+    if (_pstVisibleViewsMatchAttributes &&
+        _pstLastVisibleLayoutAttributesGeneration == [_collectionViewData layoutAttributesGeneration] &&
+        CGRectEqualToRect(self.bounds, _pstLastVisibleBounds)) {
+        PSTCollectionViewStatsCountersStorage[PSTStatPassesSkipped]++;
+        PST_STATS_END_PASS();
+        return;
+    }
+
+    if (!_pstVisibleItemKeysScratch) {
+        _pstVisibleItemKeysScratch = [NSMutableSet setWithCapacity:layoutAttributesArray.count];
+    } else {
+        [_pstVisibleItemKeysScratch removeAllObjects];
+    }
 
     // Add new cells.
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
         PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
-        [itemKeysToAddDict setObject:layoutAttributes forKey:itemKey];
+        [_pstVisibleItemKeysScratch addObject:itemKey];
 
         // check if cell is in visible dict; add it if not.
         PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:itemKey];
@@ -1419,20 +1541,37 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self addControlledSubview:view];
 
                 // Always apply attributes. Fixes #203.
+                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
                 [view applyLayoutAttributes:layoutAttributes];
             }
         }else {
-            // just update cell
-            [view applyLayoutAttributes:layoutAttributes];
+            // just update cell - unless it already shows exactly these attributes
+            if (!PSTLayoutAttributesAlreadyApplied(layoutAttributes, view)) {
+                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
+                [view applyLayoutAttributes:layoutAttributes];
+            }
         }
     }
 
-    // Detect what items should be removed and queued back.
-    NSMutableSet *allVisibleItemKeys = [NSMutableSet setWithArray:[_allVisibleViewsDict allKeys]];
-    [allVisibleItemKeys minusSet:[NSSet setWithArray:[itemKeysToAddDict allKeys]]];
+    // Detect what items should be removed and queued back.  The previous code
+    // allocated two NSSets and two NSArrays per pass just to compute this set
+    // difference; the scratch array keeps the collection order and allocation
+    // out of the steady-state path.
+    if (!_pstVisibleItemKeysToRemoveScratch) {
+        _pstVisibleItemKeysToRemoveScratch = [NSMutableArray array];
+    } else {
+        [_pstVisibleItemKeysToRemoveScratch removeAllObjects];
+    }
+    NSEnumerator *visibleKeyEnumerator = [_allVisibleViewsDict keyEnumerator];
+    PSTCollectionViewItemKey *candidateKey = nil;
+    while ((candidateKey = [visibleKeyEnumerator nextObject]) != nil) {
+        if (![_pstVisibleItemKeysScratch containsObject:candidateKey]) {
+            [_pstVisibleItemKeysToRemoveScratch addObject:candidateKey];
+        }
+    }
 
     // Finally remove views that have not been processed and prepare them for re-use.
-    for (PSTCollectionViewItemKey *itemKey in allVisibleItemKeys) {
+    for (PSTCollectionViewItemKey *itemKey in _pstVisibleItemKeysToRemoveScratch) {
         PSTCollectionReusableView *reusableView = [_allVisibleViewsDict objectForKey:itemKey];
         if (reusableView) {
             [reusableView removeFromSuperview];
@@ -1454,11 +1593,24 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             }
         }
     }
+
+    _pstLastVisibleLayoutAttributesGeneration = [_collectionViewData layoutAttributesGeneration];
+    _pstLastVisibleBounds = self.bounds;
+    _pstVisibleViewsMatchAttributes = YES;
+    PST_STATS_END_PASS();
 }
+#undef PST_STATS_END_PASS
 
 // fetches a cell from the dataSource and sets the layoutAttributes
 - (PSTCollectionViewCell *)createPreparedCellForItemAtIndexPath:(NSIndexPath *)indexPath withLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
+    PSTCollectionViewStatsCountersStorage[PSTStatVisibleCellsCreated]++;
+    // The data source will very likely dequeue a cell for exactly this index
+    // path; hand it the attributes already computed for this pass instead of
+    // letting it ask the layout for a second, identical attributes object.
+    PSTCollectionViewLayoutAttributes *previousAttributes = _pstLayoutAttributesBeingApplied;
+    _pstLayoutAttributesBeingApplied = layoutAttributes;
     PSTCollectionViewCell *cell = [self.dataSource collectionView:self cellForItemAtIndexPath:indexPath];
+    _pstLayoutAttributesBeingApplied = previousAttributes;
 
     // Apply attributes
     [cell applyLayoutAttributes:layoutAttributes];
@@ -1477,9 +1629,12 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         atIndexPath:(NSIndexPath *)indexPath
         withLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
     if (_collectionViewFlags.dataSourceViewForSupplementaryElement) {
+        PSTCollectionViewLayoutAttributes *previousAttributes = _pstLayoutAttributesBeingApplied;
+        _pstLayoutAttributesBeingApplied = layoutAttributes;
         PSTCollectionReusableView *view = [self.dataSource collectionView:self
                 viewForSupplementaryElementOfKind:kind
                 atIndexPath:indexPath];
+        _pstLayoutAttributesBeingApplied = previousAttributes;
         [view applyLayoutAttributes:layoutAttributes];
         return view;
     }
@@ -1524,29 +1679,40 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // We take the max to ensure we insert at a non negative index because a negative index will silently fail to insert the view
     NSInteger insertionIndex = MAX((NSInteger)(self.subviews.count - (self.dragging ? 1 : 0)), 0);
     [self insertSubview:subview atIndex:insertionIndex];
+    // One subviews snapshot for both the scroll-indicator and the z-index scan.
+    NSArray *subviews = self.subviews;
     UIView *scrollIndicatorView = nil;
     if (self.dragging) {
-        scrollIndicatorView = [self.subviews lastObject];
+        scrollIndicatorView = [subviews lastObject];
     }
 
-    NSMutableArray *floatingViews = [[NSMutableArray alloc] init];
-    for (UIView *uiView in self.subviews) {
+    // This runs for every newly visible cell.  Layouts without floating
+    // supplementary views (the common case) must not allocate and sort.
+    if (!_pstFloatingViewsScratch) {
+        _pstFloatingViewsScratch = [NSMutableArray array];
+    } else {
+        [_pstFloatingViewsScratch removeAllObjects];
+    }
+    NSMutableArray *floatingViews = _pstFloatingViewsScratch;
+    for (UIView *uiView in subviews) {
         if ([uiView isKindOfClass:PSTCollectionReusableView.class] && [[(PSTCollectionReusableView *)uiView layoutAttributes] zIndex] > 0) {
             [floatingViews addObject:uiView];
         }
     }
 
-    [floatingViews sortUsingComparator:^NSComparisonResult(PSTCollectionReusableView *obj1, PSTCollectionReusableView *obj2) {
-        CGFloat z1 = [[obj1 layoutAttributes] zIndex];
-        CGFloat z2 = [[obj2 layoutAttributes] zIndex];
-        if (z1 > z2) {
-            return (NSComparisonResult)NSOrderedDescending;
-        }else if (z1 < z2) {
-            return (NSComparisonResult)NSOrderedAscending;
-        }else {
-            return (NSComparisonResult)NSOrderedSame;
-        }
-    }];
+    if (floatingViews.count > 1) {
+        [floatingViews sortUsingComparator:^NSComparisonResult(PSTCollectionReusableView *obj1, PSTCollectionReusableView *obj2) {
+            CGFloat z1 = [[obj1 layoutAttributes] zIndex];
+            CGFloat z2 = [[obj2 layoutAttributes] zIndex];
+            if (z1 > z2) {
+                return (NSComparisonResult)NSOrderedDescending;
+            }else if (z1 < z2) {
+                return (NSComparisonResult)NSOrderedAscending;
+            }else {
+                return (NSComparisonResult)NSOrderedSame;
+            }
+        }];
+    }
 
     for (PSTCollectionReusableView *uiView in floatingViews) {
         [self bringSubviewToFront:uiView];
@@ -1607,6 +1773,16 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     NSMutableArray *animations = [[NSMutableArray alloc] init];
     NSMutableDictionary *newAllVisibleView = [[NSMutableDictionary alloc] init];
+    // Keyed membership replaces the O(n) [newAllVisibleView allKeys] allocation
+    // that used to run once per newly visible attribute.
+    NSMutableSet *newAllVisibleViewKeys = [NSMutableSet set];
+    // The update machinery asks the layout for the same item/visible attributes
+    // repeatedly; fetch everything visible once and reuse it.
+    NSArray *allNewlyVisibleItems = [_layout layoutAttributesForElementsInRect:self.visibleBoundRects];
+    NSMutableDictionary *newlyVisibleAttrsByKey = [NSMutableDictionary dictionaryWithCapacity:allNewlyVisibleItems.count];
+    for (PSTCollectionViewLayoutAttributes *attributes in allNewlyVisibleItems) {
+        [newlyVisibleAttrsByKey setObject:attributes forKey:[PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:attributes]];
+    }
 
     NSMutableDictionary *viewsToRemove = [NSMutableDictionary dictionaryWithObjectsAndKeys:
             [NSMutableArray array], @(PSTCollectionViewItemTypeCell),
@@ -1666,7 +1842,12 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             NSIndexPath *indexPath = updateItem.indexPathAfterUpdate;
             PSTCollectionViewItemKey *key = [PSTCollectionViewItemKey collectionItemKeyForCellWithIndexPath:indexPath];
             PSTCollectionViewLayoutAttributes *startAttrs = [_layout initialLayoutAttributesForAppearingItemAtIndexPath:indexPath];
-            PSTCollectionViewLayoutAttributes *finalAttrs = [_layout layoutAttributesForItemAtIndexPath:indexPath];
+            PSTCollectionViewLayoutAttributes *finalAttrs = [newlyVisibleAttrsByKey objectForKey:key];
+            if (finalAttrs) {
+                PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+            } else {
+                finalAttrs = [_layout layoutAttributesForItemAtIndexPath:indexPath];
+            }
 
             CGRect startRect = startAttrs.frame;
             CGRect finalRect = finalAttrs.frame;
@@ -1683,6 +1864,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self addControlledSubview:view];
 
                 [newAllVisibleView setObject:view forKey:key];
+                [newAllVisibleViewKeys addObject:key];
                 [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs, @"newLayoutInfos" : finalAttrs}];
             }
         }
@@ -1695,12 +1877,18 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:keyBefore];
 
             PSTCollectionViewLayoutAttributes *startAttrs = nil;
-            PSTCollectionViewLayoutAttributes *finalAttrs = [_layout layoutAttributesForItemAtIndexPath:indexPathAfter];
+            PSTCollectionViewLayoutAttributes *finalAttrs = [newlyVisibleAttrsByKey objectForKey:keyAfter];
+            if (finalAttrs) {
+                PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+            } else {
+                finalAttrs = [_layout layoutAttributesForItemAtIndexPath:indexPathAfter];
+            }
 
             if (view) {
                 startAttrs = view.layoutAttributes;
                 [_allVisibleViewsDict removeObjectForKey:keyBefore];
                 [newAllVisibleView setObject:view forKey:keyAfter];
+                [newAllVisibleViewKeys addObject:keyAfter];
             }
             else {
                 startAttrs = [finalAttrs copy];
@@ -1708,6 +1896,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 view = [self createPreparedCellForItemAtIndexPath:indexPathAfter withLayoutAttributes:startAttrs];
                 [self addControlledSubview:view];
                 [newAllVisibleView setObject:view forKey:keyAfter];
+                [newAllVisibleViewKeys addObject:keyAfter];
             }
 
             [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs, @"newLayoutInfos" : finalAttrs}];
@@ -1732,16 +1921,22 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 PSTCollectionViewLayoutAttributes *finalAttrs = nil;
 
                 startAttrs = [_layout initialLayoutAttributesForAppearingItemAtIndexPath:oldIndexPath];
-                finalAttrs = [_layout layoutAttributesForItemAtIndexPath:newIndexPath];
+                PSTCollectionViewItemKey *newKey = [key copy];
+                [newKey setIndexPath:newIndexPath];
+                finalAttrs = [newlyVisibleAttrsByKey objectForKey:newKey];
+                if (finalAttrs) {
+                    PSTCollectionViewStatsCountersStorage[PSTStatItemDerivationsCached]++;
+                } else {
+                    finalAttrs = [_layout layoutAttributesForItemAtIndexPath:newIndexPath];
+                }
 
                 NSMutableDictionary *dic = [NSMutableDictionary dictionaryWithDictionary:@{@"view" : view}];
                 if (startAttrs) [dic setObject:startAttrs forKey:@"previousLayoutInfos"];
                 if (finalAttrs) [dic setObject:finalAttrs forKey:@"newLayoutInfos"];
 
                 [animations addObject:dic];
-                PSTCollectionViewItemKey *newKey = [key copy];
-                [newKey setIndexPath:newIndexPath];
                 [newAllVisibleView setObject:view forKey:newKey];
+                [newAllVisibleViewKeys addObject:newKey];
 
             }
         }else if (key.type == PSTCollectionViewItemTypeSupplementaryView) {
@@ -1758,14 +1953,14 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             [animations addObject:dic];
             PSTCollectionViewItemKey *newKey = [key copy];
             [newAllVisibleView setObject:view forKey:newKey];
+            [newAllVisibleViewKeys addObject:newKey];
 
         }
     }
-    NSArray *allNewlyVisibleItems = [_layout layoutAttributesForElementsInRect:self.visibleBoundRects];
     for (PSTCollectionViewLayoutAttributes *attrs in allNewlyVisibleItems) {
         PSTCollectionViewItemKey *key = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:attrs];
 
-        if (key.type == PSTCollectionViewItemTypeCell && ![[newAllVisibleView allKeys] containsObject:key]) {
+        if (key.type == PSTCollectionViewItemTypeCell && ![newAllVisibleViewKeys containsObject:key]) {
             PSTCollectionViewLayoutAttributes *startAttrs =
                     [_layout initialLayoutAttributesForAppearingItemAtIndexPath:attrs.indexPath];
 
@@ -1773,6 +1968,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                     withLayoutAttributes:startAttrs];
             [self addControlledSubview:view];
             [newAllVisibleView setObject:view forKey:key];
+            [newAllVisibleViewKeys addObject:key];
 
             [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs ? startAttrs : attrs, @"newLayoutInfos" : attrs}];
         }
@@ -1782,6 +1978,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 	//I resolve the bug when user insert the new sections, the cell will display with a blink animation at the first operation.
 	//But I don't know why the next operation wouldn't reproduction in the pre version.
     _allVisibleViewsDict = newAllVisibleView;
+    _pstVisibleViewsMatchAttributes = NO;
 
     for (NSDictionary *animation in animations) {
         PSTCollectionReusableView *view = [animation objectForKey:@"view"];

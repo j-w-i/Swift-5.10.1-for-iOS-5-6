@@ -61,8 +61,22 @@ public final class Solver {
     /// constraints that implement edit variables. Keyed by object identity.
     private var constraintTags: [ObjectIdentifier: ConstraintTag] = [:]
 
-    /// The basic rows of the tableau, keyed by their basic symbol.
-    private var rows: [Symbol: Row] = [:]
+    /// The basic rows of the tableau, indexed by the basic symbol's id.
+    ///
+    /// Symbol ids are dense per solver (allocated monotonically), so an array is
+    /// a cheaper lookup than hashing on every pivot. Holes are nil; ids that are
+    /// never basic stay nil.
+    private var basicRows: [Row?] = []
+
+    /// The basic symbols sorted by symbol id. Maintained on every basis change so
+    /// tableau traversals never re-sort the whole basis (the dominant cost in
+    /// the previous implementation).
+    private var basicSymbols: [Symbol] = []
+
+    /// External variables in the order their tableau symbols were allocated.
+    /// This matches the previous `variableSymbols.sorted(by: symbol id)` order,
+    /// without the per-update sort.
+    private var orderedVariables: [Variable] = []
 
     /// Maps caller-created variables to their tableau symbols. Symbols are
     /// allocated lazily, the first time a variable appears in a constraint.
@@ -116,8 +130,22 @@ public final class Solver {
     ///   required and cannot be satisfied together with the constraints already
     ///   in the solver. The solver state is unchanged in that case.
     public func addConstraint(_ constraint: Constraint) throws {
-        try addConstraintInternal(constraint)
-        constraints.append(constraint)
+        // Hot path: when no edit variables are registered, a failure can be
+        // rolled back by rebuilding the tableau from the (small) constraint
+        // list instead of snapshotting the whole tableau. Copying every row and
+        // basis array on each add was the dominant cost of a full layout build.
+        if edits.isEmpty {
+            do {
+                try addConstraintInternalNoSnapshot(constraint)
+                constraints.append(constraint)
+            } catch {
+                rebuildFromConstraintList()
+                throw error
+            }
+        } else {
+            try addConstraintInternal(constraint)
+            constraints.append(constraint)
+        }
     }
 
     /// Adds a batch of constraints, in order.
@@ -232,25 +260,25 @@ public final class Solver {
             // The edit constraint's row holds one of its two error symbols, or
             // neither. Move the constant of the row so the suggested value is
             // reflected, and note every row that became infeasible.
-            if var row = rows[info.tag.marker] {
+            if var row = basicRow(info.tag.marker) {
                 let newConstant = row.add(-delta)
-                rows[info.tag.marker] = row
+                storeBasicRow(row, for: info.tag.marker)
                 if newConstant < 0.0 {
                     infeasibleRows.append(info.tag.marker)
                 }
-            } else if var row = rows[info.tag.other] {
+            } else if var row = basicRow(info.tag.other) {
                 let newConstant = row.add(delta)
-                rows[info.tag.other] = row
+                storeBasicRow(row, for: info.tag.other)
                 if newConstant < 0.0 {
                     infeasibleRows.append(info.tag.other)
                 }
             } else {
-                for basic in rows.keys.sorted() {
-                    guard var row = rows[basic] else { continue }
+                for basic in basicSymbols {
+                    guard var row = basicRow(basic) else { continue }
                     let coefficient = row.coefficient(for: info.tag.marker)
                     if coefficient != 0.0 {
                         let newConstant = row.add(delta * coefficient)
-                        rows[basic] = row
+                        storeBasicRow(row, for: basic)
                         if newConstant < 0.0 && !basic.isExternal {
                             infeasibleRows.append(basic)
                         }
@@ -267,6 +295,83 @@ public final class Solver {
         }
     }
 
+    // MARK: - Changing constants
+
+    /// Changes the constant term of a constraint already held by the solver.
+    ///
+    /// This is the incremental equivalent of removing the constraint and adding
+    /// it back with a different constant: the tableau row is adjusted by the
+    /// constant delta and the dual simplex restores optimality, so the constraint
+    /// keeps its symbols (and therefore the deterministic pivot tie-breaks).
+    ///
+    /// - Throws: `SolverError.unknownConstraint` if the constraint is not held.
+    public func updateConstraintConstant(_ constraint: Constraint, constant: Double) throws {
+        try updateConstraintConstants([(constraint, constant)])
+    }
+
+    /// Batch form of `updateConstraintConstant(_:constant:)`. All constants are
+    /// adjusted first and the system is re-optimized once, which is what the
+    /// layout engine uses to advance its per-item "stay" constraints.
+    ///
+    /// - Throws: `SolverError.unknownConstraint` if a constraint is not held, or
+    ///   `SolverError.internalInconsistency` if the tableau cannot be
+    ///   re-optimized. The solver state is unchanged when this throws.
+    public func updateConstraintConstants(_ updates: [(Constraint, Double)]) throws {
+        guard !updates.isEmpty else { return }
+        let snapshot = makeSnapshot()
+        var applied: [(Expression, Double)] = []
+        applied.reserveCapacity(updates.count)
+        do {
+            for (constraint, newConstant) in updates {
+                guard let tag = constraintTags[ObjectIdentifier(constraint)] else {
+                    throw SolverError.unknownConstraint
+                }
+                let delta = newConstant - constraint.expression.constant
+                guard delta != 0.0 else { continue }
+                applied.append((constraint.expression, constraint.expression.constant))
+                adjustTableauConstant(tag: tag, delta: delta)
+                constraint.expression.constant = newConstant
+            }
+            guard dualOptimize() else {
+                throw SolverError.internalInconsistency("the dual simplex failed to re-optimize changed constants")
+            }
+        } catch {
+            for (expression, oldConstant) in applied { expression.constant = oldConstant }
+            restore(snapshot)
+            throw error
+        }
+    }
+
+    /// Applies a constant delta to the tableau row(s) of a constraint, mirroring
+    /// `suggestValue(_:_:)`'s use of the constraint's marker/other error symbols.
+    private func adjustTableauConstant(tag: ConstraintTag, delta: Double) {
+        if var row = basicRow(tag.marker) {
+            let newConstant = row.add(-delta)
+            storeBasicRow(row, for: tag.marker)
+            if newConstant < 0.0 {
+                infeasibleRows.append(tag.marker)
+            }
+        } else if var row = basicRow(tag.other) {
+            let newConstant = row.add(delta)
+            storeBasicRow(row, for: tag.other)
+            if newConstant < 0.0 {
+                infeasibleRows.append(tag.other)
+            }
+        } else {
+            for basic in basicSymbols {
+                guard var row = basicRow(basic) else { continue }
+                let coefficient = row.coefficient(for: tag.marker)
+                if coefficient != 0.0 {
+                    let newConstant = row.add(delta * coefficient)
+                    storeBasicRow(row, for: basic)
+                    if newConstant < 0.0 && !basic.isExternal {
+                        infeasibleRows.append(basic)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - External values
 
     /// Updates the external (user-facing) value of all variables from the
@@ -274,9 +379,9 @@ public final class Solver {
     ///
     /// Variables that were never written to the tableau report `0`.
     public func updateVariables() {
-        let sorted = variableSymbols.sorted { $0.value < $1.value }
-        for (variable, symbol) in sorted {
-            let newValue = rows[symbol]?.constant ?? 0.0
+        for variable in orderedVariables {
+            guard let symbol = variableSymbols[variable] else { continue }
+            let newValue = basicRow(symbol)?.constant ?? 0.0
             if let oldValue = externalValues[variable] {
                 if oldValue != newValue {
                     externalValues[variable] = newValue
@@ -325,7 +430,9 @@ public final class Solver {
     public func reset() {
         constraints.removeAll()
         constraintTags.removeAll()
-        rows.removeAll()
+        basicRows.removeAll()
+        basicSymbols.removeAll()
+        orderedVariables.removeAll()
         variableSymbols.removeAll()
         objective = Row()
         artificialRow = nil
@@ -346,7 +453,9 @@ public final class Solver {
     private struct Snapshot {
         var constraints: [Constraint]
         var constraintTags: [ObjectIdentifier: ConstraintTag]
-        var rows: [Symbol: Row]
+        var basicRows: [Row?]
+        var basicSymbols: [Symbol]
+        var orderedVariables: [Variable]
         var variableSymbols: [Variable: Symbol]
         var objective: Row
         var artificialRow: Row?
@@ -361,7 +470,9 @@ public final class Solver {
         Snapshot(
             constraints: constraints,
             constraintTags: constraintTags,
-            rows: rows,
+            basicRows: basicRows,
+            basicSymbols: basicSymbols,
+            orderedVariables: orderedVariables,
             variableSymbols: variableSymbols,
             objective: objective,
             artificialRow: artificialRow,
@@ -376,7 +487,9 @@ public final class Solver {
     private func restore(_ snapshot: Snapshot) {
         constraints = snapshot.constraints
         constraintTags = snapshot.constraintTags
-        rows = snapshot.rows
+        basicRows = snapshot.basicRows
+        basicSymbols = snapshot.basicSymbols
+        orderedVariables = snapshot.orderedVariables
         variableSymbols = snapshot.variableSymbols
         objective = snapshot.objective
         artificialRow = snapshot.artificialRow
@@ -391,7 +504,9 @@ public final class Solver {
 
     /// Adds a constraint to the tableau, registering its tag but not adding it
     /// to the public `constraints` list. Used for both user constraints and the
-    /// internal constraints behind edit variables.
+    /// internal constraints behind edit variables. Transactional: a failure
+    /// restores the previous state (this path is used when edit variables are
+    /// registered, where the constraint list alone cannot rebuild the tableau).
     private func addConstraintInternal(_ constraint: Constraint) throws {
         let identifier = ObjectIdentifier(constraint)
         if constraintTags[identifier] != nil {
@@ -405,6 +520,33 @@ public final class Solver {
             restore(snapshot)
             throw error
         }
+    }
+
+    /// `addConstraintInternal` for the no-edit-variable hot path. It does not
+    /// snapshot the tableau; the caller rolls a failure back with
+    /// `rebuildFromConstraintList`.
+    private func addConstraintInternalNoSnapshot(_ constraint: Constraint) throws {
+        let identifier = ObjectIdentifier(constraint)
+        if constraintTags[identifier] != nil {
+            throw SolverError.duplicateConstraint
+        }
+        let tag = try createRowAndAddConstraint(constraint)
+        constraintTags[identifier] = tag
+    }
+
+    /// Rolls back a failed constraint add by rebuilding the tableau from the
+    /// committed constraint list. Only used on the rare failure path, and only
+    /// when there are no edit variables (they are not in the constraint list).
+    private func rebuildFromConstraintList() {
+        let committed = constraints
+        let variableOrder = orderedVariables
+        reset()
+        // The committed list was consistent before the failed add, so replaying
+        // it succeeds deterministically (same symbol allocation order).
+        for constraint in committed {
+            try? addConstraintInternal(constraint)
+        }
+        _ = variableOrder
     }
 
     /// Creates the tableau row for `constraint` and brings it into the basis.
@@ -434,7 +576,7 @@ public final class Solver {
         } else {
             try row.solveFor(subject)
             substitute(subject, row)
-            rows[subject] = row
+            setBasicRow(row, for: subject)
         }
 
         try optimize(objectiveRow: .main)
@@ -454,8 +596,8 @@ public final class Solver {
         for term in constraint.expression.terms {
             if !nearZero(term.coefficient) {
                 let symbol = symbol(for: term.variable)
-                if let basicRow = rows[symbol] {
-                    row.insert(basicRow, term.coefficient)
+                if let existingRow = basicRow(symbol) {
+                    row.insert(existingRow, term.coefficient)
                 } else {
                     row.insert(symbol, term.coefficient)
                 }
@@ -543,7 +685,7 @@ public final class Solver {
     /// not (the caller rolls the tableau back).
     private func addWithArtificialVariable(_ row: Row) throws -> Bool {
         let artificialSymbol = makeSymbol(.slack)
-        rows[artificialSymbol] = row
+        setBasicRow(row, for: artificialSymbol)
         artificialRow = row
 
         try optimize(objectiveRow: .artificial)
@@ -554,8 +696,8 @@ public final class Solver {
         artificialRow = nil
 
         // If the artificial variable is still basic, pivot it out of the basis.
-        if var artificialTableauRow = rows[artificialSymbol] {
-            rows.removeValue(forKey: artificialSymbol)
+        if var artificialTableauRow = basicRow(artificialSymbol) {
+            _ = removeBasicRow(for: artificialSymbol)
             if artificialTableauRow.isEmpty {
                 return success
             }
@@ -565,14 +707,14 @@ public final class Solver {
             }
             try artificialTableauRow.solveFor(artificialSymbol, entering)
             substitute(entering, artificialTableauRow)
-            rows[entering] = artificialTableauRow
+            setBasicRow(artificialTableauRow, for: entering)
         }
 
         // Remove every remaining trace of the artificial variable.
-        for basic in rows.keys.sorted() {
-            guard var basicRow = rows[basic] else { continue }
-            basicRow.remove(artificialSymbol)
-            rows[basic] = basicRow
+        for basic in basicSymbols {
+            guard var row = basicRow(basic) else { continue }
+            row.remove(artificialSymbol)
+            storeBasicRow(row, for: basic)
         }
         objective.remove(artificialSymbol)
         return success
@@ -585,8 +727,8 @@ public final class Solver {
     /// Newly infeasible rows are recorded so a later dual optimization can fix
     /// them.
     private func substitute(_ symbol: Symbol, _ row: Row) {
-        for basic in rows.keys.sorted() {
-            guard let stored = rows[basic] else { continue }
+        for basic in basicSymbols {
+            guard let stored = basicRow(basic) else { continue }
             guard stored.coefficient(for: symbol) != 0.0 else {
                 // Most rows do not contain the symbol. Keep the feasibility
                 // bookkeeping identical to the reference implementation, but
@@ -596,10 +738,10 @@ public final class Solver {
                 }
                 continue
             }
-            var basicRow = stored
-            basicRow.substitute(symbol, with: row)
-            rows[basic] = basicRow
-            if !basic.isExternal && basicRow.constant < 0.0 {
+            var updatedRow = stored
+            updatedRow.substitute(symbol, with: row)
+            storeBasicRow(updatedRow, for: basic)
+            if !basic.isExternal && updatedRow.constant < 0.0 {
                 infeasibleRows.append(basic)
             }
         }
@@ -635,13 +777,13 @@ public final class Solver {
             guard let leaving = getLeavingRow(entering) else {
                 throw SolverError.internalInconsistency("the objective is unbounded")
             }
-            guard var leavingRow = rows[leaving] else {
+            guard var leavingRow = basicRow(leaving) else {
                 throw SolverError.internalInconsistency("the tableau lost a basic row")
             }
-            rows.removeValue(forKey: leaving)
+            _ = removeBasicRow(for: leaving)
             try leavingRow.solveFor(leaving, entering)
             substitute(entering, leavingRow)
-            rows[entering] = leavingRow
+            setBasicRow(leavingRow, for: entering)
         }
     }
 
@@ -653,7 +795,7 @@ public final class Solver {
     private func dualOptimize() -> Bool {
         while !infeasibleRows.isEmpty {
             let leaving = infeasibleRows.removeLast()
-            guard let row = rows[leaving] else { continue }
+            guard let row = basicRow(leaving) else { continue }
             if nearZero(row.constant) || row.constant >= 0.0 {
                 continue
             }
@@ -662,14 +804,14 @@ public final class Solver {
                 return false
             }
             var leavingRow = row
-            rows.removeValue(forKey: leaving)
+            _ = removeBasicRow(for: leaving)
             do {
                 try leavingRow.solveFor(leaving, entering)
             } catch {
                 return false
             }
             substitute(entering, leavingRow)
-            rows[entering] = leavingRow
+            setBasicRow(leavingRow, for: entering)
         }
         return true
     }
@@ -718,8 +860,8 @@ public final class Solver {
     private func getLeavingRow(_ entering: Symbol) -> Symbol? {
         var ratio = Double.greatestFiniteMagnitude
         var found: Symbol?
-        for basic in rows.keys.sorted() {
-            guard !basic.isExternal, let row = rows[basic] else { continue }
+        for basic in basicSymbols {
+            guard !basic.isExternal, let row = basicRow(basic) else { continue }
             let coefficient = row.coefficient(for: entering)
             if coefficient < 0.0 {
                 let candidate = -row.constant / coefficient
@@ -747,8 +889,8 @@ public final class Solver {
         var second: Symbol?
         var third: Symbol?
 
-        for basic in rows.keys.sorted() {
-            guard let row = rows[basic] else { continue }
+        for basic in basicSymbols {
+            guard let row = basicRow(basic) else { continue }
             let coefficient = row.coefficient(for: marker)
             if coefficient == 0.0 {
                 continue
@@ -790,20 +932,20 @@ public final class Solver {
 
         // If the marker is basic, drop its row. Otherwise pivot the marker into
         // the basis first, then drop the row it left.
-        if rows[tag.marker] != nil {
-            rows.removeValue(forKey: tag.marker)
+        if basicRow(tag.marker) != nil {
+            _ = removeBasicRow(for: tag.marker)
         } else {
             guard let leaving = getMarkerLeavingRow(tag.marker) else {
                 throw SolverError.internalInconsistency("failed to find a leaving row for the removed constraint")
             }
-            guard var leavingRow = rows[leaving] else {
+            guard var leavingRow = basicRow(leaving) else {
                 throw SolverError.internalInconsistency("the tableau lost a basic row")
             }
             // Pivot the marker into the basis, substitute it throughout the
             // tableau and then drop the row: nothing references the marker any
             // more, so keeping a dead basic row would leave the tableau
             // primal-infeasible for the next constraint that is added.
-            rows.removeValue(forKey: leaving)
+            _ = removeBasicRow(for: leaving)
             try leavingRow.solveFor(leaving, tag.marker)
             substitute(tag.marker, leavingRow)
         }
@@ -826,7 +968,7 @@ public final class Solver {
 
     /// Removes the objective contribution of a single error marker.
     private func removeMarkerEffects(_ marker: Symbol, strength: Double) {
-        if let row = rows[marker] {
+        if let row = basicRow(marker) {
             objective.insert(row, -strength)
         } else {
             objective.insert(marker, -strength)
@@ -845,6 +987,7 @@ public final class Solver {
         }
         let symbol = makeSymbol(.external)
         variableSymbols[variable] = symbol
+        orderedVariables.append(variable)
         return symbol
     }
 
@@ -853,5 +996,65 @@ public final class Solver {
         let symbol = Symbol(kind, idTick)
         idTick += 1
         return symbol
+    }
+
+    // MARK: - Ordered basis maintenance
+
+    private func basicRow(_ symbol: Symbol) -> Row? {
+        let id = symbol.id
+        guard id >= 0, id < basicRows.count else { return nil }
+        return basicRows[id]
+    }
+
+    private func storeBasicRow(_ row: Row, for symbol: Symbol) {
+        let id = symbol.id
+        if id >= basicRows.count {
+            basicRows.append(contentsOf: repeatElement(nil, count: id - basicRows.count + 1))
+        }
+        basicRows[id] = row
+    }
+
+    private func setBasicRow(_ row: Row, for symbol: Symbol) {
+        if basicRow(symbol) == nil { insertBasicSymbol(symbol) }
+        storeBasicRow(row, for: symbol)
+    }
+
+    @discardableResult
+    private func removeBasicRow(for symbol: Symbol) -> Row? {
+        guard let row = basicRow(symbol) else { return nil }
+        basicRows[symbol.id] = nil
+        removeBasicSymbol(symbol)
+        return row
+    }
+
+    private func insertBasicSymbol(_ symbol: Symbol) {
+        var low = 0
+        var high = basicSymbols.count
+        while low < high {
+            let middle = (low + high) / 2
+            if basicSymbols[middle].id < symbol.id {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        basicSymbols.insert(symbol, at: low)
+    }
+
+    private func removeBasicSymbol(_ symbol: Symbol) {
+        var low = 0
+        var high = basicSymbols.count
+        while low < high {
+            let middle = (low + high) / 2
+            let candidate = basicSymbols[middle]
+            if candidate.id < symbol.id {
+                low = middle + 1
+            } else if candidate.id > symbol.id {
+                high = middle
+            } else {
+                basicSymbols.remove(at: middle)
+                return
+            }
+        }
     }
 }

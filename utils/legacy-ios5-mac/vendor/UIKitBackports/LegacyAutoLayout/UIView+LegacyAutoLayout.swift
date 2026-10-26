@@ -31,30 +31,9 @@
 import UIKit
 import ObjectiveC
 
-// MARK: - Associated object keys
+// MARK: - Defaults and state helpers
 
-/// One stable address per piece of associated storage. Taking the address of a Swift `static var`
-/// yields a process-wide unique `UnsafeRawPointer`, which is exactly what `objc_getAssociatedObject`
-/// wants as its key (the same "unique static key per property" idiom RRAutoLayout got from string
-/// literals in ObjC).
-private enum LegacyAutoLayoutKeys {
-    static var constraints: UInt8 = 0
-    static var translatesAutoresizingMaskIntoConstraints: UInt8 = 0
-    static var intrinsicContentSize: UInt8 = 0
-    static var contentHuggingPriorityHorizontal: UInt8 = 0
-    static var contentHuggingPriorityVertical: UInt8 = 0
-    static var contentCompressionResistancePriorityHorizontal: UInt8 = 0
-    static var contentCompressionResistancePriorityVertical: UInt8 = 0
-    static var firstBaselineOffsetFromTop: UInt8 = 0
-    static var lastBaselineOffsetFromBottom: UInt8 = 0
-    static var constraintsAreClean: UInt8 = 0
-    static var needsLayout: UInt8 = 0
-    static var handledInvalidation: UInt8 = 0
-    static var translatedAutoresizingConstraints: UInt8 = 0
-    static var autoresizingReference: UInt8 = 0
-}
-
-/// Default values that exist even when no associated object has ever been stored.
+/// Default values that exist even when no state has been stored for a view.
 private enum LegacyAutoLayoutDefaults {
     static let translatesAutoresizingMaskIntoConstraints = true
     static let contentHuggingPriority: CGFloat = 250 // RRLayoutPriorityDefaultLow
@@ -66,18 +45,6 @@ private enum LegacyAutoLayoutDefaults {
     static let baselineOffset: CGFloat = 0
 }
 
-// MARK: - Associated storage helpers
-
-/// Boxes `LegacyAutoresizingReference` so it can live in an associated object.
-private final class LegacyAutoresizingReferenceBox: NSObject {
-
-    let reference: LegacyAutoresizingReference
-
-    init(_ reference: LegacyAutoresizingReference) {
-        self.reference = reference
-    }
-}
-
 /// Drops the captured autoresizing reference so the next layout pass re-captures the current geometry.
 ///
 /// UIKit regenerates its autoresizing constraints from the view's current frame; the backport captures
@@ -86,44 +53,13 @@ private final class LegacyAutoresizingReferenceBox: NSObject {
 /// removed constraints) invalidates the captured reference.
 @MainActor
 internal func legacyClearAutoresizingReference(_ view: UIView) {
-    objc_setAssociatedObject(
-        view,
-        &LegacyAutoLayoutKeys.autoresizingReference,
-        nil,
-        .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-    )
+    LegacyViewState.existing(of: view)?.autoresizingReference = nil
 }
 
-private func legacyConstraintStorage(_ view: UIView) -> NSMutableArray {
-    if let storage = objc_getAssociatedObject(view, &LegacyAutoLayoutKeys.constraints) as? NSMutableArray {
-        return storage
-    }
-    let storage = NSMutableArray()
-    objc_setAssociatedObject(
-        view,
-        &LegacyAutoLayoutKeys.constraints,
-        storage,
-        .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-    )
-    return storage
-}
-
-/// Copies the ObjC constraint array into a Swift array without using `NSArray`'s `Sequence`
-/// conformance (that conformance is iOS 8+; this package supports deployment targets from iOS 5).
-private func legacyConstraintArray(from storage: NSMutableArray) -> [RRLayoutConstraint] {
-    var constraints: [RRLayoutConstraint] = []
-    constraints.reserveCapacity(storage.count)
-    for index in 0..<storage.count {
-        if let constraint = storage.object(at: index) as? RRLayoutConstraint {
-            constraints.append(constraint)
-        }
-    }
-    return constraints
-}
-
-private func legacyCGFloat(forKey key: UnsafeRawPointer, on view: UIView, default defaultValue: CGFloat) -> CGFloat {
-    guard let number = objc_getAssociatedObject(view, key) as? NSNumber else { return defaultValue }
-    return CGFloat(number.doubleValue)
+/// The view's state, created on first write.
+@MainActor
+private func legacyMutableState(_ view: UIView) -> LegacyViewState {
+    LegacyViewState.of(view)
 }
 
 /// The RRAutoLayout-compatible UIView surface plus the `LegacyLayoutItem` mapping.
@@ -138,33 +74,32 @@ extension UIView {
     /// Constraints owned by this view for the legacy path — the backport equivalent of `-[UIView constraints]`.
     ///
     /// This never reads or writes the system `NSLayoutConstraint` machinery: on iOS 6+ the real
-    /// `constraints` array stays untouched by every `legacy*` API.
+    /// `constraints` array stays untouched by every `legacy*` API. The list is sorted by priority
+    /// lazily, on the first read after a change, instead of on every add.
     var legacyConstraints: [RRLayoutConstraint] {
-        legacyConstraintArray(from: legacyConstraintStorage(self))
+        guard let state = LegacyViewState.existing(of: self), !state.constraints.isEmpty else {
+            return []
+        }
+        if !state.constraintsSorted {
+            state.constraints.sort { $0.priority < $1.priority }
+            state.constraintsSorted = true
+        }
+        // Copy-on-write: the caller gets the storage directly and a later add
+        // copies it, so a layout pass does not allocate a fresh array per item.
+        return state.constraints
     }
 
-    /// Adds a constraint to this view's legacy storage, keeping the storage ordered by priority.
+    /// Adds a constraint to this view's legacy storage.
     ///
-    /// Mirrors RRAutoLayout: the constraint is appended, the array is re-sorted ascending by priority,
-    /// then the view (and its container) are marked as needing a constraint update/layout.
+    /// Mirrors RRAutoLayout: the constraint is appended and the view (and its container) are marked
+    /// as needing a constraint update/layout. Sorting by priority happens lazily on the next read,
+    /// so adding n constraints is O(n) instead of O(n^2 log n).
     func legacyAddConstraint(_ constraint: RRLayoutConstraint) {
         LegacyAutoLayout.ensureInstalled()
-        let storage = legacyConstraintStorage(self)
-        var alreadyContainsConstraint = false
-        for index in 0..<storage.count {
-            if (storage.object(at: index) as AnyObject) === constraint {
-                alreadyContainsConstraint = true
-                break
-            }
-        }
-        if !alreadyContainsConstraint {
-            storage.add(constraint)
-        }
-        // RRAutoLayout sorts by priority so lower-priority constraints are applied last.
-        let sorted = legacyConstraintArray(from: storage).sorted { $0.priority < $1.priority }
-        storage.removeAllObjects()
-        for sortedConstraint in sorted {
-            storage.add(sortedConstraint)
+        let state = legacyMutableState(self)
+        if !state.constraints.contains(where: { $0 === constraint }) {
+            state.constraints.append(constraint)
+            state.constraintsSorted = false
         }
         // Constraint changes can change the solved geometry; force a fresh autoresizing capture.
         legacyClearAutoresizingReference(self)
@@ -181,16 +116,11 @@ extension UIView {
 
     /// Removes `constraint` from this view's legacy storage (identity comparison, like UIKit).
     func legacyRemoveConstraint(_ constraint: RRLayoutConstraint) {
-        let storage = legacyConstraintStorage(self)
-        var indexToRemove: Int?
-        for index in 0..<storage.count {
-            if (storage.object(at: index) as AnyObject) === constraint {
-                indexToRemove = index
-                break
-            }
+        guard let state = LegacyViewState.existing(of: self),
+              let index = state.constraints.firstIndex(where: { $0 === constraint }) else {
+            return
         }
-        guard let index = indexToRemove else { return }
-        storage.removeObject(at: index)
+        state.constraints.remove(at: index)
         legacyClearAutoresizingReference(self)
         legacySetNeedsUpdateConstraints()
     }
@@ -204,28 +134,18 @@ extension UIView {
 
     // MARK: translatesAutoresizingMaskIntoConstraints
 
-    /// Backport of `translatesAutoresizingMaskIntoConstraints` (associated storage; default `true`).
+    /// Backport of `translatesAutoresizingMaskIntoConstraints` (default `true`).
     ///
     /// Defaulting to `true` is what makes the backport a drop-in replacement: views created in code or
     /// loaded from a nib before Auto Layout existed rely on their autoresizing mask/frame, and the
     /// engine pins their current frame exactly like UIKit's translation step does (docs §5.3).
     var legacyTranslatesAutoresizingMaskIntoConstraints: Bool {
         get {
-            guard let number = objc_getAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.translatesAutoresizingMaskIntoConstraints
-            ) as? NSNumber else {
-                return LegacyAutoLayoutDefaults.translatesAutoresizingMaskIntoConstraints
-            }
-            return number.boolValue
+            LegacyViewState.existing(of: self)?.translatesAutoresizingMaskIntoConstraints
+                ?? LegacyAutoLayoutDefaults.translatesAutoresizingMaskIntoConstraints
         }
         set {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.translatesAutoresizingMaskIntoConstraints,
-                NSNumber(value: newValue),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            legacyMutableState(self).translatesAutoresizingMaskIntoConstraints = newValue
             // A flag flip changes whether (and from which geometry) autoresizing constraints are
             // generated, so the captured reference is stale.
             legacyClearAutoresizingReference(self)
@@ -235,27 +155,19 @@ extension UIView {
 
     // MARK: Intrinsic content size
 
-    /// Backport of `intrinsicContentSize` (associated storage; default `UIViewNoIntrinsicMetric`).
+    /// Backport of `intrinsicContentSize` (default `UIViewNoIntrinsicMetric`).
     var legacyIntrinsicContentSize: CGSize {
         get {
-            guard let value = objc_getAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.intrinsicContentSize
-            ) as? NSValue else {
-                if self is UILabel || self is UIButton || self is UIImageView {
-                    return sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
-                }
-                return LegacyAutoLayoutDefaults.intrinsicContentSize
+            if let value = LegacyViewState.existing(of: self)?.intrinsicContentSize {
+                return value
             }
-            return value.cgSizeValue
+            if self is UILabel || self is UIButton || self is UIImageView {
+                return sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+            }
+            return LegacyAutoLayoutDefaults.intrinsicContentSize
         }
         set {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.intrinsicContentSize,
-                NSValue(cgSize: newValue),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            legacyMutableState(self).intrinsicContentSize = newValue
             legacySetNeedsUpdateConstraints()
         }
     }
@@ -265,35 +177,21 @@ extension UIView {
     /// Content hugging priority backport. Defaults to `RRLayoutPriorityDefaultLow` (250) on both axes,
     /// matching UIKit.
     func legacyContentHuggingPriority(for axis: RRLayoutAxis) -> RRLayoutPriority {
+        let stored = LegacyViewState.existing(of: self)
         if axis == .horizontal {
-            return RRLayoutPriority(legacyCGFloat(
-                forKey: &LegacyAutoLayoutKeys.contentHuggingPriorityHorizontal,
-                on: self,
-                default: LegacyAutoLayoutDefaults.contentHuggingPriority
-            ))
+            return RRLayoutPriority(stored?.contentHuggingPriorityHorizontal
+                ?? LegacyAutoLayoutDefaults.contentHuggingPriority)
         }
-        return RRLayoutPriority(legacyCGFloat(
-            forKey: &LegacyAutoLayoutKeys.contentHuggingPriorityVertical,
-            on: self,
-            default: LegacyAutoLayoutDefaults.contentHuggingPriority
-        ))
+        return RRLayoutPriority(stored?.contentHuggingPriorityVertical
+            ?? LegacyAutoLayoutDefaults.contentHuggingPriority)
     }
 
     func legacySetContentHuggingPriority(_ priority: RRLayoutPriority, for axis: RRLayoutAxis) {
+        let state = legacyMutableState(self)
         if axis == .horizontal {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.contentHuggingPriorityHorizontal,
-                NSNumber(value: priority),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            state.contentHuggingPriorityHorizontal = CGFloat(priority)
         } else {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.contentHuggingPriorityVertical,
-                NSNumber(value: priority),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            state.contentHuggingPriorityVertical = CGFloat(priority)
         }
         // UIKit treats a hugging-priority change as an intrinsic-size invalidation.
         legacySetNeedsUpdateConstraints()
@@ -302,42 +200,28 @@ extension UIView {
     /// Content compression resistance priority backport. Defaults to `RRLayoutPriorityDefaultHigh`
     /// (750) on both axes, matching UIKit.
     func legacyContentCompressionResistancePriority(for axis: RRLayoutAxis) -> RRLayoutPriority {
+        let stored = LegacyViewState.existing(of: self)
         if axis == .horizontal {
-            return RRLayoutPriority(legacyCGFloat(
-                forKey: &LegacyAutoLayoutKeys.contentCompressionResistancePriorityHorizontal,
-                on: self,
-                default: LegacyAutoLayoutDefaults.contentCompressionResistancePriority
-            ))
+            return RRLayoutPriority(stored?.contentCompressionResistancePriorityHorizontal
+                ?? LegacyAutoLayoutDefaults.contentCompressionResistancePriority)
         }
-        return RRLayoutPriority(legacyCGFloat(
-            forKey: &LegacyAutoLayoutKeys.contentCompressionResistancePriorityVertical,
-            on: self,
-            default: LegacyAutoLayoutDefaults.contentCompressionResistancePriority
-        ))
+        return RRLayoutPriority(stored?.contentCompressionResistancePriorityVertical
+            ?? LegacyAutoLayoutDefaults.contentCompressionResistancePriority)
     }
 
     func legacySetContentCompressionResistancePriority(_ priority: RRLayoutPriority, for axis: RRLayoutAxis) {
+        let state = legacyMutableState(self)
         if axis == .horizontal {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.contentCompressionResistancePriorityHorizontal,
-                NSNumber(value: priority),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            state.contentCompressionResistancePriorityHorizontal = CGFloat(priority)
         } else {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.contentCompressionResistancePriorityVertical,
-                NSNumber(value: priority),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            state.contentCompressionResistancePriorityVertical = CGFloat(priority)
         }
         legacySetNeedsUpdateConstraints()
     }
 
     // MARK: Baselines
 
-    /// Backport of `firstBaselineOffsetFromTop` (associated storage; default `0`).
+    /// Backport of `firstBaselineOffsetFromTop` (default `0`).
     ///
     /// The value is stored unconditionally, but the `LegacyLayoutItem` conformance reports a baseline
     /// only once a caller has explicitly set one: a plain `UIView` has no cross-view baseline
@@ -345,39 +229,23 @@ extension UIView {
     /// engine from inventing baseline equations for every view.
     var legacyFirstBaselineOffsetFromTop: CGFloat {
         get {
-            legacyCGFloat(
-                forKey: &LegacyAutoLayoutKeys.firstBaselineOffsetFromTop,
-                on: self,
-                default: LegacyAutoLayoutDefaults.baselineOffset
-            )
+            LegacyViewState.existing(of: self)?.firstBaselineOffsetFromTop
+                ?? LegacyAutoLayoutDefaults.baselineOffset
         }
         set {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.firstBaselineOffsetFromTop,
-                NSNumber(value: Double(newValue)),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            legacyMutableState(self).firstBaselineOffsetFromTop = newValue
             legacySetNeedsUpdateConstraints()
         }
     }
 
-    /// Backport of `lastBaselineOffsetFromBottom` (associated storage; default `0`).
+    /// Backport of `lastBaselineOffsetFromBottom` (default `0`).
     var legacyLastBaselineOffsetFromBottom: CGFloat {
         get {
-            legacyCGFloat(
-                forKey: &LegacyAutoLayoutKeys.lastBaselineOffsetFromBottom,
-                on: self,
-                default: LegacyAutoLayoutDefaults.baselineOffset
-            )
+            LegacyViewState.existing(of: self)?.lastBaselineOffsetFromBottom
+                ?? LegacyAutoLayoutDefaults.baselineOffset
         }
         set {
-            objc_setAssociatedObject(
-                self,
-                &LegacyAutoLayoutKeys.lastBaselineOffsetFromBottom,
-                NSNumber(value: Double(newValue)),
-                .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-            )
+            legacyMutableState(self).lastBaselineOffsetFromBottom = newValue
             legacySetNeedsUpdateConstraints()
         }
     }
@@ -391,6 +259,9 @@ extension UIView {
     /// When the bridge *is* installed (iOS < 6), the swizzled `layoutSubviews` pass calls this same
     /// code path. It deliberately does not consult `isActive` — the direct `legacy*` API is documented
     /// as usable on any OS (docs §1, §6).
+    ///
+    /// The engine keeps a persistent solver per root, so a dirty pass only applies the changed
+    /// constraints; a clean pass is served from the cached solution.
     func legacyLayoutIfNeeded() {
         LegacyAutoLayout.ensureInstalled()
         legacyUpdateConstraintsIfNeeded()
@@ -404,35 +275,20 @@ extension UIView {
         engine.layout(self)
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = wasApplyingLayoutFrames
 
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.needsLayout,
-            NSNumber(value: false),
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).needsLayout = false
     }
 
     /// Marks this view as needing a layout pass (backport of `setNeedsLayout`).
     func legacySetNeedsLayout() {
         LegacyAutoLayout.ensureInstalled()
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.needsLayout,
-            NSNumber(value: true),
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).needsLayout = true
         legacySetNeedsUpdateConstraints()
     }
 
     /// Marks this view (and its container) as needing a constraint update.
     func legacySetNeedsUpdateConstraints() {
         LegacyAutoLayout.ensureInstalled()
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.constraintsAreClean,
-            NSNumber(value: false),
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).constraintsAreClean = false
         legacyInformContainerThatSubviewsNeedUpdateConstraints()
     }
 
@@ -440,23 +296,14 @@ extension UIView {
     /// `updateConstraintsIfNeeded`). Mirrors RRAutoLayout's recursive dirty-flag walk.
     func legacyUpdateConstraintsIfNeeded() {
         LegacyAutoLayout.ensureInstalled()
-        let constraintsAreClean = (objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.constraintsAreClean
-        ) as? NSNumber)?.boolValue ?? false
-        guard !constraintsAreClean else { return }
+        guard !(LegacyViewState.existing(of: self)?.constraintsAreClean ?? false) else { return }
 
         legacyUpdateConstraints()
         for subview in subviews {
             subview.legacyUpdateConstraintsIfNeeded()
         }
 
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.constraintsAreClean,
-            NSNumber(value: true),
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).constraintsAreClean = true
     }
 
     // MARK: Internal bridge hooks (used by LegacyAutoLayoutSwizzling)
@@ -492,48 +339,32 @@ extension UIView {
         } else {
             translated = []
         }
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.translatedAutoresizingConstraints,
-            translated as NSArray,
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).translatedAutoresizingConstraints = translated
     }
 
     /// The constraints the bridge generated from the autoresizing mask/frame (internal diagnostics).
     internal var legacyTranslatedAutoresizingConstraints: [RRLayoutConstraint] {
-        (objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.translatedAutoresizingConstraints
-        ) as? [RRLayoutConstraint]) ?? []
+        LegacyViewState.existing(of: self)?.translatedAutoresizingConstraints ?? []
     }
 
     /// Whether a geometry change on this view can affect the legacy constraint graph.
     ///
     /// Views that do not participate in Auto Layout (default `translatesAutoresizingMaskIntoConstraints`,
     /// no legacy constraints, no intrinsic size) are positioned by frames alone. Dirtying the
-    /// constraint graph for every frame assignment made non-Auto-Layout containers (collection-view
+    /// constraint graph for every frame assignment made non-Auto Layout containers (collection-view
     /// cells, overlay views) re-solve and re-invalidate on each layout pass.
     internal var legacyGeometryAffectsConstraints: Bool {
-        if let storage = objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.constraints) as? NSMutableArray,
-           storage.count > 0 {
-            return true
-        }
-        if !legacyTranslatesAutoresizingMaskIntoConstraints { return true }
-        let intrinsic = legacyIntrinsicContentSize
-        return intrinsic.width != LegacyLayoutMetrics.noIntrinsicMetric
-            || intrinsic.height != LegacyLayoutMetrics.noIntrinsicMetric
+        guard let state = LegacyViewState.existing(of: self) else { return false }
+        if !state.constraints.isEmpty { return true }
+        if state.translatesAutoresizingMaskIntoConstraints == false { return true }
+        if let intrinsic = state.intrinsicContentSize { return true }
+        return false
     }
 
     /// Last global invalidation counter value consumed by this view's constraint walk.
     internal var legacyHandledLayoutInvalidation: Int {
-        get {
-            (objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.handledInvalidation) as? NSNumber)?.intValue ?? -1
-        }
-        set {
-            objc_setAssociatedObject(self, &LegacyAutoLayoutKeys.handledInvalidation,
-                                     NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
+        get { LegacyViewState.existing(of: self)?.handledInvalidation ?? -1 }
+        set { legacyMutableState(self).handledInvalidation = newValue }
     }
 
     /// Whether the backported layout pass is pending for this view.
@@ -541,16 +372,12 @@ extension UIView {
     /// Used to skip solving the constraint system when nothing in this view changed: the swizzled
     /// `-layoutSubviews` hook otherwise runs a complete solver pass for every view in the hierarchy.
     internal var legacyNeedsLayoutPass: Bool {
-        (objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.needsLayout) as? NSNumber)?.boolValue ?? false
+        LegacyViewState.existing(of: self)?.needsLayout ?? false
     }
 
     /// Whether this view's backported `constraintsAreClean` flag is clear (internal, for tests).
     internal var legacyConstraintsAreDirty: Bool {
-        let constraintsAreClean = (objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.constraintsAreClean
-        ) as? NSNumber)?.boolValue ?? false
-        return !constraintsAreClean
+        !(LegacyViewState.existing(of: self)?.constraintsAreClean ?? false)
     }
 
     /// RRAutoLayout's `rr_informContainerThatSubviewsNeedUpdateConstraints`: constraint changes on a
@@ -648,20 +475,12 @@ extension UIView: LegacyLayoutItem {
     /// Stored as an associated object so it survives layout passes; the engine captures it implicitly
     /// when `nil` and calls `layoutUpdateAutoresizingReference(_:)` after a successful write-back.
     var layoutAutoresizingReference: LegacyAutoresizingReference? {
-        (objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.autoresizingReference
-        ) as? LegacyAutoresizingReferenceBox)?.reference
+        LegacyViewState.existing(of: self)?.autoresizingReference
     }
 
     /// Records the geometry the engine generated the autoresizing-mask constraints from.
     func layoutUpdateAutoresizingReference(_ reference: LegacyAutoresizingReference) {
-        objc_setAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.autoresizingReference,
-            LegacyAutoresizingReferenceBox(reference),
-            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
-        )
+        legacyMutableState(self).autoresizingReference = reference
     }
 
     var layoutIntrinsicContentSize: CGSize {
@@ -677,22 +496,10 @@ extension UIView: LegacyLayoutItem {
     }
 
     var layoutFirstBaselineOffsetFromTop: CGFloat? {
-        guard let number = objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.firstBaselineOffsetFromTop
-        ) as? NSNumber else {
-            return nil
-        }
-        return CGFloat(number.doubleValue)
+        LegacyViewState.existing(of: self)?.firstBaselineOffsetFromTop
     }
 
     var layoutLastBaselineOffsetFromBottom: CGFloat? {
-        guard let number = objc_getAssociatedObject(
-            self,
-            &LegacyAutoLayoutKeys.lastBaselineOffsetFromBottom
-        ) as? NSNumber else {
-            return nil
-        }
-        return CGFloat(number.doubleValue)
+        LegacyViewState.existing(of: self)?.lastBaselineOffsetFromBottom
     }
 }

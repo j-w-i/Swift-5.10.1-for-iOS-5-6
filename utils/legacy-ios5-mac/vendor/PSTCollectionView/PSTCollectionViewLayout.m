@@ -8,6 +8,7 @@
 #import "PSTCollectionView.h"
 #import "PSTCollectionViewItemKey.h"
 #import "PSTCollectionViewData.h"
+#import "PSTCollectionViewStats.h"
 
 #import <objc/runtime.h>
 
@@ -48,6 +49,7 @@
 #pragma mark - Static
 
 + (instancetype)layoutAttributesForCellWithIndexPath:(NSIndexPath *)indexPath {
+    PSTCollectionViewStatsCountersStorage[PSTStatAttributesComputed]++;
     PSTCollectionViewLayoutAttributes *attributes = [self new];
     attributes.elementKind = PSTCollectionElementKindCell;
     attributes.elementCategory = PSTCollectionViewItemTypeCell;
@@ -56,6 +58,7 @@
 }
 
 + (instancetype)layoutAttributesForSupplementaryViewOfKind:(NSString *)elementKind withIndexPath:(NSIndexPath *)indexPath {
+    PSTCollectionViewStatsCountersStorage[PSTStatAttributesComputed]++;
     PSTCollectionViewLayoutAttributes *attributes = [self new];
     attributes.elementCategory = PSTCollectionViewItemTypeSupplementaryView;
     attributes.elementKind = elementKind;
@@ -64,6 +67,7 @@
 }
 
 + (instancetype)layoutAttributesForDecorationViewOfKind:(NSString *)elementKind withIndexPath:(NSIndexPath *)indexPath {
+    PSTCollectionViewStatsCountersStorage[PSTStatAttributesComputed]++;
     PSTCollectionViewLayoutAttributes *attributes = [self new];
     attributes.elementCategory = PSTCollectionViewItemTypeDecorationView;
     attributes.elementKind = elementKind;

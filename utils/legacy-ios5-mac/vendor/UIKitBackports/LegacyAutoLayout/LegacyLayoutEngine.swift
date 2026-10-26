@@ -13,7 +13,33 @@
 //  Auto Layout itself uses), while keeping RRAutoLayout's call model: collect the
 //  subtree and the constraints attached to it, solve, then write frames back.
 //
-//  Public API is the contract from docs/legacy-autolayout.md §5.
+//  Persistent incremental solving
+//  -----------------------------
+//  UIKit's layout engine keeps one incremental constraint system per window; it
+//  does not rebuild the simplex tableau for every layout pass. This engine now
+//  does the same: one `LegacyLayoutSolver` (and therefore one Cassowary `Solver`)
+//  is kept per layout root in a small cache. A dirty pass diffs the item tree and
+//  the constraint set against what is installed and only adds/removes/updates the
+//  rows that changed:
+//
+//    * item structure change (view added/removed/reparented), root resize or
+//      writing-direction change -> drop the solver and rebuild (a rebuild is the
+//      known-correct path; it is also the fallback when the solver rejects an
+//      incremental update);
+//    * changed constraint constant/priority      -> replace only that row;
+//    * changed intrinsic size / hugging priorities -> replace only that item's
+//      intrinsic rows;
+//    * changed autoresizing reference/mask       -> replace only that item's
+//      autoresizing rows;
+//    * frame changes (stays)                     -> update constants in place.
+//
+//  When none of the above changed, the pass returns the previous result without
+//  touching the solver ("cached"). The UIKit bridge already gates the call on the
+//  backported dirty flags, so in the steady state layout does no solver work at
+//  all.
+//
+//  The public API is unchanged: `layout(_:)` writes frames, `solve(_:)` performs a
+//  fresh rebuild without write-back (used by the parity tests).
 //
 
 import Foundation
@@ -131,6 +157,35 @@ final class LegacyLayoutEngine {
     /// The direction used to resolve `leading`/`trailing`. Default `.leftToRight`.
     var direction: RRLayoutDirection
 
+    /// Set to `false` (tests only) to rebuild the solver on every pass.
+    internal var usesPersistentSolver = true
+
+    // MARK: Persistent solver cache
+
+    /// One solver per layout root. The root is held weakly; entries whose root
+    /// was deallocated are pruned on the next pass.
+    private struct CacheEntry {
+        weak var root: AnyObject?
+        var solver: LegacyLayoutSolver
+        var lastUsed: Int
+    }
+
+    private static var solverCache: [ObjectIdentifier: CacheEntry] = [:]
+    private static var cacheTick = 0
+
+    /// Bounded so an app that lays out many short-lived roots (collection-view
+    /// cells, popovers) cannot accumulate unbounded solver state.
+    private static let maximumCachedRoots = 16
+
+    /// Clears all persistent solver state (tests and diagnostics).
+    internal static func resetPersistentState() {
+        solverCache.removeAll()
+        cacheTick = 0
+    }
+
+    /// The number of live persistent solvers (diagnostics/tests).
+    internal static var persistentSolverCount: Int { solverCache.count }
+
     init(direction: RRLayoutDirection = .leftToRight) {
         self.direction = direction
     }
@@ -138,16 +193,84 @@ final class LegacyLayoutEngine {
     /// Builds and solves the constraint system for the whole subtree rooted at
     /// `root`, then writes each item's frame (in superitem coordinates) back via
     /// `layoutSetFrame`. The root's frame is fixed and left untouched.
+    ///
+    /// A persistent solver is reused across passes when the item tree and the
+    /// root geometry are unchanged; otherwise this executes the full rebuild.
     @discardableResult
     func layout(_ root: LegacyLayoutItem) -> LegacyLayoutResult {
+        let start = DispatchTime.now().uptimeNanoseconds
+        let rootObject = root as AnyObject
+        let identifier = ObjectIdentifier(rootObject)
+
+        if usesPersistentSolver {
+            Self.pruneCacheIfNeeded()
+            if var entry = Self.solverCache[identifier],
+               entry.root === rootObject,
+               let result = entry.solver.update(root: root,
+                                                direction: direction,
+                                                writingFrames: true) {
+                Self.cacheTick += 1
+                entry.lastUsed = Self.cacheTick
+                Self.solverCache[identifier] = entry
+                Self.notePass(start: start,
+                              solver: entry.solver,
+                              cached: entry.solver.lastUpdateWasCached,
+                              rebuilt: false)
+                return result
+            }
+        }
+
+        // Full rebuild: the fast path could not prove equivalence (or this pass
+        // is a first pass / persistence is disabled for tests).
         let solver = LegacyLayoutSolver(root: root, direction: direction)
-        return solver.solve(writingFrames: true)
+        let result = solver.solve(writingFrames: true)
+        if usesPersistentSolver {
+            Self.store(solver: solver, root: rootObject, identifier: identifier)
+        }
+        Self.notePass(start: start, solver: solver, cached: false, rebuilt: true)
+        return result
     }
 
     /// Same solve as `layout(_:)` but performs no write-back. Used by parity tests
-    /// and by callers that need the frames before committing them.
+    /// and by callers that need the frames before committing them. Always rebuilds
+    /// (a dry run must not disturb the persistent solver's tableau).
     func solve(_ root: LegacyLayoutItem) -> LegacyLayoutResult {
         let solver = LegacyLayoutSolver(root: root, direction: direction)
         return solver.solve(writingFrames: false)
+    }
+
+    // MARK: Cache plumbing
+
+    private static func store(solver: LegacyLayoutSolver, root: AnyObject, identifier: ObjectIdentifier) {
+        cacheTick += 1
+        solverCache[identifier] = CacheEntry(root: root, solver: solver, lastUsed: cacheTick)
+        if solverCache.count > maximumCachedRoots {
+            evictOldest()
+        }
+    }
+
+    private static func pruneCacheIfNeeded() {
+        // Cheap: only walk the (bounded) cache occasionally.
+        if cacheTick % 8 == 0 {
+            solverCache = solverCache.filter { $0.value.root != nil }
+        }
+    }
+
+    private static func evictOldest() {
+        while solverCache.count > maximumCachedRoots {
+            guard let oldest = solverCache.min(by: { $0.value.lastUsed < $1.value.lastUsed }) else { return }
+            solverCache.removeValue(forKey: oldest.key)
+        }
+    }
+
+    private static func notePass(start: UInt64,
+                                 solver: LegacyLayoutSolver,
+                                 cached: Bool,
+                                 rebuilt: Bool) {
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1000.0
+        LegacyLayoutStats.noteConstraints(installed: solver.passInstalledConstraints,
+                                          removed: solver.passRemovedConstraints,
+                                          variables: solver.tableauVariableCount)
+        LegacyLayoutStats.notePass(microseconds: elapsed, solved: !cached, rebuilt: rebuilt)
     }
 }

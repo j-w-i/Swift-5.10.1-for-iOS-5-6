@@ -177,8 +177,13 @@ internal final class LegacyLayoutSolver {
     // MARK: Item variables
 
     /// The ten variables Auto Layout keeps per item.
+    ///
+    /// `item` is weak so a persistent solver never keeps a removed view alive
+    /// between passes. During a pass every item is alive (the caller holds the
+    /// root and the pass holds its subtree strongly).
     private struct ItemVariables {
-        let item: LegacyLayoutItem
+        let identifier: ObjectIdentifier
+        weak var item: LegacyLayoutItem?
         let isRoot: Bool
         let minX: Variable
         let maxX: Variable
@@ -212,20 +217,114 @@ internal final class LegacyLayoutSolver {
 
     // MARK: State
 
-    private let root: LegacyLayoutItem
-    private let direction: RRLayoutDirection
+    /// The current pass's root. Weak: a persistent solver must not keep its
+    /// root (and through it the whole view tree) alive between passes.
+    private weak var rootStorage: LegacyLayoutItem?
+    private var root: LegacyLayoutItem { rootStorage! }
+    private var direction: RRLayoutDirection
     private let solver = Solver()
 
+    // Per-pass structure; cleared after the result is built.
     private var items: [LegacyLayoutItem] = []
     private var itemIdentifiers: Set<ObjectIdentifier> = []
+    private var itemOrder: [ObjectIdentifier] = []
+    private var superitemIdentifiers: [ObjectIdentifier: ObjectIdentifier] = [:]
+    private var firstBaselineOffsets: [ObjectIdentifier: CGFloat] = [:]
+    private var lastBaselineOffsets: [ObjectIdentifier: CGFloat] = [:]
     private var variables: [ObjectIdentifier: ItemVariables] = [:]
     private var brokenConstraints: [RRLayoutConstraint] = []
+
+    // Persistent (incremental) state. Everything here is kept in sync with the
+    // tableau so the next pass only adds/removes/updates what changed.
+    private var isInitialized = false
+    private var installedItemOrder: [ObjectIdentifier] = []
+    private var installedSuperitems: [ObjectIdentifier: ObjectIdentifier] = [:]
+    private var installedRootSize: CGSize = .zero
+    private var installedDirection: RRLayoutDirection = .leftToRight
+    private var installedUserConstraints: [ObjectIdentifier: InstalledUserConstraint] = [:]
+    private var installedIntrinsicConstraints: [ObjectIdentifier: InstalledIntrinsicConstraints] = [:]
+    private var installedAutoresizingConstraints: [ObjectIdentifier: InstalledAutoresizingConstraints] = [:]
+    private var installedStays: [ObjectIdentifier: InstalledStays] = [:]
+    /// Cumulative bookkeeping counters (diagnostics).
+    internal private(set) var installedConstraintCount = 0
+    internal private(set) var removedConstraintCount = 0
+    /// Per-pass counters, reset at the start of every pass.
+    internal private(set) var passInstalledConstraints = 0
+    internal private(set) var passRemovedConstraints = 0
+    /// Mutations performed by the last incremental pass.
+    private var changeCount = 0
+    /// The result of the last writing pass, served unchanged when nothing moved.
+    private var lastResult: LegacyLayoutResult?
+    /// Whether the last `update` served the cached result without solving.
+    internal private(set) var lastUpdateWasCached = false
+
+    /// A previously installed user constraint.
+    private struct InstalledUserConstraint {
+        weak var source: RRLayoutConstraint?
+        var signature: ConstraintSignature
+        var solverConstraints: [Constraint]
+        var broken: Bool
+    }
+
+    /// A previously installed intrinsic-content constraint pair for one item.
+    private struct InstalledIntrinsicConstraints {
+        var signature: IntrinsicSignature
+        var solverConstraints: [Constraint]
+    }
+
+    /// A previously installed autoresizing-mask constraint set for one item.
+    private struct InstalledAutoresizingConstraints {
+        var signature: AutoresizingSignature
+        var solverConstraints: [Constraint]
+    }
+
+    /// A previously installed stay set for one item. `fields` is in
+    /// `[minX, minY, width, height]` order; a nil value means that field had no
+    /// finite geometry and therefore no stay constraint.
+    private struct InstalledStays {
+        var constraints: [Constraint]
+        var values: [Double?]
+    }
+
+    /// The immutable configuration of an installed user constraint, plus the
+    /// mutable constant/priority, used to detect what changed.
+    private struct ConstraintSignature: Equatable {
+        var firstItem: ObjectIdentifier?
+        var secondItem: ObjectIdentifier?
+        var firstAttribute: Int
+        var secondAttribute: Int
+        var relation: Int
+        var multiplier: Double
+        var constant: Double
+        var priority: Float
+    }
+
+    private struct IntrinsicSignature: Equatable {
+        var width: Double
+        var height: Double
+        var huggingX: Float
+        var huggingY: Float
+        var compressionX: Float
+        var compressionY: Float
+    }
+
+    private struct AutoresizingSignature: Equatable {
+        var mask: UInt
+        var parent: ObjectIdentifier?
+        var frameX: Double
+        var frameY: Double
+        var frameWidth: Double
+        var frameHeight: Double
+        var superviewWidth: Double
+        var superviewHeight: Double
+    }
 
     // MARK: Init
 
     internal init(root: LegacyLayoutItem, direction: RRLayoutDirection) {
-        self.root = root
+        self.rootStorage = root
         self.direction = direction
+        self.installedDirection = direction
     }
 
     // MARK: Entry point
@@ -234,14 +333,103 @@ internal final class LegacyLayoutSolver {
     /// is written back through `layoutSetFrame` and the autoresizing references are
     /// advanced; the returned frames are identical either way.
     internal func solve(writingFrames: Bool) -> LegacyLayoutResult {
+        passInstalledConstraints = 0
+        passRemovedConstraints = 0
         collectItems()
         createVariables()
         installImplicitConstraints()
         installAutoresizingConstraints()
         installStays()
         installUserConstraints()
+        recordInstalledStructure()
         solver.updateVariables()
-        return extractResult(writingFrames: writingFrames)
+        let result = extractResult(writingFrames: writingFrames)
+        if writingFrames {
+            // A rebuild captures next pass's stays from the frames it just wrote.
+            advanceStayValues(from: result)
+            lastResult = result
+        }
+        // Keep the solver cache cheap and leak-free: the persistent state below
+        // is all identity-based; the pass-local strong references are dropped.
+        clearPassState()
+        return result
+    }
+
+    /// Incremental pass for a persistent solver.
+    ///
+    /// Returns `nil` when the pass cannot be made equivalent to a full rebuild
+    /// (item tree changed, root resized, direction changed, or the solver
+    /// rejected an update); the caller then rebuilds with a fresh solver. The
+    /// solver is left untouched in that case.
+    internal func update(root: LegacyLayoutItem,
+                         direction: RRLayoutDirection,
+                         writingFrames: Bool) -> LegacyLayoutResult? {
+        guard isInitialized else { return nil }
+        rootStorage = root
+        guard direction == installedDirection else {
+            rootStorage = nil
+            return nil
+        }
+        self.direction = direction
+        collectItems()
+        defer { clearPassState() }
+        guard itemOrder == installedItemOrder,
+              superitemIdentifiers == installedSuperitems,
+              root.layoutFrame.size == installedRootSize else {
+            return nil
+        }
+
+        passInstalledConstraints = 0
+        passRemovedConstraints = 0
+        let changesBefore = changeCount
+        brokenConstraints.removeAll(keepingCapacity: true)
+        // Stays first: rebuilds capture them from the current frames, and the
+        // incremental path keeps the installed rows in sync with constants only.
+        guard refreshStays() else { return nil }
+        guard refreshUserConstraints() else { return nil }
+        guard refreshAutoresizingConstraints() else { return nil }
+
+        if changeCount == changesBefore, let cached = lastResult {
+            // Nothing the solver depends on moved: serve the previous solution
+            // without touching the tableau or allocating a new result.
+            lastUpdateWasCached = true
+            clearPassState()
+            return cached
+        }
+        lastUpdateWasCached = false
+        solver.updateVariables()
+        let result = extractResult(writingFrames: writingFrames)
+        advanceStayValues(from: result)
+        if writingFrames { lastResult = result }
+        clearPassState()
+        return result
+    }
+
+    /// Whether this solver knows the current pass's structure (used by tests).
+    internal var canUpdateIncrementally: Bool { isInitialized }
+
+    /// Symbols known to the tableau after the last pass.
+    internal var tableauVariableCount: Int { solver.variableCount }
+
+    /// Rows held by the tableau after the last pass.
+    internal var tableauConstraintCount: Int { solver.constraintCount }
+
+    private func clearPassState() {
+        items.removeAll(keepingCapacity: true)
+        itemIdentifiers.removeAll(keepingCapacity: true)
+        itemOrder.removeAll(keepingCapacity: true)
+        superitemIdentifiers.removeAll(keepingCapacity: true)
+        firstBaselineOffsets.removeAll(keepingCapacity: true)
+        lastBaselineOffsets.removeAll(keepingCapacity: true)
+        rootStorage = nil
+    }
+
+    private func recordInstalledStructure() {
+        installedItemOrder = itemOrder
+        installedSuperitems = superitemIdentifiers
+        installedRootSize = root.layoutFrame.size
+        installedDirection = direction
+        isInitialized = true
     }
 
     // MARK: Collection
@@ -258,6 +446,16 @@ internal final class LegacyLayoutSolver {
             }
             visited.insert(identifier)
             items.append(item)
+            itemOrder.append(identifier)
+            if let superitem = item.layoutSuperitem, visited.contains(ObjectIdentifier(superitem as AnyObject)) {
+                superitemIdentifiers[identifier] = ObjectIdentifier(superitem as AnyObject)
+            }
+            if finite(item.layoutFirstBaselineOffsetFromTop) != nil {
+                firstBaselineOffsets[identifier] = item.layoutFirstBaselineOffsetFromTop!
+            }
+            if finite(item.layoutLastBaselineOffsetFromBottom) != nil {
+                lastBaselineOffsets[identifier] = item.layoutLastBaselineOffsetFromBottom!
+            }
             let subitems = item.layoutSubitems
             var index = subitems.count - 1
             while index >= 0 {
@@ -274,6 +472,7 @@ internal final class LegacyLayoutSolver {
             let identifier = ObjectIdentifier(item as AnyObject)
             let prefix = "\(index)"
             variables[identifier] = ItemVariables(
+                identifier: identifier,
                 item: item,
                 isRoot: identifier == rootIdentifier,
                 minX: Variable("\(prefix).minX"),
@@ -303,28 +502,28 @@ internal final class LegacyLayoutSolver {
                     .minus(Expression(vars.minX))
                     .minus(Expression(vars.width)),
                 .equal,
-                name: "\(vars.item): maxX = minX + width"
+                name: "\(item): maxX = minX + width"
             )
             installRequired(
                 Expression(vars.maxY)
                     .minus(Expression(vars.minY))
                     .minus(Expression(vars.height)),
                 .equal,
-                name: "\(vars.item): maxY = minY + height"
+                name: "\(item): maxY = minY + height"
             )
             installRequired(
                 Expression(vars.centerX)
                     .minus(Expression(vars.minX))
                     .minus(Expression(vars.width).times(0.5)),
                 .equal,
-                name: "\(vars.item): centerX = minX + width / 2"
+                name: "\(item): centerX = minX + width / 2"
             )
             installRequired(
                 Expression(vars.centerY)
                     .minus(Expression(vars.minY))
                     .minus(Expression(vars.height).times(0.5)),
                 .equal,
-                name: "\(vars.item): centerY = minY + height / 2"
+                name: "\(item): centerY = minY + height / 2"
             )
 
             // Baselines are only defined for items that provide baseline metrics;
@@ -335,7 +534,7 @@ internal final class LegacyLayoutSolver {
                         .minus(Expression(vars.minY))
                         .minus(Expression(constant: firstOffset)),
                     .equal,
-                    name: "\(vars.item): firstBaseline = minY + offset"
+                    name: "\(item): firstBaseline = minY + offset"
                 )
             }
             if let lastOffset = finite(item.layoutLastBaselineOffsetFromBottom) {
@@ -344,7 +543,7 @@ internal final class LegacyLayoutSolver {
                         .minus(Expression(vars.maxY))
                         .plus(Expression(constant: lastOffset)),
                     .equal,
-                    name: "\(vars.item): lastBaseline = maxY - offset"
+                    name: "\(item): lastBaseline = maxY - offset"
                 )
             }
         }
@@ -381,48 +580,39 @@ internal final class LegacyLayoutSolver {
 
     // MARK: Autoresizing-mask translation
 
+    /// The equations for one item's autoresizing translation, plus the input
+    /// signature used to detect changes in the incremental path.
+    private struct AutoresizingPlan {
+        var signature: AutoresizingSignature
+        var expressions: [(expression: Expression, op: RelationalOperator, name: String?)]
+    }
+
     /// Generates UIKit's autoresizing-mask constraints (spec §3.1). Runs before the
     /// user constraints so a conflicting explicit required constraint is the one
-    /// that gets broken, matching UIKit.
+    /// that gets broken, matching UIKit. Used by a full rebuild; the incremental
+    /// path diffs the same plan.
     private func installAutoresizingConstraints() {
         let fallbackSuperviewSize = root.layoutFrame.size
         for item in items {
-            guard let vars = variables[ObjectIdentifier(item as AnyObject)], !vars.isRoot else {
-                continue
+            let identifier = ObjectIdentifier(item as AnyObject)
+            guard let vars = variables[identifier], !vars.isRoot else { continue }
+            guard item.layoutTranslatesAutoresizingMaskIntoConstraints else { continue }
+            let plan = autoresizingPlan(vars: vars, item: item, fallbackSuperviewSize: fallbackSuperviewSize)
+            var installed: [Constraint] = []
+            installed.reserveCapacity(plan.expressions.count)
+            for entry in plan.expressions {
+                if let constraint = install(entry.expression, entry.op, strength: .required, name: entry.name) {
+                    installed.append(constraint)
+                }
             }
-            guard item.layoutTranslatesAutoresizingMaskIntoConstraints else {
-                continue
-            }
-            let currentFrame = item.layoutFrame
-            let currentSuperviewSize = superviewSize(of: item, fallback: fallbackSuperviewSize)
-            let reference: LegacyAutoresizingReference
-            if let stored = item.layoutAutoresizingReference,
-               isFinite(stored.frame), isFinite(stored.superviewSize) {
-                reference = stored
-            } else {
-                // First pass (or corrupt storage): generate from the current
-                // geometry; this is also where UIKit lazily creates them.
-                reference = LegacyAutoresizingReference(frame: currentFrame,
-                                                        superviewSize: currentSuperviewSize)
-            }
-            guard isFinite(reference.frame), isFinite(reference.superviewSize) else {
-                // Unusable geometry: fall back to pinning the current frame.
-                pinFrame(vars, frame: currentFrame)
-                continue
-            }
-            installHorizontalAutoresizingConstraints(vars: vars,
-                                                     reference: reference,
-                                                     superviewSize: reference.superviewSize)
-            installVerticalAutoresizingConstraints(vars: vars,
-                                                   reference: reference,
-                                                   superviewSize: reference.superviewSize)
+            installedAutoresizingConstraints[identifier] =
+                InstalledAutoresizingConstraints(signature: plan.signature,
+                                                 solverConstraints: installed)
         }
     }
 
-    /// Horizontal axis of the autoresizing translation.
-    ///
-    /// From the measured UIKit constraints (spec §3.1), with `(x0, w0)` the
-    /// reference frame and `W0` the reference superview width:
+    /// The equations for one item's autoresizing translation. `x0, w0` come from
+    /// the captured reference geometry, `W0` from the reference superview size:
     ///
     ///     .flexibleWidth:                      minX == x0
     ///                                          superview.width == maxX + (W0 - (x0 + w0))
@@ -431,15 +621,63 @@ internal final class LegacyLayoutSolver {
     ///     .flexibleLeftMargin only:            width == w0
     ///                                          superview.width == maxX + (W0 - (x0 + w0))
     ///     otherwise (right margin flexible/[]): width == w0; minX == x0
-    private func installHorizontalAutoresizingConstraints(vars: ItemVariables,
-                                                          reference: LegacyAutoresizingReference,
-                                                          superviewSize: CGSize) {
+    private func autoresizingPlan(vars: ItemVariables,
+                                  item: LegacyLayoutItem,
+                                  fallbackSuperviewSize: CGSize) -> AutoresizingPlan {
+        let currentFrame = item.layoutFrame
+        let currentSuperviewSize = superviewSize(of: item, fallback: fallbackSuperviewSize)
+        let reference: LegacyAutoresizingReference
+        if let stored = item.layoutAutoresizingReference,
+           isFinite(stored.frame), isFinite(stored.superviewSize) {
+            reference = stored
+        } else {
+            // First pass (or corrupt storage): generate from the current
+            // geometry; this is also where UIKit lazily creates them.
+            reference = LegacyAutoresizingReference(frame: currentFrame,
+                                                    superviewSize: currentSuperviewSize)
+        }
+        let signature = AutoresizingSignature(
+            mask: item.layoutAutoresizingMask.rawValue,
+            parent: superitemIdentifiers[vars.identifier],
+            frameX: Double(reference.frame.minX),
+            frameY: Double(reference.frame.minY),
+            frameWidth: Double(reference.frame.width),
+            frameHeight: Double(reference.frame.height),
+            superviewWidth: Double(reference.superviewSize.width),
+            superviewHeight: Double(reference.superviewSize.height)
+        )
+        var expressions: [(expression: Expression, op: RelationalOperator, name: String?)] = []
+        expressions.reserveCapacity(4)
+        guard isFinite(reference.frame), isFinite(reference.superviewSize) else {
+            // Unusable geometry: fall back to pinning the current frame.
+            appendPinFrame(vars, frame: currentFrame, into: &expressions)
+            return AutoresizingPlan(signature: signature, expressions: expressions)
+        }
+        appendHorizontalAutoresizingConstraints(vars: vars,
+                                                mask: item.layoutAutoresizingMask,
+                                                reference: reference,
+                                                superviewSize: reference.superviewSize,
+                                                into: &expressions)
+        appendVerticalAutoresizingConstraints(vars: vars,
+                                              mask: item.layoutAutoresizingMask,
+                                              reference: reference,
+                                              superviewSize: reference.superviewSize,
+                                              into: &expressions)
+        return AutoresizingPlan(signature: signature, expressions: expressions)
+    }
+
+    private func appendHorizontalAutoresizingConstraints(
+        vars: ItemVariables,
+        mask: RRAutoresizingMask,
+        reference: LegacyAutoresizingReference,
+        superviewSize: CGSize,
+        into expressions: inout [(expression: Expression, op: RelationalOperator, name: String?)]
+    ) {
         let frame = reference.frame
         let x0 = frame.minX
         let w0 = frame.width
         let superviewWidth = superviewSize.width
         let rightGap = superviewWidth - (x0 + w0)
-        let mask = vars.item.layoutAutoresizingMask
         let superviewWidthExpression = widthExpression(ofSuperviewOf: vars)
             ?? Expression(constant: Double(superviewWidth))
         // The measured UIKit constraints are expressed in the superview's
@@ -450,107 +688,112 @@ internal final class LegacyLayoutSolver {
         let frameMinX = Expression(vars.minX).minus(superviewMinXExpression)
 
         if mask.contains(.flexibleWidth) {
-            installRequired(frameMinX.minus(Expression(constant: Double(x0))),
-                            .equal, name: "autoresizing: minX = x0")
+            expressions.append((frameMinX.minus(Expression(constant: Double(x0))),
+                                .equal, "autoresizing: minX = x0"))
             // superview.width == child.maxX(frame-relative) + right gap
-            installRequired(superviewWidthExpression
-                                .minus(Expression(vars.maxX))
-                                .plus(superviewMinXExpression)
-                                .minus(Expression(constant: Double(rightGap))),
-                            .equal, name: "autoresizing: superview.width = maxX + right gap")
+            expressions.append((superviewWidthExpression
+                                    .minus(Expression(vars.maxX))
+                                    .plus(superviewMinXExpression)
+                                    .minus(Expression(constant: Double(rightGap))),
+                                .equal, "autoresizing: superview.width = maxX + right gap"))
         } else if mask.contains(.flexibleLeftMargin) && mask.contains(.flexibleRightMargin) {
             let denominator = superviewWidth - w0
             let ratio = denominator != 0 ? x0 / denominator : 0
-            installRequired(Expression(vars.width).minus(Expression(constant: Double(w0))),
-                            .equal, name: "autoresizing: width = w0")
+            expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
+                                .equal, "autoresizing: width = w0"))
             // minX(frame-relative) == ratio * superview.width - ratio * w0
-            installRequired(frameMinX
-                                .minus(superviewWidthExpression.times(Double(ratio)))
-                                .plus(Expression(constant: Double(ratio * w0))),
-                            .equal, name: "autoresizing: proportional minX")
+            expressions.append((frameMinX
+                                    .minus(superviewWidthExpression.times(Double(ratio)))
+                                    .plus(Expression(constant: Double(ratio * w0))),
+                                .equal, "autoresizing: proportional minX"))
         } else if mask.contains(.flexibleLeftMargin) {
-            installRequired(Expression(vars.width).minus(Expression(constant: Double(w0))),
-                            .equal, name: "autoresizing: width = w0")
-            installRequired(superviewWidthExpression
-                                .minus(Expression(vars.maxX))
-                                .plus(superviewMinXExpression)
-                                .minus(Expression(constant: Double(rightGap))),
-                            .equal, name: "autoresizing: superview.width = maxX + right gap")
+            expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
+                                .equal, "autoresizing: width = w0"))
+            expressions.append((superviewWidthExpression
+                                    .minus(Expression(vars.maxX))
+                                    .plus(superviewMinXExpression)
+                                    .minus(Expression(constant: Double(rightGap))),
+                                .equal, "autoresizing: superview.width = maxX + right gap"))
         } else {
-            installRequired(Expression(vars.width).minus(Expression(constant: Double(w0))),
-                            .equal, name: "autoresizing: width = w0")
-            installRequired(frameMinX.minus(Expression(constant: Double(x0))),
-                            .equal, name: "autoresizing: minX = x0")
+            expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
+                                .equal, "autoresizing: width = w0"))
+            expressions.append((frameMinX.minus(Expression(constant: Double(x0))),
+                                .equal, "autoresizing: minX = x0"))
         }
     }
 
     /// Vertical axis of the autoresizing translation; symmetric to the horizontal
     /// one with `y`, `height`, `topMargin` and `bottomMargin`.
-    private func installVerticalAutoresizingConstraints(vars: ItemVariables,
-                                                        reference: LegacyAutoresizingReference,
-                                                        superviewSize: CGSize) {
+    private func appendVerticalAutoresizingConstraints(
+        vars: ItemVariables,
+        mask: RRAutoresizingMask,
+        reference: LegacyAutoresizingReference,
+        superviewSize: CGSize,
+        into expressions: inout [(expression: Expression, op: RelationalOperator, name: String?)]
+    ) {
         let frame = reference.frame
         let y0 = frame.minY
         let h0 = frame.height
         let superviewHeight = superviewSize.height
         let bottomGap = superviewHeight - (y0 + h0)
-        let mask = vars.item.layoutAutoresizingMask
         let superviewHeightExpression = heightExpression(ofSuperviewOf: vars)
             ?? Expression(constant: Double(superviewHeight))
         let superviewMinYExpression = minYExpression(ofSuperviewOf: vars) ?? Expression(constant: 0)
         let frameMinY = Expression(vars.minY).minus(superviewMinYExpression)
 
         if mask.contains(.flexibleHeight) {
-            installRequired(frameMinY.minus(Expression(constant: Double(y0))),
-                            .equal, name: "autoresizing: minY = y0")
-            installRequired(superviewHeightExpression
-                                .minus(Expression(vars.maxY))
-                                .plus(superviewMinYExpression)
-                                .minus(Expression(constant: Double(bottomGap))),
-                            .equal, name: "autoresizing: superview.height = maxY + bottom gap")
+            expressions.append((frameMinY.minus(Expression(constant: Double(y0))),
+                                .equal, "autoresizing: minY = y0"))
+            expressions.append((superviewHeightExpression
+                                    .minus(Expression(vars.maxY))
+                                    .plus(superviewMinYExpression)
+                                    .minus(Expression(constant: Double(bottomGap))),
+                                .equal, "autoresizing: superview.height = maxY + bottom gap"))
         } else if mask.contains(.flexibleTopMargin) && mask.contains(.flexibleBottomMargin) {
             let denominator = superviewHeight - h0
             let ratio = denominator != 0 ? y0 / denominator : 0
-            installRequired(Expression(vars.height).minus(Expression(constant: Double(h0))),
-                            .equal, name: "autoresizing: height = h0")
-            installRequired(frameMinY
-                                .minus(superviewHeightExpression.times(Double(ratio)))
-                                .plus(Expression(constant: Double(ratio * h0))),
-                            .equal, name: "autoresizing: proportional minY")
+            expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
+                                .equal, "autoresizing: height = h0"))
+            expressions.append((frameMinY
+                                    .minus(superviewHeightExpression.times(Double(ratio)))
+                                    .plus(Expression(constant: Double(ratio * h0))),
+                                .equal, "autoresizing: proportional minY"))
         } else if mask.contains(.flexibleTopMargin) {
-            installRequired(Expression(vars.height).minus(Expression(constant: Double(h0))),
-                            .equal, name: "autoresizing: height = h0")
-            installRequired(superviewHeightExpression
-                                .minus(Expression(vars.maxY))
-                                .plus(superviewMinYExpression)
-                                .minus(Expression(constant: Double(bottomGap))),
-                            .equal, name: "autoresizing: superview.height = maxY + bottom gap")
+            expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
+                                .equal, "autoresizing: height = h0"))
+            expressions.append((superviewHeightExpression
+                                    .minus(Expression(vars.maxY))
+                                    .plus(superviewMinYExpression)
+                                    .minus(Expression(constant: Double(bottomGap))),
+                                .equal, "autoresizing: superview.height = maxY + bottom gap"))
         } else {
-            installRequired(Expression(vars.height).minus(Expression(constant: Double(h0))),
-                            .equal, name: "autoresizing: height = h0")
-            installRequired(frameMinY.minus(Expression(constant: Double(y0))),
-                            .equal, name: "autoresizing: minY = y0")
+            expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
+                                .equal, "autoresizing: height = h0"))
+            expressions.append((frameMinY.minus(Expression(constant: Double(y0))),
+                                .equal, "autoresizing: minY = y0"))
         }
     }
 
     /// Pins all four attributes to `frame` (the degenerate fallback when the
     /// autoresizing geometry is unusable).
-    private func pinFrame(_ vars: ItemVariables, frame: CGRect) {
+    private func appendPinFrame(_ vars: ItemVariables,
+                                frame: CGRect,
+                                into expressions: inout [(expression: Expression, op: RelationalOperator, name: String?)]) {
         if frame.minX.isFinite {
-            installRequired(Expression(vars.minX).minus(Expression(constant: Double(frame.minX))),
-                            .equal, name: "fallback: minX")
+            expressions.append((Expression(vars.minX).minus(Expression(constant: Double(frame.minX))),
+                                .equal, "fallback: minX"))
         }
         if frame.minY.isFinite {
-            installRequired(Expression(vars.minY).minus(Expression(constant: Double(frame.minY))),
-                            .equal, name: "fallback: minY")
+            expressions.append((Expression(vars.minY).minus(Expression(constant: Double(frame.minY))),
+                                .equal, "fallback: minY"))
         }
         if frame.width.isFinite {
-            installRequired(Expression(vars.width).minus(Expression(constant: Double(max(0, frame.width)))),
-                            .equal, name: "fallback: width")
+            expressions.append((Expression(vars.width).minus(Expression(constant: Double(max(0, frame.width)))),
+                                .equal, "fallback: width"))
         }
         if frame.height.isFinite {
-            installRequired(Expression(vars.height).minus(Expression(constant: Double(max(0, frame.height)))),
-                            .equal, name: "fallback: height")
+            expressions.append((Expression(vars.height).minus(Expression(constant: Double(max(0, frame.height)))),
+                                .equal, "fallback: height"))
         }
     }
 
@@ -567,47 +810,69 @@ internal final class LegacyLayoutSolver {
         return fallback
     }
 
+    private func superVariables(of vars: ItemVariables) -> ItemVariables? {
+        guard let superIdentifier = superitemIdentifiers[vars.identifier] else { return nil }
+        return variables[superIdentifier]
+    }
+
     private func minXExpression(ofSuperviewOf vars: ItemVariables) -> Expression? {
-        guard let superitem = vars.item.layoutSuperitem else {
-            return nil
-        }
-        guard let superVariables = variables[ObjectIdentifier(superitem as AnyObject)] else {
-            return nil
-        }
+        guard let superVariables = superVariables(of: vars) else { return nil }
         return Expression(superVariables.minX)
     }
 
     private func minYExpression(ofSuperviewOf vars: ItemVariables) -> Expression? {
-        guard let superitem = vars.item.layoutSuperitem else {
-            return nil
-        }
-        guard let superVariables = variables[ObjectIdentifier(superitem as AnyObject)] else {
-            return nil
-        }
+        guard let superVariables = superVariables(of: vars) else { return nil }
         return Expression(superVariables.minY)
     }
 
     private func widthExpression(ofSuperviewOf vars: ItemVariables) -> Expression? {
-        guard let superitem = vars.item.layoutSuperitem else {
-            return nil
-        }
-        guard let superVariables = variables[ObjectIdentifier(superitem as AnyObject)] else {
-            return nil
-        }
+        guard let superVariables = superVariables(of: vars) else { return nil }
         return Expression(superVariables.width)
     }
 
     private func heightExpression(ofSuperviewOf vars: ItemVariables) -> Expression? {
-        guard let superitem = vars.item.layoutSuperitem else {
-            return nil
-        }
-        guard let superVariables = variables[ObjectIdentifier(superitem as AnyObject)] else {
-            return nil
-        }
+        guard let superVariables = superVariables(of: vars) else { return nil }
         return Expression(superVariables.height)
     }
 
     // MARK: Stays
+
+    /// The four stay values for one item, in `[minX, minY, width, height]` order.
+    /// A nil entry has no finite geometry and gets no stay constraint.
+    private typealias StayValues = [Double?]
+
+    /// Computes one item's desired stay values and records its absolute origin
+    /// for its children (the tree is walked in pre-order, parents first).
+    private func stayValues(for item: LegacyLayoutItem,
+                            absoluteOrigins: inout [ObjectIdentifier: CGPoint]) -> StayValues {
+        let currentFrame = item.layoutFrame
+        let parentAbsolute = parentAbsoluteOrigin(of: item, absoluteOrigins: absoluteOrigins)
+        let absoluteX = parentAbsolute.x + (currentFrame.minX.isFinite ? currentFrame.minX : 0)
+        let absoluteY = parentAbsolute.y + (currentFrame.minY.isFinite ? currentFrame.minY : 0)
+        absoluteOrigins[ObjectIdentifier(item as AnyObject)] = CGPoint(x: absoluteX, y: absoluteY)
+        return [currentFrame.minX.isFinite ? Double(absoluteX) : nil,
+                currentFrame.minY.isFinite ? Double(absoluteY) : nil,
+                currentFrame.width.isFinite ? Double(max(0, currentFrame.width)) : nil,
+                currentFrame.height.isFinite ? Double(max(0, currentFrame.height)) : nil]
+    }
+
+    /// Installs the stay constraints for the values.
+    private func installStayConstraints(_ values: StayValues,
+                                        vars: ItemVariables,
+                                        strength: Strength) -> [Constraint] {
+        let expressions = [Expression(vars.minX), Expression(vars.minY),
+                           Expression(vars.width), Expression(vars.height)]
+        var installed: [Constraint] = []
+        installed.reserveCapacity(4)
+        for index in 0..<4 {
+            guard let value = values[index] else { continue }
+            if let constraint = install(expressions[index].minus(Expression(constant: value)),
+                                        .equal, strength: strength, name: "stay: field \(index)") {
+                installed.append(constraint)
+            }
+        }
+        return installed
+    }
 
     /// Weak stay constraints pinning each non-root item's absolute position and
     /// size to its current geometry (root-local coordinates). See the header
@@ -624,35 +889,113 @@ internal final class LegacyLayoutSolver {
                 absoluteOrigins[identifier] = CGPoint(x: 0, y: 0)
                 continue
             }
-            let currentFrame = item.layoutFrame
-            let parentAbsolute = parentAbsoluteOrigin(of: item, absoluteOrigins: absoluteOrigins)
-            let absoluteX = parentAbsolute.x + (currentFrame.minX.isFinite ? currentFrame.minX : 0)
-            let absoluteY = parentAbsolute.y + (currentFrame.minY.isFinite ? currentFrame.minY : 0)
-            absoluteOrigins[identifier] = CGPoint(x: absoluteX, y: absoluteY)
-            guard let vars = variables[identifier] else {
+            let values = stayValues(for: item, absoluteOrigins: &absoluteOrigins)
+            guard let vars = variables[identifier] else { continue }
+            installedStays[identifier] = InstalledStays(
+                constraints: installStayConstraints(values, vars: vars, strength: stayStrength),
+                values: values)
+        }
+    }
+
+    /// Brings the stay constraints in line with the current frames. Values are
+    /// updated in place (one batched dual re-optimization) whenever the shape of
+    /// the stay set is unchanged, which is the common case.
+    private func refreshStays() -> Bool {
+        let rootIdentifier = ObjectIdentifier(root as AnyObject)
+        let stayStrength = Strength.create(0, 0, 1)
+        var absoluteOrigins: [ObjectIdentifier: CGPoint] = [:]
+        var updates: [(Constraint, Double)] = []
+        var installedByItem: [(ObjectIdentifier, ItemVariables, StayValues, InstalledStays?)] = []
+        installedByItem.reserveCapacity(items.count)
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            if identifier == rootIdentifier {
+                absoluteOrigins[identifier] = CGPoint(x: 0, y: 0)
                 continue
             }
-            if currentFrame.minX.isFinite {
-                install(Expression(vars.minX).minus(Expression(constant: Double(absoluteX))),
-                        .equal, strength: stayStrength, name: "stay: minX")
+            let values = stayValues(for: item, absoluteOrigins: &absoluteOrigins)
+            guard let vars = variables[identifier] else { return false }
+            installedByItem.append((identifier, vars, values, installedStays[identifier]))
+        }
+
+        for (identifier, vars, values, installed) in installedByItem {
+            let desiredCount = values.lazy.filter { $0 != nil }.count
+            guard let installed = installed else {
+                installedStays[identifier] = InstalledStays(
+                    constraints: installStayConstraints(values, vars: vars, strength: stayStrength),
+                    values: values)
+                continue
             }
-            if currentFrame.minY.isFinite {
-                install(Expression(vars.minY).minus(Expression(constant: Double(absoluteY))),
-                        .equal, strength: stayStrength, name: "stay: minY")
+            if installed.values == values { continue }
+            if installed.constraints.count == desiredCount {
+                // Same shape: move the constants only.
+                var index = 0
+                for field in 0..<4 {
+                    guard let value = values[field] else { continue }
+                    let constraint = installed.constraints[index]
+                    index += 1
+                    updates.append((constraint, -value))
+                }
+                installedStays[identifier] = InstalledStays(constraints: installed.constraints, values: values)
+            } else {
+                if !removeSolverConstraints(installed.constraints) { return false }
+                installedStays[identifier] = InstalledStays(
+                    constraints: installStayConstraints(values, vars: vars, strength: stayStrength),
+                    values: values)
             }
-            if currentFrame.width.isFinite {
-                install(Expression(vars.width).minus(Expression(constant: Double(max(0, currentFrame.width)))),
-                        .equal, strength: stayStrength, name: "stay: width")
+        }
+
+        if !updates.isEmpty {
+            do { try solver.updateConstraintConstants(updates) } catch { return false }
+            changeCount += 1
+        }
+        return true
+    }
+
+    /// After a solved pass, moves the stay targets to the solved geometry. The
+    /// next dirty pass then sees frames == stay targets and does no re-solve
+    /// work for the steady state. This mirrors a rebuild, which captures stays
+    /// from the frames that the previous pass wrote.
+    private func advanceStayValues(from result: LegacyLayoutResult) {
+        let rootIdentifier = ObjectIdentifier(root as AnyObject)
+        var absoluteOrigins: [ObjectIdentifier: CGPoint] = [:]
+        var updates: [(Constraint, Double)] = []
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            if identifier == rootIdentifier {
+                absoluteOrigins[identifier] = CGPoint(x: 0, y: 0)
+                continue
             }
-            if currentFrame.height.isFinite {
-                install(Expression(vars.height).minus(Expression(constant: Double(max(0, currentFrame.height)))),
-                        .equal, strength: stayStrength, name: "stay: height")
+            guard let frame = result.frames[identifier] else { continue }
+            let parentAbsolute = parentAbsoluteOrigin(of: item, absoluteOrigins: absoluteOrigins)
+            let absoluteX = parentAbsolute.x + (frame.minX.isFinite ? frame.minX : 0)
+            let absoluteY = parentAbsolute.y + (frame.minY.isFinite ? frame.minY : 0)
+            absoluteOrigins[identifier] = CGPoint(x: absoluteX, y: absoluteY)
+            guard let installed = installedStays[identifier] else { continue }
+            let values: StayValues = [frame.minX.isFinite ? Double(absoluteX) : nil,
+                                      frame.minY.isFinite ? Double(absoluteY) : nil,
+                                      frame.width.isFinite ? Double(max(0, frame.width)) : nil,
+                                      frame.height.isFinite ? Double(max(0, frame.height)) : nil]
+            guard installed.values != values, installed.constraints.count == values.lazy.filter({ $0 != nil }).count else {
+                continue
             }
+            var index = 0
+            for field in 0..<4 {
+                guard let value = values[field] else { continue }
+                updates.append((installed.constraints[index], -value))
+                index += 1
+            }
+            installedStays[identifier] = InstalledStays(constraints: installed.constraints, values: values)
+        }
+        if !updates.isEmpty {
+            _ = try? solver.updateConstraintConstants(updates)
         }
     }
 
     // MARK: User constraints
 
+    /// Full rebuild of the user constraints; also records what was installed so
+    /// later passes can diff against it.
     private func installUserConstraints() {
         let constraints = collectConstraints()
         var required: [CompiledConstraint] = []
@@ -672,16 +1015,7 @@ internal final class LegacyLayoutSolver {
         // recorded as broken and re-added at the documented "broken" strength so
         // it still influences the solve as the first thing to satisfy.
         for compiled in required {
-            if install(compiled.expression, compiled.operator, strength: compiled.strength, name: compiled.name) {
-                continue
-            }
-            brokenConstraints.append(compiled.source)
-            // Use a distinct Expression instance for the retry so the solver never
-            // sees the same row object twice.
-            let relaxedExpression = compiled.expression.plus(Expression(constant: 0))
-            _ = install(relaxedExpression, compiled.operator,
-                        strength: LegacyLayoutSolver.brokenStrength,
-                        name: compiled.name)
+            installUserConstraint(compiled)
         }
 
         // Intrinsic content size constraints are optional; they rank with the
@@ -690,8 +1024,111 @@ internal final class LegacyLayoutSolver {
 
         // Then the user's optional constraints, at their mapped strengths.
         for compiled in optional {
-            _ = install(compiled.expression, compiled.operator, strength: compiled.strength, name: compiled.name)
+            installUserConstraint(compiled)
         }
+    }
+
+    /// Installs one compiled user constraint and records its bookkeeping. A
+    /// required constraint the solver rejects is recorded as broken and retried
+    /// at the documented "broken" strength.
+    private func installUserConstraint(_ compiled: CompiledConstraint) {
+        let identifier = ObjectIdentifier(compiled.source)
+        if let constraint = install(compiled.expression, compiled.operator,
+                                    strength: compiled.strength, name: compiled.name) {
+            installedUserConstraints[identifier] = InstalledUserConstraint(
+                source: compiled.source,
+                signature: constraintSignature(compiled.source),
+                solverConstraints: [constraint],
+                broken: false)
+            return
+        }
+        brokenConstraints.append(compiled.source)
+        // Use a distinct Expression instance for the retry so the solver never
+        // sees the same row object twice.
+        let relaxedExpression = compiled.expression.plus(Expression(constant: 0))
+        var installed: [Constraint] = []
+        if let relaxed = install(relaxedExpression, compiled.operator,
+                                 strength: LegacyLayoutSolver.brokenStrength,
+                                 name: compiled.name) {
+            installed.append(relaxed)
+        }
+        installedUserConstraints[identifier] = InstalledUserConstraint(
+            source: compiled.source,
+            signature: constraintSignature(compiled.source),
+            solverConstraints: installed,
+            broken: true)
+    }
+
+    /// Incremental user-constraint diff. Returns `false` when the solver could
+    /// not apply the change; the caller then rebuilds.
+    private func refreshUserConstraints() -> Bool {
+        let constraints = collectConstraints()
+        var currentIdentifiers: Set<ObjectIdentifier> = []
+        currentIdentifiers.reserveCapacity(constraints.count)
+        var required: [CompiledConstraint] = []
+        var optional: [CompiledConstraint] = []
+        for constraint in constraints {
+            let identifier = ObjectIdentifier(constraint)
+            currentIdentifiers.insert(identifier)
+            if let installed = installedUserConstraints[identifier],
+               installed.source === constraint,
+               installed.signature == constraintSignature(constraint) {
+                if installed.broken { brokenConstraints.append(constraint) }
+                continue
+            }
+            if let installed = installedUserConstraints.removeValue(forKey: identifier) {
+                if !removeSolverConstraints(installed.solverConstraints) { return false }
+            }
+            guard let compiled = compile(constraint) else { continue }
+            if compiled.isRequired {
+                required.append(compiled)
+            } else {
+                optional.append(compiled)
+            }
+        }
+
+        if !installedUserConstraints.isEmpty {
+            var removed: [ObjectIdentifier] = []
+            for (identifier, installed) in installedUserConstraints where !currentIdentifiers.contains(identifier) {
+                removed.append(identifier)
+                if !removeSolverConstraints(installed.solverConstraints) { return false }
+            }
+            for identifier in removed { installedUserConstraints.removeValue(forKey: identifier) }
+        }
+
+        for compiled in required { installUserConstraint(compiled) }
+        guard refreshIntrinsicConstraints() else { return false }
+        for compiled in optional { installUserConstraint(compiled) }
+        return true
+    }
+
+    /// The immutable configuration plus the mutable constant/priority of a user
+    /// constraint. The constraint's other inputs cannot change after creation.
+    private func constraintSignature(_ constraint: RRLayoutConstraint) -> ConstraintSignature {
+        ConstraintSignature(
+            firstItem: constraint.firstItem.map { ObjectIdentifier($0 as AnyObject) },
+            secondItem: constraint.secondItem.map { ObjectIdentifier($0 as AnyObject) },
+            firstAttribute: constraint.firstAttribute.rawValue,
+            secondAttribute: constraint.secondAttribute.rawValue,
+            relation: constraint.relation.rawValue,
+            multiplier: Double(constraint.multiplier),
+            constant: Double(constraint.constant),
+            priority: constraint.priority)
+    }
+
+    /// Removes solver rows. Returns `false` if the solver rejects a removal.
+    private func removeSolverConstraints(_ constraints: [Constraint]) -> Bool {
+        for constraint in constraints {
+            do {
+                try solver.removeConstraint(constraint)
+                removedConstraintCount += 1
+                passRemovedConstraints += 1
+                changeCount += 1
+            } catch {
+                return false
+            }
+        }
+        return true
     }
 
     /// Constraints owned by any item of the subtree, plus activated constraints
@@ -856,12 +1293,12 @@ internal final class LegacyLayoutSolver {
         case .firstBaseline:
             // Only supported when the item exposes baseline metrics; a plain view
             // has no baseline and no equation was installed for its variable.
-            guard finite(variables.item.layoutFirstBaselineOffsetFromTop) != nil else {
+            guard firstBaselineOffsets[variables.identifier] != nil else {
                 return nil
             }
             return Expression(variables.firstBaseline)
         case .lastBaseline:
-            guard finite(variables.item.layoutLastBaselineOffsetFromBottom) != nil else {
+            guard lastBaselineOffsets[variables.identifier] != nil else {
                 return nil
             }
             return Expression(variables.lastBaseline)
@@ -885,7 +1322,14 @@ internal final class LegacyLayoutSolver {
 
     // MARK: Intrinsic content size
 
-    /// Adds the implicit intrinsic-size constraints at the item's content hugging
+    /// One item's intrinsic-size constraints, plus the input signature used for
+    /// diffing.
+    private struct IntrinsicPlan {
+        var signature: IntrinsicSignature
+        var expressions: [(expression: Expression, op: RelationalOperator, strength: Strength, name: String)]
+    }
+
+    /// Builds the implicit intrinsic-size constraints at the item's content hugging
     /// and compression-resistance priorities:
     ///
     ///     width  >= intrinsicWidth  @ compression resistance (horizontal)
@@ -894,39 +1338,145 @@ internal final class LegacyLayoutSolver {
     ///     height <= intrinsicHeight @ hugging (vertical)
     ///
     /// `UIViewNoIntrinsicMetric` (`-1`) means "no intrinsic size on this axis".
+    private func intrinsicPlan(for item: LegacyLayoutItem, vars: ItemVariables) -> IntrinsicPlan {
+        let intrinsicSize = item.layoutIntrinsicContentSize
+        let huggingX = item.layoutContentHuggingPriority(for: .horizontal)
+        let huggingY = item.layoutContentHuggingPriority(for: .vertical)
+        let compressionX = item.layoutContentCompressionResistancePriority(for: .horizontal)
+        let compressionY = item.layoutContentCompressionResistancePriority(for: .vertical)
+        let signature = IntrinsicSignature(width: Double(intrinsicSize.width),
+                                           height: Double(intrinsicSize.height),
+                                           huggingX: huggingX,
+                                           huggingY: huggingY,
+                                           compressionX: compressionX,
+                                           compressionY: compressionY)
+        var expressions: [(expression: Expression, op: RelationalOperator, strength: Strength, name: String)] = []
+        expressions.reserveCapacity(4)
+        if intrinsicSize.width >= 0 && intrinsicSize.width.isFinite {
+            let value = Double(intrinsicSize.width)
+            expressions.append((Expression(vars.width).minus(Expression(constant: value)),
+                                .greaterThanOrEqual,
+                                RRLayoutPriorityMapping.strength(for: compressionX),
+                                "intrinsic width >= \(value)"))
+            expressions.append((Expression(vars.width).minus(Expression(constant: value)),
+                                .lessThanOrEqual,
+                                RRLayoutPriorityMapping.strength(for: huggingX),
+                                "intrinsic width <= \(value)"))
+        }
+        if intrinsicSize.height >= 0 && intrinsicSize.height.isFinite {
+            let value = Double(intrinsicSize.height)
+            expressions.append((Expression(vars.height).minus(Expression(constant: value)),
+                                .greaterThanOrEqual,
+                                RRLayoutPriorityMapping.strength(for: compressionY),
+                                "intrinsic height >= \(value)"))
+            expressions.append((Expression(vars.height).minus(Expression(constant: value)),
+                                .lessThanOrEqual,
+                                RRLayoutPriorityMapping.strength(for: huggingY),
+                                "intrinsic height <= \(value)"))
+        }
+        return IntrinsicPlan(signature: signature, expressions: expressions)
+    }
+
     private func installIntrinsicContentConstraints() {
         for item in items {
-            guard let vars = variables[ObjectIdentifier(item as AnyObject)], !vars.isRoot else {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            guard let vars = variables[identifier], !vars.isRoot else {
                 continue
             }
-            let intrinsicSize = item.layoutIntrinsicContentSize
-            if intrinsicSize.width >= 0 && intrinsicSize.width.isFinite {
-                let value = Double(intrinsicSize.width)
-                let compression = item.layoutContentCompressionResistancePriority(for: .horizontal)
-                install(Expression(vars.width).minus(Expression(constant: value)),
-                        .greaterThanOrEqual,
-                        strength: RRLayoutPriorityMapping.strength(for: compression),
-                        name: "intrinsic width >= \(value)")
-                let hugging = item.layoutContentHuggingPriority(for: .horizontal)
-                install(Expression(vars.width).minus(Expression(constant: value)),
-                        .lessThanOrEqual,
-                        strength: RRLayoutPriorityMapping.strength(for: hugging),
-                        name: "intrinsic width <= \(value)")
+            let plan = intrinsicPlan(for: item, vars: vars)
+            var installed: [Constraint] = []
+            installed.reserveCapacity(plan.expressions.count)
+            for entry in plan.expressions {
+                if let constraint = install(entry.expression, entry.op,
+                                            strength: entry.strength, name: entry.name) {
+                    installed.append(constraint)
+                }
             }
-            if intrinsicSize.height >= 0 && intrinsicSize.height.isFinite {
-                let value = Double(intrinsicSize.height)
-                let compression = item.layoutContentCompressionResistancePriority(for: .vertical)
-                install(Expression(vars.height).minus(Expression(constant: value)),
-                        .greaterThanOrEqual,
-                        strength: RRLayoutPriorityMapping.strength(for: compression),
-                        name: "intrinsic height >= \(value)")
-                let hugging = item.layoutContentHuggingPriority(for: .vertical)
-                install(Expression(vars.height).minus(Expression(constant: value)),
-                        .lessThanOrEqual,
-                        strength: RRLayoutPriorityMapping.strength(for: hugging),
-                        name: "intrinsic height <= \(value)")
-            }
+            installedIntrinsicConstraints[identifier] = InstalledIntrinsicConstraints(
+                signature: plan.signature, solverConstraints: installed)
         }
+    }
+
+    /// Incremental intrinsic-constraint diff. Returns `false` on a solver error.
+    private func refreshIntrinsicConstraints() -> Bool {
+        var seen: Set<ObjectIdentifier> = []
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            guard let vars = variables[identifier], !vars.isRoot else { continue }
+            seen.insert(identifier)
+            let plan = intrinsicPlan(for: item, vars: vars)
+            if let installed = installedIntrinsicConstraints[identifier] {
+                if installed.signature == plan.signature { continue }
+                if !removeSolverConstraints(installed.solverConstraints) { return false }
+                installedIntrinsicConstraints.removeValue(forKey: identifier)
+            }
+            var installed: [Constraint] = []
+            installed.reserveCapacity(plan.expressions.count)
+            for entry in plan.expressions {
+                if let constraint = install(entry.expression, entry.op,
+                                            strength: entry.strength, name: entry.name) {
+                    installed.append(constraint)
+                }
+            }
+            installedIntrinsicConstraints[identifier] = InstalledIntrinsicConstraints(
+                signature: plan.signature, solverConstraints: installed)
+        }
+        if !installedIntrinsicConstraints.isEmpty {
+            var removed: [ObjectIdentifier] = []
+            for (identifier, installed) in installedIntrinsicConstraints where !seen.contains(identifier) {
+                removed.append(identifier)
+                if !removeSolverConstraints(installed.solverConstraints) { return false }
+            }
+            for identifier in removed { installedIntrinsicConstraints.removeValue(forKey: identifier) }
+        }
+        return true
+    }
+
+    // MARK: Autoresizing incremental diff
+
+    /// Incremental autoresizing diff for the translating items. Returns `false`
+    /// on a solver error.
+    private func refreshAutoresizingConstraints() -> Bool {
+        let fallbackSuperviewSize = root.layoutFrame.size
+        var seen: Set<ObjectIdentifier> = []
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            guard let vars = variables[identifier], !vars.isRoot else { continue }
+            if !item.layoutTranslatesAutoresizingMaskIntoConstraints {
+                if let old = installedAutoresizingConstraints.removeValue(forKey: identifier) {
+                    if !removeSolverConstraints(old.solverConstraints) { return false }
+                }
+                continue
+            }
+            seen.insert(identifier)
+            let plan = autoresizingPlan(vars: vars, item: item, fallbackSuperviewSize: fallbackSuperviewSize)
+            if let installed = installedAutoresizingConstraints[identifier],
+               installed.signature == plan.signature {
+                continue
+            }
+            if let old = installedAutoresizingConstraints.removeValue(forKey: identifier) {
+                if !removeSolverConstraints(old.solverConstraints) { return false }
+            }
+            var installed: [Constraint] = []
+            installed.reserveCapacity(plan.expressions.count)
+            for entry in plan.expressions {
+                if let constraint = install(entry.expression, entry.op,
+                                            strength: .required, name: entry.name) {
+                    installed.append(constraint)
+                }
+            }
+            installedAutoresizingConstraints[identifier] = InstalledAutoresizingConstraints(
+                signature: plan.signature, solverConstraints: installed)
+        }
+        if !installedAutoresizingConstraints.isEmpty {
+            var removed: [ObjectIdentifier] = []
+            for (identifier, installed) in installedAutoresizingConstraints where !seen.contains(identifier) {
+                removed.append(identifier)
+                if !removeSolverConstraints(installed.solverConstraints) { return false }
+            }
+            for identifier in removed { installedAutoresizingConstraints.removeValue(forKey: identifier) }
+        }
+        return true
     }
 
     // MARK: Solver helpers
@@ -938,23 +1488,26 @@ internal final class LegacyLayoutSolver {
     private func installRequired(_ expression: Expression,
                                  _ op: RelationalOperator,
                                  name: String?) -> Bool {
-        return install(expression, op, strength: .required, name: name)
+        return install(expression, op, strength: .required, name: name) != nil
     }
 
-    /// Installs one constraint. Returns `false` if the solver rejected it
-    /// (unsatisfiable required constraint or solver error); the engine then skips
-    /// it and keeps going.
+    /// Installs one constraint. Returns the solver constraint, or `nil` if the
+    /// solver rejected it (unsatisfiable required constraint or solver error);
+    /// the engine then skips it and keeps going.
     @discardableResult
     private func install(_ expression: Expression,
                          _ op: RelationalOperator,
                          strength: Strength,
-                         name: String?) -> Bool {
+                         name: String?) -> Constraint? {
         let constraint = Constraint(expression, op, strength: strength, name: name)
         do {
             try solver.addConstraint(constraint)
-            return true
+            installedConstraintCount += 1
+            passInstalledConstraints += 1
+            changeCount += 1
+            return constraint
         } catch {
-            return false
+            return nil
         }
     }
 

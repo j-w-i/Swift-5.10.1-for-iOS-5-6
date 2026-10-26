@@ -26,42 +26,50 @@ internal func nearZero(_ value: Double) -> Bool {
 /// A sparse row of the simplex tableau: `constant + sum(cell * symbol) == 0`.
 ///
 /// Rows have value semantics. The solver uses shallow snapshots of its tableau
-/// to roll a failed `addConstraint` back; Swift's copy-on-write dictionaries
-/// make those snapshots cheap and let the rows be restored exactly.
+/// to roll a failed `addConstraint` back; Swift's copy-on-write arrays make
+/// those snapshots cheap and let the rows be restored exactly.
 ///
-/// All traversals go through `symbols`, which is sorted by symbol id, so a row
-/// never exposes dictionary iteration order.
+/// Implementation note: the coefficients live in two parallel arrays (symbols
+/// sorted by symbol id + coefficients), not in a dictionary. Tableau rows are
+/// short (usually a handful of terms), so binary search over a sorted array is
+/// cheaper than hashing on every pivot, and merging two rows during
+/// substitution is a linear merge instead of per-symbol dictionary inserts.
 internal struct Row {
 
-    /// The non-zero coefficients of the row, keyed by symbol.
-    private var cells: [Symbol: Double]
+    /// The row's symbols, sorted by symbol id.
+    private var symbolStorage: [Symbol]
+
+    /// The coefficients, parallel to `symbolStorage`.
+    private var coefficientStorage: [Double]
 
     /// The constant term of the row.
     internal private(set) var constant: Double
 
     internal init(constant: Double = 0.0) {
-        self.cells = [:]
+        self.symbolStorage = []
+        self.coefficientStorage = []
         self.constant = constant
     }
 
     /// Whether the row contains no variable terms.
     internal var isEmpty: Bool {
-        cells.isEmpty
+        symbolStorage.isEmpty
     }
 
     /// The number of non-zero coefficients in the row.
     internal var cellCount: Int {
-        cells.count
+        symbolStorage.count
     }
 
     /// The symbols with a non-zero coefficient, sorted by symbol id.
     internal var symbols: [Symbol] {
-        cells.keys.sorted()
+        symbolStorage
     }
 
     /// The coefficient of `symbol`, or `0` when the symbol is absent.
     internal func coefficient(for symbol: Symbol) -> Double {
-        cells[symbol] ?? 0.0
+        guard let index = index(of: symbol) else { return 0.0 }
+        return coefficientStorage[index]
     }
 
     /// Adds `value` to the constant term and returns the new constant.
@@ -77,36 +85,72 @@ internal struct Row {
     /// resulting coefficient is (close to) zero the symbol is removed, keeping
     /// the row sparse.
     internal mutating func insert(_ symbol: Symbol, _ coefficient: Double = 1.0) {
-        let value = (cells[symbol] ?? 0.0) + coefficient
-        if nearZero(value) {
-            cells.removeValue(forKey: symbol)
-        } else {
-            cells[symbol] = value
+        if let index = index(of: symbol) {
+            let value = coefficientStorage[index] + coefficient
+            if nearZero(value) {
+                symbolStorage.remove(at: index)
+                coefficientStorage.remove(at: index)
+            } else {
+                coefficientStorage[index] = value
+            }
+            return
         }
+        guard !nearZero(coefficient) else { return }
+        let index = insertionIndex(for: symbol)
+        symbolStorage.insert(symbol, at: index)
+        coefficientStorage.insert(coefficient, at: index)
     }
 
     /// Inserts `coefficient * other` into this row.
     ///
-    /// The cells of `other` are merged in dictionary order on purpose: the
-    /// update of each cell is independent of the others, so this cannot
-    /// influence the resulting coefficients (or therefore the solution), and it
-    /// avoids sorting a row on every substitution — a hot path during pivots.
+    /// A linear merge of two symbol-sorted rows: the result is independent of
+    /// iteration order, and no per-term dictionary hashing is involved.
     internal mutating func insert(_ other: Row, _ coefficient: Double = 1.0) {
         constant += other.constant * coefficient
-        for (symbol, otherCoefficient) in other.cells {
-            insert(symbol, otherCoefficient * coefficient)
+        guard !other.symbolStorage.isEmpty else { return }
+        var mergedSymbols: [Symbol] = []
+        var mergedCoefficients: [Double] = []
+        mergedSymbols.reserveCapacity(symbolStorage.count + other.symbolStorage.count)
+        mergedCoefficients.reserveCapacity(symbolStorage.count + other.symbolStorage.count)
+        var left = 0
+        var right = 0
+        while left < symbolStorage.count || right < other.symbolStorage.count {
+            if right >= other.symbolStorage.count ||
+                (left < symbolStorage.count && symbolStorage[left].id < other.symbolStorage[right].id) {
+                mergedSymbols.append(symbolStorage[left])
+                mergedCoefficients.append(coefficientStorage[left])
+                left += 1
+            } else if left >= symbolStorage.count || other.symbolStorage[right].id < symbolStorage[left].id {
+                mergedSymbols.append(other.symbolStorage[right])
+                mergedCoefficients.append(other.coefficientStorage[right] * coefficient)
+                right += 1
+            } else {
+                let value = coefficientStorage[left] + other.coefficientStorage[right] * coefficient
+                if !nearZero(value) {
+                    mergedSymbols.append(symbolStorage[left])
+                    mergedCoefficients.append(value)
+                }
+                left += 1
+                right += 1
+            }
         }
+        symbolStorage = mergedSymbols
+        coefficientStorage = mergedCoefficients
     }
 
     /// Removes `symbol` from the row.
     internal mutating func remove(_ symbol: Symbol) {
-        cells.removeValue(forKey: symbol)
+        guard let index = index(of: symbol) else { return }
+        symbolStorage.remove(at: index)
+        coefficientStorage.remove(at: index)
     }
 
     /// Reverses the sign of the constant and of every cell.
     internal mutating func reverseSign() {
         constant = -constant
-        cells = cells.mapValues { -$0 }
+        for index in coefficientStorage.indices {
+            coefficientStorage[index] = -coefficientStorage[index]
+        }
     }
 
     /// Solves the row for `symbol`.
@@ -117,12 +161,17 @@ internal struct Row {
     ///
     /// - Throws: `SolverError.internalInconsistency` if the symbol is absent.
     internal mutating func solveFor(_ symbol: Symbol) throws {
-        guard let coefficient = cells.removeValue(forKey: symbol) else {
+        guard let index = index(of: symbol) else {
             throw SolverError.internalInconsistency("row does not contain the symbol to solve for")
         }
+        let coefficient = coefficientStorage[index]
+        symbolStorage.remove(at: index)
+        coefficientStorage.remove(at: index)
         let multiplier = -1.0 / coefficient
         constant *= multiplier
-        cells = cells.mapValues { $0 * multiplier }
+        for index in coefficientStorage.indices {
+            coefficientStorage[index] *= multiplier
+        }
     }
 
     /// Solves the row for `lhs` in terms of `rhs`.
@@ -140,7 +189,45 @@ internal struct Row {
     /// Given `symbol = other` and this row `a * symbol + rest = 0`, the row
     /// becomes `a * other + rest = 0`. A no-op when the symbol is absent.
     internal mutating func substitute(_ symbol: Symbol, with other: Row) {
-        guard let coefficient = cells.removeValue(forKey: symbol) else { return }
+        guard let index = index(of: symbol) else { return }
+        let coefficient = coefficientStorage[index]
+        symbolStorage.remove(at: index)
+        coefficientStorage.remove(at: index)
         insert(other, coefficient)
+    }
+
+    // MARK: Symbol lookup
+
+    /// Index of `symbol`, or nil when absent. Binary search over the sorted ids.
+    private func index(of symbol: Symbol) -> Int? {
+        var low = 0
+        var high = symbolStorage.count
+        while low < high {
+            let middle = (low + high) / 2
+            let candidate = symbolStorage[middle].id
+            if candidate < symbol.id {
+                low = middle + 1
+            } else if candidate > symbol.id {
+                high = middle
+            } else {
+                return middle
+            }
+        }
+        return nil
+    }
+
+    /// The insertion position that keeps `symbolStorage` sorted by symbol id.
+    private func insertionIndex(for symbol: Symbol) -> Int {
+        var low = 0
+        var high = symbolStorage.count
+        while low < high {
+            let middle = (low + high) / 2
+            if symbolStorage[middle].id < symbol.id {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        return low
     }
 }

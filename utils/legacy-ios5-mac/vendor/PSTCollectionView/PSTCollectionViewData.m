@@ -7,6 +7,7 @@
 
 #import "PSTCollectionViewData.h"
 #import "PSTCollectionView.h"
+#import "PSTCollectionViewStats.h"
 
 @interface PSTCollectionViewData () {
     CGRect _validLayoutRect;
@@ -14,6 +15,15 @@
     NSInteger _numItems;
     NSInteger _numSections;
     NSInteger *_sectionItemCounts;
+    // Prefix sums of _sectionItemCounts: _sectionItemOffsets[i] is the global
+    // index of the first item of section i, _sectionItemOffsets[_numSections] is
+    // _numItems.  Replaces the O(section) linear scans that ran for every
+    // globalIndexForItemAtIndexPath / numberOfItemsBeforeSection query.
+    NSInteger *_sectionItemOffsets;
+    // Reused backing store for the filtered per-pass attribute array; avoids
+    // allocating and growing a fresh NSMutableArray on every scroll pass.
+    NSMutableArray *_filteredLayoutAttributesStorage;
+    NSUInteger _layoutAttributesGeneration;
 //    id __strong* _globalItems; ///< _globalItems appears to be cached layoutAttributes. But adding that work in opens a can of worms, so deferring until later.
 
 /*
@@ -63,6 +73,7 @@
 
 - (void)dealloc {
     free(_sectionItemCounts);
+    free(_sectionItemOffsets);
 }
 
 - (NSString *)description {
@@ -83,24 +94,32 @@
 }
 
 - (void)validateLayoutInRect:(CGRect)rect {
+    PSTCollectionViewStatsCountersStorage[PSTStatDataValidations]++;
     [self validateItemCounts];
     [self prepareToLoadData];
 
     // TODO: check if we need to fetch data from layout
     if (!CGRectEqualToRect(_validLayoutRect, rect)) {
         _validLayoutRect = rect;
+        _layoutAttributesGeneration++;
+        PSTCollectionViewStatsCountersStorage[PSTStatDataRefilters]++;
+        PSTCollectionViewStatsCountersStorage[PSTStatElementScans]++;
         // we only want cell layoutAttributes & supplementaryView layoutAttributes
         // Filter with a loop: this runs on every layout-rect change (scroll, resize), and
         // allocating an NSPredicate plus a filtered copy each time is measurable on iOS 5 hardware.
         NSArray *allAttributes = [self.layout layoutAttributesForElementsInRect:rect];
-        NSMutableArray *filtered = [NSMutableArray arrayWithCapacity:allAttributes.count];
+        if (!_filteredLayoutAttributesStorage) {
+            _filteredLayoutAttributesStorage = [NSMutableArray arrayWithCapacity:allAttributes.count];
+        } else {
+            [_filteredLayoutAttributesStorage removeAllObjects];
+        }
         for (PSTCollectionViewLayoutAttributes *attributes in allAttributes) {
             if ([attributes isKindOfClass:PSTCollectionViewLayoutAttributes.class] &&
                 ([attributes isCell] || [attributes isSupplementaryView] || [attributes isDecorationView])) {
-                [filtered addObject:attributes];
+                [_filteredLayoutAttributesStorage addObject:attributes];
             }
         }
-        self.cachedLayoutAttributes = filtered;
+        self.cachedLayoutAttributes = (NSArray *)_filteredLayoutAttributesStorage;
     }
 }
 
@@ -114,12 +133,13 @@
 
     NSAssert(section < _numSections, @"request for number of items in section %ld when there are only %ld sections in the collection view", (long)section, (long)_numSections);
 
-    NSInteger returnCount = 0;
-    for (int i = 0; i < section; i++) {
-        returnCount += _sectionItemCounts[i];
+    if (section <= 0) {
+        // Matches the old loop's behaviour for section 0 and for the
+        // NS_BLOCK_ASSERTIONS case where a negative section was tolerated.
+        return 0;
     }
-
-    return returnCount;
+    // Constant-time lookup instead of the previous per-section linear scan.
+    return _sectionItemOffsets[section];
 }
 
 - (NSInteger)numberOfItemsInSection:(NSInteger)section {
@@ -153,15 +173,22 @@
 
     NSAssert(index < _numItems, @"request for index path for global index %ld when there are only %ld items in the collection view", (long)index, (long)_numItems);
 
+    // Binary search the prefix sums instead of walking every section.  We want
+    // the last section whose first global index is <= index.
+    NSInteger low = 0;
+    NSInteger high = _numSections - 1;
     NSInteger section = 0;
-    NSInteger countItems = 0;
-    for (section = 0; section < _numSections; section++) {
-        NSInteger countIncludingThisSection = countItems + _sectionItemCounts[section];
-        if (countIncludingThisSection > index) break;
-        countItems = countIncludingThisSection;
+    while (low <= high) {
+        NSInteger mid = low + (high - low) / 2;
+        if (_sectionItemOffsets[mid] <= index) {
+            section = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
     }
 
-    NSInteger item = index - countItems;
+    NSInteger item = index - _sectionItemOffsets[section];
 
     return [NSIndexPath indexPathForRow:item inSection:section];
 }
@@ -187,6 +214,10 @@
     return self.cachedLayoutAttributes;
 }
 
+- (NSUInteger)layoutAttributesGeneration {
+    return _layoutAttributesGeneration;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Private
 
@@ -208,6 +239,8 @@
         _numItems = 0;
         free(_sectionItemCounts);
         _sectionItemCounts = 0;
+        free(_sectionItemOffsets);
+        _sectionItemOffsets = 0;
         _collectionViewDataFlags.itemCountsAreValid = YES;
         return;
     }
@@ -217,13 +250,20 @@
     }else {
         _sectionItemCounts = realloc(_sectionItemCounts, (size_t)_numSections * sizeof(NSInteger));
     }
+    if (!_sectionItemOffsets) {
+        _sectionItemOffsets = malloc((size_t)(_numSections + 1) * sizeof(NSInteger));
+    }else {
+        _sectionItemOffsets = realloc(_sectionItemOffsets, (size_t)(_numSections + 1) * sizeof(NSInteger));
+    }
 
-    // query cells per section
+    // query cells per section, building the prefix sums in the same pass
     _numItems = 0;
+    _sectionItemOffsets[0] = 0;
     for (NSInteger i = 0; i < _numSections; i++) {
         NSInteger cellCount = [self.collectionView.dataSource collectionView:self.collectionView numberOfItemsInSection:i];
         _sectionItemCounts[i] = cellCount;
         _numItems += cellCount;
+        _sectionItemOffsets[i + 1] = _numItems;
     }
 
     _collectionViewDataFlags.itemCountsAreValid = YES;

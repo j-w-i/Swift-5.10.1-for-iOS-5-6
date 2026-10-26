@@ -34,6 +34,11 @@
 // Fetch layout attributes
 - (NSArray *)layoutAttributesForElementsInRect:(CGRect)rect;
 
+// Monotonic token for the currently cached visible attribute set.  Changes
+// whenever validateLayoutInRect actually re-queries the layout, so callers can
+// tell "same array object, same contents" from "reused array object, new pass".
+- (NSUInteger)layoutAttributesGeneration;
+
 /*
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForItemAtIndexPath:(NSIndexPath *)indexPath;
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForElementsInSection:(NSInteger)section;

@@ -13,6 +13,8 @@
 #import "PSTGridLayoutSection.h"
 #import <objc/runtime.h>
 
+#import "PSTCollectionViewStats.h"
+
 NSString *const PSTCollectionElementKindSectionHeader = @"UICollectionElementKindSectionHeader";
 NSString *const PSTCollectionElementKindSectionFooter = @"UICollectionElementKindSectionFooter";
 
@@ -53,6 +55,22 @@ NSString *const PSTFlowLayoutRowVerticalAlignmentKey = @"UIFlowLayoutRowVertical
     PSTCollectionViewScrollDirection _scrollDirection;
     NSDictionary *_rowAlignmentsOptionsDictionary;
     CGRect _visibleBounds;
+    // Prepared-generation token.  invalidateLayout only marks the layout dirty;
+    // prepareLayout rebuilds every section/row only when one of these inputs
+    // actually changed.  Dynamic delegate geometry can not be validated without
+    // rebuilding, so it always forces a rebuild.
+    CGSize _preparedBoundsSize;
+    CGSize _preparedItemSize;
+    CGSize _preparedHeaderReferenceSize;
+    CGSize _preparedFooterReferenceSize;
+    CGFloat _preparedLineSpacing;
+    CGFloat _preparedInteritemSpacing;
+    UIEdgeInsets _preparedSectionInset;
+    PSTCollectionViewScrollDirection _preparedScrollDirection;
+    NSDictionary *_preparedRowAlignmentsOptionsDictionary;
+    NSMutableArray *_preparedSectionItemCounts;
+    BOOL _preparedLayoutIsReusable;
+    BOOL _needsPrepareLayout;
     char filler[200]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 
@@ -129,7 +147,7 @@ static char kPSTCachedItemRectsKey;
 
 - (NSArray *)layoutAttributesForElementsInRect:(CGRect)rect {
     // Apple calls _layoutAttributesForItemsInRect
-    if (!_data) [self prepareLayout];
+    if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     NSMutableArray *layoutAttributesArray = [NSMutableArray array];
     for (PSTGridLayoutSection *section in _data.sections) {
@@ -203,7 +221,8 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForItemAtIndexPath:(NSIndexPath *)indexPath {
-    if (!_data) [self prepareLayout];
+    PSTCollectionViewStatsCountersStorage[PSTStatItemDerivations]++;
+    if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     PSTGridLayoutSection *section = [_data.sections objectAtIndex:(NSUInteger)indexPath.section];
     PSTGridLayoutRow *row = nil;
@@ -232,7 +251,8 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForSupplementaryViewOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath {
-    if (!_data) [self prepareLayout];
+    PSTCollectionViewStatsCountersStorage[PSTStatItemDerivations]++;
+    if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     NSUInteger sectionIndex = (NSUInteger)indexPath.section;
     PSTCollectionViewLayoutAttributes *layoutAttributes = nil;
@@ -260,11 +280,12 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForDecorationViewWithReuseIdentifier:(NSString *)identifier atIndexPath:(NSIndexPath *)indexPath {
+    PSTCollectionViewStatsCountersStorage[PSTStatItemDerivations]++;
     return nil;
 }
 
 - (CGSize)collectionViewContentSize {
-    if (!_data) [self prepareLayout];
+    if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     return _data.contentSize;
 }
@@ -282,7 +303,9 @@ static char kPSTCachedItemRectsKey;
 - (void)invalidateLayout {
     [super invalidateLayout];
     objc_setAssociatedObject(self, &kPSTCachedItemRectsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    _data = nil;
+    // Keep _data: prepareLayout will verify the prepared-generation token and
+    // only rebuild when a geometry input really changed.
+    _needsPrepareLayout = YES;
 }
 
 - (BOOL)shouldInvalidateLayoutForBoundsChange:(CGRect)newBounds {
@@ -300,6 +323,17 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (void)prepareLayout {
+    _needsPrepareLayout = NO;
+
+    if ([self canReusePreparedLayout]) {
+        // Same bounds/item size/insets/spacings/section item counts: the existing
+        // rows and sections are still correct.  Refresh only the cached bounds.
+        PSTCollectionViewStatsCountersStorage[PSTStatLayoutPreparationReuses]++;
+        _visibleBounds = self.collectionView.bounds;
+        return;
+    }
+
+    PSTCollectionViewStatsCountersStorage[PSTStatLayoutPreparations]++;
     // custom ivars
     objc_setAssociatedObject(self, &kPSTCachedItemRectsKey, [NSMutableDictionary dictionary], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
@@ -310,6 +344,79 @@ static char kPSTCachedItemRectsKey;
     _data.dimension = _data.horizontal ? collectionViewSize.height : collectionViewSize.width;
     _data.rowAlignmentOptions = _rowAlignmentsOptionsDictionary;
     [self fetchItemsInfo];
+    [self recordPreparedGeometry];
+}
+
+// Dynamic delegate geometry (per-item sizes, per-section insets/spacings and
+// header/footer sizes) can change without any local property changing, so the
+// prepared layout can not be validated cheaply and is always rebuilt.
+- (BOOL)hasDynamicDelegateGeometry {
+    id<PSTCollectionViewDelegateFlowLayout> flowDataSource = (id<PSTCollectionViewDelegateFlowLayout>)self.collectionView.delegate;
+    return [flowDataSource respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:insetForSectionAtIndex:)] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:minimumLineSpacingForSectionAtIndex:)] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:minimumInteritemSpacingForSectionAtIndex:)] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:referenceSizeForHeaderInSection:)] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:referenceSizeForFooterInSection:)];
+}
+
+- (void)recordPreparedGeometry {
+    _preparedBoundsSize = _visibleBounds.size;
+    _preparedItemSize = _itemSize;
+    _preparedHeaderReferenceSize = _headerReferenceSize;
+    _preparedFooterReferenceSize = _footerReferenceSize;
+    _preparedLineSpacing = _lineSpacing;
+    _preparedInteritemSpacing = _interitemSpacing;
+    _preparedSectionInset = _sectionInset;
+    _preparedScrollDirection = _scrollDirection;
+    _preparedRowAlignmentsOptionsDictionary = [_rowAlignmentsOptionsDictionary copy];
+
+    PSTCollectionView *collectionView = self.collectionView;
+    NSInteger sectionCount = [collectionView numberOfSections];
+    if (!_preparedSectionItemCounts) {
+        _preparedSectionItemCounts = [NSMutableArray arrayWithCapacity:(NSUInteger)sectionCount];
+    } else {
+        [_preparedSectionItemCounts removeAllObjects];
+    }
+    for (NSInteger section = 0; section < sectionCount; section++) {
+        [_preparedSectionItemCounts addObject:@([collectionView numberOfItemsInSection:section])];
+    }
+    _preparedLayoutIsReusable = YES;
+}
+
+- (BOOL)canReusePreparedLayout {
+    if (!_preparedLayoutIsReusable || !_data) {
+        return NO;
+    }
+    // Evaluated live: assigning a delegate that provides per-item geometry must
+    // force a rebuild even though no local property changed.
+    if ([self hasDynamicDelegateGeometry]) {
+        return NO;
+    }
+    PSTCollectionView *collectionView = self.collectionView;
+    if (!collectionView) {
+        return NO;
+    }
+    if (!CGSizeEqualToSize(collectionView.bounds.size, _preparedBoundsSize)) return NO;
+    if (!CGSizeEqualToSize(_itemSize, _preparedItemSize)) return NO;
+    if (!CGSizeEqualToSize(_headerReferenceSize, _preparedHeaderReferenceSize)) return NO;
+    if (!CGSizeEqualToSize(_footerReferenceSize, _preparedFooterReferenceSize)) return NO;
+    if (_lineSpacing != _preparedLineSpacing) return NO;
+    if (_interitemSpacing != _preparedInteritemSpacing) return NO;
+    if (!UIEdgeInsetsEqualToEdgeInsets(_sectionInset, _preparedSectionInset)) return NO;
+    if (_scrollDirection != _preparedScrollDirection) return NO;
+    if (_rowAlignmentsOptionsDictionary != _preparedRowAlignmentsOptionsDictionary &&
+        ![_rowAlignmentsOptionsDictionary isEqual:_preparedRowAlignmentsOptionsDictionary]) {
+        return NO;
+    }
+    NSInteger sectionCount = [collectionView numberOfSections];
+    if (sectionCount != (NSInteger)_preparedSectionItemCounts.count) return NO;
+    for (NSInteger section = 0; section < sectionCount; section++) {
+        if ([collectionView numberOfItemsInSection:section] != [[_preparedSectionItemCounts objectAtIndex:(NSUInteger)section] integerValue]) {
+            return NO;
+        }
+    }
+    return YES;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
