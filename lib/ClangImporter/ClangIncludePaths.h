@@ -17,6 +17,9 @@
 
 namespace swift {
 
+/// Whether this invocation uses the legacy collection runtime declarations.
+bool usesLegacyCollectionDeclarations(const ASTContext &ctx);
+
 llvm::Optional<SmallString<128>>
 getCxxShimModuleMapPath(SearchPathOptions &opts, const llvm::Triple &triple);
 

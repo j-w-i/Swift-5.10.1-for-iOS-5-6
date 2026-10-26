@@ -8,7 +8,7 @@ Three repos make up the whole project:
 | **Swift-5.1.5-for-iOS-6** | The patched 5.1.5 fork. Built by this pipeline into the old runtime dylibs (`libswift*.dylib`, armv7) that iOS 5 and 6 builds ship in the app. The iOS 6 guide route must ship the build from this pipeline (compiler-rt `atomic.c` linked in, `-force_load libclang_rt.ios.a`), never the stock swift.org 5.1.5 dylibs, which import C11 atomics that iOS 6 lacks (`___atomic_store` -> dyld failure at launch). |
 | **Legacy-Swift-Development-Kit** | The macOS app: installs the environment, picks the toolchain per project, builds unsigned IPAs. |
 
-Everything else (llvm-project, cmark, swift-syntax, string-processing, swift-driver) is fetched from upstream at the `swift-5.10.1-RELEASE` tag by `fetch-deps.sh`; nothing is vendored.
+Compiler dependencies (llvm-project, cmark, swift-syntax, string-processing, swift-driver) are fetched from upstream at pinned refs by `fetch-deps.sh`. The MIT-licensed PSTCollectionView source runtime is vendored under `utils/legacy-ios5-mac/vendor/PSTCollectionView` so UIKit collection support builds from the clone without a package dependency.
 
 ## Requirements (macOS, Intel or Apple Silicon with Rosetta)
 Xcode 13.4.1 (path in `XCODE_13_4_1_DEVELOPER_DIR`), a Swift 5.10.1 host toolchain (`SWIFT_5_10_1_HOST_TOOLCHAIN`), `cmake` >= 3.24, `ninja`, Python 3.8+, git. Nothing is read from `$HOME`; every path is an environment variable or argument.
@@ -44,6 +44,26 @@ platform SDK; only its libc++ headers are borrowed from Xcode), and `crt1.3.1.o`
 (theos/sdks). Every product the toolchain ships - the Swift frontend and driver, clang, compiler-rt builtins,
 the iOS standard library and modules, the 5.1.5 runtime with its atomics, and the legacy overlays - is built
 from these repos. No prebuilt Swift iOS standard library package is downloaded.
+
+## Toolchain-native collection views
+
+The compiler automatically adapts UIKit collection declarations for iOS 5 device
+targets. Public source spelling and the owning UIKit module stay unchanged;
+applications and dependencies need no PST imports, bridging headers or collection
+linker flags. The implementation is built from vendored source into the legacy
+UIKit overlay. Compilation targeting iOS 6+ remains native UIKit. Selection is
+compile-time: an iOS 5-targeted binary keeps the backport on newer systems.
+
+See [collection integration and validation](utils/legacy-ios5-mac/COLLECTION-VIEW.md).
+The updated compiler, source runtime and overlays were rebuilt and installed,
+full static qualification passed, and an unchanged project archived successfully.
+These are incremental source-build checks on the earlier fresh-clone build root,
+not a new claim of full device execution or an empty-root build after this change.
+
+Existing build roots use completion stamps: rerun `swift-510`, `overlays`,
+`assemble` and `qualify-ios5` after updating to this change (clear those four
+stage stamps only after verifying the build-root path). A fresh empty build root
+needs no manual steps; `build-all.sh` builds and qualifies the integration.
 
 ## Distribution
 

@@ -1,0 +1,41 @@
+{
+  "upstream": "https://github.com/steipete/PSTCollectionView",
+  "importedFrom": "UIKitCompatKit/Sources/PSTCollectionView",
+  "sourceRepositoryCommit": "0494ee40f0519095522352e2ce4c846b8b20fe16",
+  "includesUncommittedChanges": [
+    "PSTCollectionView.h"
+  ],
+  "sha256": {
+    "LICENSE": "fcd5065db280ef4852ce7d232854d531e0c743b27d3c82762ca90c2331526c90",
+    "NSIndexPath+PSTCollectionViewAdditions.h": "579e130cd71ed973f687e4ba2570bef81ce8d0df124a740178ac58dd8f159bc8",
+    "NSIndexPath+PSTCollectionViewAdditions.m": "574f9c998c02f83452dfc092bb3f517485f69b98312f6435acedd54b7755648c",
+    "PSTCollectionView.h": "d8ba2a96859b0cc118ecfd25df08786962d9e7088bdfd001c5b59bf206b5efde",
+    "PSTCollectionView.m": "1b24e819f1c051aca5f3316149d10cd5619dc2a4b20210351bc19a00aca5c074",
+    "PSTCollectionViewCell.h": "f2d5f9cedffbf1a68fed6adf5e5b1a2aa2a2adec4127d3b489df6acb91fcac70",
+    "PSTCollectionViewCell.m": "5d6f286217820d100a1831102e9941e6f69470d3d3a8d044ceb7b8bc91ba9ae5",
+    "PSTCollectionViewCommon.h": "7d58c2fdb7617822c5d5b527b0b746d892d3acc634c39a62439d46c530e75a28",
+    "PSTCollectionViewController.h": "6c79f392ced4a315ab615d6c1eb31d6acf862fbc41629e76a5cab462f7aca2f3",
+    "PSTCollectionViewController.m": "b1d59eaec0ec904458b72b30a770e80a33fc1326ef731fc1d1a3aefd83e28622",
+    "PSTCollectionViewData.h": "7ca361acf860d876faaf6e1bc74c9403bea8194985200117aef352ba83c770a1",
+    "PSTCollectionViewData.m": "0452fffc70b9b2eb4a5125a25020ea28d4d856c865f386b3e9c8d14e4e610977",
+    "PSTCollectionViewFlowLayout.h": "7139e7c4b0aefbce7ebd00fde0484cac8fbe700ff02b1a068efde7adb4b082cb",
+    "PSTCollectionViewFlowLayout.m": "da601dd3373b15d883fe42b70cb43251c58db9680b14f888a026a16b00d994a4",
+    "PSTCollectionViewItemKey.h": "a14f7e7f6fe62f15a8d144db5185eeee78a5eca839aa4fd33d4b43435c4b2d7e",
+    "PSTCollectionViewItemKey.m": "63034f0b219c0bde3fcba1a2b3ea61a866e3a5176c192529ffdb3520ff5f927b",
+    "PSTCollectionViewLayout+Internals.h": "7d7c21f24722764e6f18ba533cada28e806c8556fc12a1078d735e0e5313dd3c",
+    "PSTCollectionViewLayout.h": "2b8bc53f2680ecee29baddc28df5aa3dbfdd62c170f59a90ca7989ce8097603d",
+    "PSTCollectionViewLayout.m": "2e5e94c0020b8ede6e06b10c3bd517972b59d4bb3b52d783268c39f10ad4e675",
+    "PSTCollectionViewUpdateItem.h": "5aa8d307953aaba83c554e135bd064e7c34daee854ee756ce83c1b64d9a945d4",
+    "PSTCollectionViewUpdateItem.m": "4c7ea72f447023d9e8f9bd2cf2b40f88511351e9a54c50fc20ac509f9fcf6054",
+    "PSTGridLayoutInfo.h": "790b4bc153295a1be4e086b6bd85c7a34fcd9d40c809be5beace55d43730d9bc",
+    "PSTGridLayoutInfo.m": "72d883b2a797e2b3d9e2358f9b4a8ce806ebbea0eaea24a31bea256fc32cda5b",
+    "PSTGridLayoutItem.h": "3506e05229955080c10dea844c4a10b85101867f8bbd6a452a6ae8d4c91427f3",
+    "PSTGridLayoutItem.m": "32808e5ccc0af38a26fe3db6f65f5b99cc42b7a04321dcada01d4fbb36599c3e",
+    "PSTGridLayoutRow.h": "766ae91b1dd5223a193ff79b173504840aea71e07967c69fd59dd34a3b756d86",
+    "PSTGridLayoutRow.m": "1a1d37a1ed42ae6081c186733f14b2d2f5b2ea23e945b98ff853d44d4e50f15c",
+    "PSTGridLayoutSection.h": "6f7e1ff30e9ba2978fa71902f581f415750c56046330c3f4ecc797c76eb50366",
+    "PSTGridLayoutSection.m": "0d6850984ae736da914bcca847b8e5b8cacd16e3f8eaba19129932b8b145f269",
+    "README.md": "3039ac8d28f8da200482b2b8018ceb9e56e921bb7a4241f4d0f0a0716ef659d9",
+    "STATUS.md": "12e9505be881e4ac35e0a2e2d9132455f9fe61ad5d08684c07e7cb1b744a69b7"
+  }
+}

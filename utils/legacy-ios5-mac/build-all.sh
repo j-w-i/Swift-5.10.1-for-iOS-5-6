@@ -131,6 +131,12 @@ overlays() { # prepare + build + link the rewritten overlays
   export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
   bash "$HERE/prepare-legacy-resources.sh" --swift510-resource "$H/usr/lib/swift" --swift51-source "$LEGACY_515_ROOT/src/swift" --output "$ROOT/bootstrap"
+  # UIKit's iOS 5 declaration supplement is a compiler resource, not a bridging
+  # header or package. Build the matching implementation from vendored sources
+  # before compiling overlays; link-overlay-stage embeds it in libswiftUIKit.
+  bash "$HERE/build-collection-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/collection-runtime"
+  cp -R "$ROOT/bootstrap/probes/collection-runtime/legacy-collection" "$ROOT/bootstrap/probes/modules510/legacy-collection"
   bash "$HERE/build-overlay-stage.sh" "$ROOT/bootstrap" "$ROOT/build/swift/bin/swift-frontend" "$SDK" --legacy-marking
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \

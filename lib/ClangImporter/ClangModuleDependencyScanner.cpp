@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ImporterImpl.h"
+#include "ClangIncludePaths.h"
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/ModuleDependencies.h"
 #include "swift/Basic/SourceManager.h"
@@ -159,6 +160,23 @@ ModuleDependencyVector ClangImporter::bridgeClangModuleDependencies(
     // We pass the entire argument list via -Xcc, so the invocation should
     // use extra clang options alone.
     swiftArgs.push_back("-only-use-extra-clang-opts");
+
+    if (usesLegacyCollectionDeclarations(ctx)) {
+      // Explicit PCM builds reconstruct the same importer VFS even though their
+      // Clang options are replayed verbatim. The VFS hook runs before the
+      // ExtraArgsOnly invocation, and needs the Swift-side target/SDK/resources.
+      swiftArgs.push_back("-enable-legacy-ios5-class-marking");
+      swiftArgs.push_back("-target");
+      swiftArgs.push_back(ctx.LangOpts.Target.str());
+      if (ctx.LangOpts.ClangTarget) {
+        swiftArgs.push_back("-clang-target");
+        swiftArgs.push_back(ctx.LangOpts.ClangTarget->str());
+      }
+      swiftArgs.push_back("-sdk");
+      swiftArgs.push_back(ctx.SearchPathOpts.getSDKPath().str());
+      swiftArgs.push_back("-resource-dir");
+      swiftArgs.push_back(ctx.SearchPathOpts.RuntimeResourcePath);
+    }
 
     auto pcmPath = moduleCacheRelativeLookupModuleOutput(
         clangModuleDep.ID, ModuleOutputKind::ModuleFile, moduleOutputPath);

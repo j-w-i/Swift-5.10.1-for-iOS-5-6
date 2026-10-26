@@ -75,6 +75,7 @@
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/FileCollector.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Chrono.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/VirtualFileSystem.h"
@@ -880,6 +881,11 @@ importer::addCommonInvocationArguments(
     invocationArgStrs.push_back("-DOS_OBJECT_SWIFT3=0");
   }
 
+  // Discriminate these PCMs from native UIKit and earlier importer mappings.
+  // Bump this value if the declaration/linkage transformation changes.
+  if (usesLegacyCollectionDeclarations(ctx))
+    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=1");
+
   for (auto extraArg : importerOpts.ExtraArgs) {
     invocationArgStrs.push_back(extraArg);
   }
@@ -1188,7 +1194,8 @@ ClangImporter::create(ASTContext &ctx,
     }
   }
 
-  auto fileMapping = getClangInvocationFileMapping(ctx);
+  auto fileMapping =
+      getClangInvocationFileMapping(ctx, ctx.SourceMgr.getFileSystem());
   // Wrap Swift's FS to allow Clang to override the working directory
   llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS =
       llvm::vfs::RedirectingFileSystem::create(
@@ -1201,7 +1208,12 @@ ClangImporter::create(ASTContext &ctx,
       std::copy(file.second.begin(), file.second.end(), contents.begin());
       // null terminate the buffer.
       contents[contents.size() - 1] = '\0';
-      overridenVFS->addFile(file.first, 0,
+      // Retain an existing source header's timestamp so a replaced SDK header
+      // still invalidates its PCM when the SDK changes at the same path.
+      time_t modificationTime = 0;
+      if (auto status = VFS->status(file.first))
+        modificationTime = llvm::sys::toTimeT(status->getLastModificationTime());
+      overridenVFS->addFile(file.first, modificationTime,
                             llvm::MemoryBuffer::getMemBuffer(
                                 StringRef(contents.begin(), contents.size() - 1)));
     }

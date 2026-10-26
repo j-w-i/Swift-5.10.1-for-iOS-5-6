@@ -124,6 +124,10 @@ run() {
 # deployment target. Availability/import/load-command/device audits remain required.
 DEPLOYMENT=${IOS_DEPLOYMENT_TARGET:-7.0}
 case "$DEPLOYMENT" in 5.0|5.1|5.1.1|7.0) ;; *) fail 'Unsupported IOS_DEPLOYMENT_TARGET; use 5.0/5.1/5.1.1 or probe7.0.' ;; esac
+COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionView.a"
+case "$DEPLOYMENT" in
+  5.*) [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE" ;;
+esac
 COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 NATIVE=(-O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
   -DSWIFT_RUNTIME -DSWIFT_STDLIB_BUILDING_OVERLAY -DOS_OBJECT_USE_OBJC=0 -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
@@ -174,12 +178,18 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
         CoreImage) DEPS+=("$OUT/libswiftMetal.dylib" "$OUT/libswiftQuartzCore.dylib") ;;
         UIKit)
           DEPS+=("$OUT/libswiftMetal.dylib" "$OUT/libswiftQuartzCore.dylib" "$OUT/libswiftCoreImage.dylib")
-          EXTRA+=("$OUT/native/DesignatedInitializers.mm.o") ;;
+          EXTRA+=("$OUT/native/DesignatedInitializers.mm.o")
+          case "$DEPLOYMENT" in
+            5.*)
+              # Force-load internally, not in client projects: retain ObjC classes,
+              # categories and constructors even without direct overlay references.
+              EXTRA+=(-Xlinker -force_load -Xlinker "$COLLECTION_ARCHIVE" -framework QuartzCore) ;;
+          esac ;;
       esac ;;
   esac
   # Backports is an ordinary lazy archive, deliberately NOT force_load/all_load.
-  # Only the explicit compiler-rt builtins archive follows the successful proofs'
-  # force-load convention. No undefined-symbol suppression or dynamic lookup.
+  # Compiler-rt builtins are force-loaded for each overlay; the collection archive
+  # is force-loaded only into UIKit above. No undefined suppression/dynamic lookup.
   run "link-$name" "$CLANG" "${COMMON[@]}" -dynamiclib "$STAGE/probes/${name}510.o" \
     -L "$OUT" -L "$OLD_LIB" ${EXTRA[@]+"${EXTRA[@]}"} "${DEPS[@]}" "$OUT/libLegacyRuntimeBackports.a" -lobjc -lSystem \
     -Xlinker -install_name -Xlinker "@rpath/libswift$name.dylib" \

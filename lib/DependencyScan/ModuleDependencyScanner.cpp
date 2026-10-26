@@ -25,6 +25,7 @@
 #include "swift/Frontend/ModuleInterfaceLoader.h"
 #include "swift/Serialization/SerializedModuleLoader.h"
 #include "swift/Subsystems.h"
+#include "clang/Frontend/CompilerInstance.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/CAS/CachingOnDiskFileSystem.h"
@@ -148,7 +149,13 @@ ModuleDependencyScanningWorker::ModuleDependencyScanningWorker(
     swift::DependencyTracker &DependencyTracker, DiagnosticEngine &Diagnostics)
     : // Diagnostics(Diagnostics),
       clangScanningTool(*globalScanningService.ClangScanningService,
-                        globalScanningService.getClangScanningFS()) {
+                        ScanASTContext.LangOpts.LegacyIOS5ClassMarking
+                            ? ScanASTContext.getClangModuleLoader()
+                                  ->getClangInstance().getFileManager()
+                                  .getVirtualFileSystemPtr()
+                            : globalScanningService.getClangScanningFS()) {
+  // Legacy UIKit declarations are overlaid by the importer. The scanner must
+  // see precisely that filesystem, not reopen the unmodified SDK globally.
   // Configure the interface scanning AST delegate
   auto ClangModuleCachePath = getModuleCachePathFromClang(
       ScanASTContext.getClangModuleLoader()->getClangInstance());

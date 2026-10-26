@@ -17,6 +17,7 @@
 #include "CFTypeInfo.h"
 #include "ImporterImpl.h"
 #include "ClangDerivedConformances.h"
+#include "ClangIncludePaths.h"
 #include "SwiftDeclSynthesizer.h"
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/Attr.h"
@@ -8162,6 +8163,49 @@ void ClangImporter::Implementation::importAttributes(
         } else if (owner && owner->getName() == "NSLayoutConstraint") {
           introduced = llvm::VersionTuple(5, 0);
         }
+      }
+
+      // The runtime implements the original iOS 6 collection surface. Preserve
+      // all later SDK availability, including newer members of these classes.
+      auto collectionModule = ClangDecl->getOwningModule();
+      if (usesLegacyCollectionDeclarations(C) && collectionModule &&
+          collectionModule->getTopLevelModule()->Name == "UIKit" &&
+          Platform == "ios" && introduced == llvm::VersionTuple(6, 0)) {
+        auto supportedName = [](StringRef name) {
+          return name == "UICollectionView" || name == "UICollectionViewCell" ||
+              name == "UICollectionReusableView" || name == "UICollectionViewLayout" ||
+              name == "UICollectionViewFlowLayout" ||
+              name == "UICollectionViewLayoutAttributes" ||
+              name == "UICollectionViewController" || name == "UICollectionViewUpdateItem" ||
+              name == "UICollectionViewDataSource" || name == "UICollectionViewDelegate" ||
+              name == "UICollectionViewDelegateFlowLayout" ||
+              name == "UICollectionViewScrollPosition" ||
+              name == "UICollectionViewScrollDirection" ||
+              name == "UICollectionUpdateAction" || name == "UICollectionElementCategory" ||
+              name == "UICollectionElementKindSectionHeader" ||
+              name == "UICollectionElementKindSectionFooter";
+        };
+        auto supportedDecl = [&](const clang::NamedDecl *decl) {
+          return decl->getIdentifier() && supportedName(decl->getName());
+        };
+        bool supported = false;
+        if (auto named = dyn_cast<clang::NamedDecl>(ClangDecl))
+          supported = supportedDecl(named);
+        for (auto dc = ClangDecl->getDeclContext(); !supported && dc;
+             dc = dc->getParent()) {
+          if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
+            supported = supportedName(category->getClassInterface()->getName());
+          else if (auto named = dyn_cast<clang::NamedDecl>(dc))
+            supported = supportedDecl(named);
+        }
+        if (auto method = dyn_cast<clang::ObjCMethodDecl>(ClangDecl)) {
+          auto owner = method->getClassInterface();
+          auto name = method->getSelector().getNameForSlot(0);
+          supported |= owner && owner->getName() == "NSIndexPath" &&
+              (name == "indexPathForItem" || name == "item");
+        }
+        if (supported)
+          introduced = llvm::VersionTuple(5, 0);
       }
 
       const auto &replacement = avail->getReplacement();

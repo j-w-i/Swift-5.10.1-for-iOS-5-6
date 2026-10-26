@@ -19,11 +19,79 @@
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/ToolChain.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/Lex/Lexer.h"
 #include "llvm/WindowsDriver/MSVCPaths.h"
 
 using namespace swift;
 
 using Path = SmallString<128>;
+
+bool swift::usesLegacyCollectionDeclarations(const ASTContext &ctx) {
+  const auto &triple = ctx.LangOpts.ClangTarget
+                           ? *ctx.LangOpts.ClangTarget : ctx.LangOpts.Target;
+  return ctx.LangOpts.LegacyIOS5ClassMarking && triple.isiOS() &&
+         !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
+         !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5) &&
+         triple.isOSVersionLT(6);
+}
+
+/// Modify only declaration linkage, never SDK signatures or availability.
+/// Raw lexing skips comments/strings and distinguishes definitions from forward
+/// declarations and categories. Apply edits backwards to retain token offsets.
+static std::string legacyCollectionHeader(StringRef text) {
+  struct Edit { size_t offset; std::string text; };
+  SmallVector<Edit, 16> edits;
+  clang::LangOptions opts;
+  opts.ObjC = true;
+  clang::Lexer lexer(clang::SourceLocation::getFromRawEncoding(1), opts,
+                     text.begin(), text.begin(), text.end());
+  SmallVector<clang::Token, 256> tokens;
+  clang::Token token;
+  do {
+    lexer.LexFromRawLexer(token);
+    if (!token.is(clang::tok::comment))
+      tokens.push_back(token);
+  } while (!token.is(clang::tok::eof));
+  auto spelling = [](const clang::Token &t) -> StringRef {
+    return t.is(clang::tok::raw_identifier) ? t.getRawIdentifier() : StringRef();
+  };
+  for (size_t i = 0; i + 3 < tokens.size(); ++i) {
+    if (tokens[i].is(clang::tok::at)) {
+      auto kind = spelling(tokens[i + 1]);
+      auto name = spelling(tokens[i + 2]);
+      bool interface = kind == "interface";
+      bool protocol = kind == "protocol";
+      if ((!interface && !protocol) || tokens[i + 3].is(clang::tok::l_paren) ||
+          tokens[i + 3].is(clang::tok::semi) || tokens[i + 3].is(clang::tok::comma))
+        continue;
+      bool supported = interface
+          ? (name == "UICollectionView" || name == "UICollectionViewCell" ||
+             name == "UICollectionReusableView" || name == "UICollectionViewLayout" ||
+             name == "UICollectionViewFlowLayout" ||
+             name == "UICollectionViewLayoutAttributes" ||
+             name == "UICollectionViewController" || name == "UICollectionViewUpdateItem")
+          : (name == "UICollectionViewDataSource" || name == "UICollectionViewDelegate" ||
+             name == "UICollectionViewDelegateFlowLayout");
+      if (supported) {
+        std::string runtime = "PST" + name.drop_front(2).str();
+        edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
+            "__attribute__((objc_runtime_name(\"" + runtime + "\"))) "});
+      }
+    }
+    auto name = spelling(tokens[i]);
+    if ((name == "UICollectionElementKindSectionHeader" ||
+         name == "UICollectionElementKindSectionFooter") && i &&
+        spelling(tokens[i - 1]) == "const") {
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_PST" + name.drop_front(2).str() + "\")"});
+    }
+  }
+  std::string result = text.str();
+  llvm::sort(edits, [](const Edit &a, const Edit &b) { return a.offset > b.offset; });
+  for (const auto &edit : edits)
+    result.insert(edit.offset, edit.text);
+  return result;
+}
 
 static llvm::Optional<Path> getActualModuleMapPath(
     StringRef name, SearchPathOptions &Opts, const llvm::Triple &triple,
@@ -511,6 +579,75 @@ SmallVector<std::pair<std::string, std::string>, 2> GetWindowsFileMappings(
 
   return Mappings;
 }
+
+/// Replace the SDK's collection declarations *inside* UIKit, rather than
+/// importing a second module (or a bridging header) containing lookalike names.
+/// The resource header supplies the public UIKit spelling and the backport's
+/// actual Objective-C runtime names. It is shipped with the legacy runtime,
+/// not with the SDK, and is only selected for a legacy iOS 5 device invocation.
+static void getLegacyCollectionFileMapping(
+    ClangInvocationFileMapping &result, ASTContext &ctx,
+    const llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> &vfs) {
+  if (!usesLegacyCollectionDeclarations(ctx) ||
+      ctx.SearchPathOpts.getSDKPath().empty())
+    return;
+
+  Path headers(ctx.SearchPathOpts.getSDKPath());
+  llvm::sys::path::append(headers, "System", "Library", "Frameworks");
+  llvm::sys::path::append(headers, "UIKit.framework", "Headers");
+  Path umbrella(headers);
+  llvm::sys::path::append(umbrella, "UIKit.h");
+  auto contents = vfs->getBufferForFile(umbrella);
+  if (!contents)
+    return; // Non-UIKit compilations do not require a UIKit SDK.
+
+  Path resource(ctx.SearchPathOpts.RuntimeResourcePath);
+  llvm::sys::path::append(resource, "legacy-collection", "Headers",
+                          "UIKitLegacyCollection.h");
+  // A missing resource must fail when UIKit is imported, not silently restore
+  // iOS 6 declarations in an iOS 5 compilation. In particular, do not test for
+  // the header's existence here. Let Clang diagnose the missing include.
+  std::string include =
+      "\n// Swift legacy iOS 5 UIKit module augmentation.\n#include \"";
+  for (char c : resource) {
+    if (c == '\\' || c == '"')
+      include += '\\';
+    include += c;
+  }
+  include += "\"\n";
+  Path nativeCollection(headers);
+  llvm::sys::path::append(nativeCollection, "UICollectionView.h");
+  if (vfs->exists(nativeCollection)) {
+    // Keep native signatures, modern declarations, and API-notes associations.
+    // Change only supported Objective-C/C linkage, inside the real UIKit module.
+    for (StringRef file : {"UICollectionView.h", "UICollectionViewCell.h",
+                          "UICollectionViewLayout.h", "UICollectionViewFlowLayout.h",
+                          "UICollectionViewController.h", "UICollectionViewUpdateItem.h"}) {
+      Path path(headers);
+      llvm::sys::path::append(path, file);
+      if (auto source = vfs->getBufferForFile(path))
+        result.overridenFiles.emplace_back(path.str().str(),
+            legacyCollectionHeader(source.get()->getBuffer()));
+    }
+    // Fail closed on incomplete toolchain packaging, without including duplicate
+    // fallback declarations into a contemporary SDK.
+    std::string augmented(contents.get()->getBuffer());
+    augmented += "\n#if !__has_include(\"";
+    for (char c : resource) {
+      if (c == '\\' || c == '"') augmented += '\\';
+      augmented += c;
+    }
+    augmented += "\")\n" + include + "#endif\n";
+    result.overridenFiles.emplace_back(umbrella.str().str(), std::move(augmented));
+    return;
+  }
+  std::string augmented(contents.get()->getBuffer());
+  augmented += include;
+  result.overridenFiles.emplace_back(umbrella.str().str(), std::move(augmented));
+
+  // Original iOS 5 SDKs have no collection declarations; only these use the
+  // generated supplemental header, imported as part of UIKit's own umbrella.
+}
 } // namespace
 
 ClangInvocationFileMapping swift::getClangInvocationFileMapping(
@@ -524,6 +661,7 @@ ClangInvocationFileMapping swift::getClangInvocationFileMapping(
     getLibStdCxxFileMapping(result, ctx, vfs);
 
   result.redirectedFiles.append(GetWindowsFileMappings(ctx, vfs));
+  getLegacyCollectionFileMapping(result, ctx, vfs);
 
   return result;
 }

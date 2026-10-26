@@ -17,6 +17,7 @@ Evidence contract (JSON; duplicate keys and non-finite numbers are rejected):
     usr/lib/swift/iphoneos/libswiftCore.dylib (preserved default iOS 6 core)
     usr/lib/swift_ios5/iphoneos/crt1.3.1.o
     usr/lib/swift_ios5/iphoneos/libswiftLegacyIOS5Backports.a
+    usr/lib/swift_ios5/legacy-collection/{Headers/UIKitLegacyCollection.h,LICENSE,SNAPSHOT.json}
     usr/lib/swift_ios5/iphoneos/libswift{Core,Darwin,ObjectiveC,CoreFoundation,
       Dispatch,CoreGraphics,Foundation,Metal,QuartzCore,CoreImage,UIKit}.dylib
     usr/lib/swift_ios5/iphoneos/{Swift,Darwin,Dispatch,CoreGraphics,Foundation,
@@ -72,7 +73,9 @@ PROFILE = "ios5-profile.json"
 FLAG = "-enable-legacy-ios5-runtime"
 HOST_BINARIES = ("swift-frontend", "swift-driver", "swiftc", "swift")
 RESOURCE_PREFIX = "usr/lib/swift_ios5/iphoneos/"
-FIXED_RESOURCES = ("Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib") + tuple(
+COLLECTION_RESOURCES = tuple("usr/lib/swift_ios5/legacy-collection/" + name for name in
+                             ("Headers/UIKitLegacyCollection.h", "LICENSE", "SNAPSHOT.json"))
+FIXED_RESOURCES = ("Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib") + COLLECTION_RESOURCES + tuple(
     RESOURCE_PREFIX + name for name in
     ("crt1.3.1.o", "libswiftLegacyIOS5Backports.a") + tuple(
         "libswift" + name + ".dylib"

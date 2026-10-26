@@ -246,6 +246,17 @@ try:
     if not (shims_source / 'module.modulemap').is_file():
         fail('Stage lacks probes/dispatch-shims/module.modulemap.')
     shutil.copytree(shims_source, slot / 'legacy-overlay-shims', symlinks=True)
+    # The UIKit declaration supplement is copied with modules above. Missing
+    # resources must fail assembly rather than silently expose iOS 6-only APIs.
+    for name in ('Headers/UIKitLegacyCollection.h', 'LICENSE', 'SNAPSHOT.json'):
+        nonempty(slot / 'legacy-collection' / name)
+    collection_symbols = run(NM, '-gU', linked / 'libswiftUIKit.dylib')
+    for name in ('PSTCollectionView', 'PSTCollectionViewCell',
+                 'PSTCollectionReusableView', 'PSTCollectionViewLayout',
+                 'PSTCollectionViewFlowLayout', 'PSTCollectionViewLayoutAttributes',
+                 'PSTCollectionViewController', 'PSTCollectionViewUpdateItem'):
+        if '_OBJC_CLASS_$_' + name not in collection_symbols:
+            fail('UIKit overlay lacks integrated collection class: ' + name)
     ios = slot / 'iphoneos'
     # Modules always come from the rebuilt tree, never from OLD_RUNTIME_DIR.
     for source in sorted(oldlib.glob('*.dylib')):

@@ -176,6 +176,12 @@ MIN_VERSION="$(awk '/cmd LC_VERSION_MIN_IPHONEOS/ { seen=1; next } seen && $1 ==
 case "$MIN_VERSION" in 5|5.*) ;; *) die "iOS 5 executable minimum version is $MIN_VERSION, expected 5.x" ;; esac
 echo "   min iOS $MIN_VERSION, LC_UNIXTHREAD, no LC_MAIN"
 
+# Ordinary UIKit source must work in independent dependency modules, and only
+# iOS 5 compilation may reference the implementation built into libswiftUIKit.
+bash "$HERE/check-collection-api.sh" "$TC" "$SDK" "$OUTPUT/collection-api" \
+  > "$OUTPUT/logs/collection-api.log" 2>&1 \
+  || { tail -30 "$OUTPUT/logs/collection-api.log" >&2; die "compiler-native collection API check failed"; }
+
 echo "== 4/5 default resource tree still builds iOS 7.0 (LC_MAIN)"
 mkdir -p "$OUTPUT/default-ios6-app"
 printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n' > "$OUTPUT/default-ios6-app/main.swift"
@@ -245,6 +251,8 @@ fixed = ["Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib"] + [
         "libswift" + overlay + ".dylib" for overlay in
         ("Core", "Darwin", "ObjectiveC", "CoreFoundation") + ("Dispatch", "CoreGraphics",
          "Foundation", "Metal", "QuartzCore", "CoreImage", "UIKit"))]
+fixed += ["usr/lib/swift_ios5/legacy-collection/" + name for name in
+          ("Headers/UIKitLegacyCollection.h", "LICENSE", "SNAPSHOT.json")]
 groups = []
 for module in ("Swift", "Darwin", "Dispatch", "CoreGraphics", "Foundation", "Metal",
                "QuartzCore", "CoreImage", "UIKit"):
