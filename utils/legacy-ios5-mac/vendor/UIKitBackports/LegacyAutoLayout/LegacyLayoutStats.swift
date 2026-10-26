@@ -18,8 +18,11 @@ internal struct LegacyLayoutStatistics {
     var passes: Int
     /// Passes that ran a solver update (incremental or rebuild).
     var solves: Int
-    /// Passes served entirely from the persistent solver's cached result.
+    /// Passes served entirely from the persistent solver's cached result
+    /// (including the O(1) mutation-generation fast path).
     var cachedPasses: Int
+    /// Passes that returned the cached result without walking the item tree.
+    var fastPasses: Int
     /// Solver rebuilds after an incompatible change (structure, root size, direction).
     var rebuilds: Int
     /// Constraints installed into a solver (adds, including replacements).
@@ -40,6 +43,7 @@ internal enum LegacyLayoutStats {
     private static var passes = 0
     private static var solves = 0
     private static var cachedPasses = 0
+    private static var fastPasses = 0
     private static var rebuilds = 0
     private static var constraintsInstalled = 0
     private static var constraintsRemoved = 0
@@ -58,6 +62,7 @@ internal enum LegacyLayoutStats {
         LegacyLayoutStatistics(passes: passes,
                                solves: solves,
                                cachedPasses: cachedPasses,
+                               fastPasses: fastPasses,
                                rebuilds: rebuilds,
                                constraintsInstalled: constraintsInstalled,
                                constraintsRemoved: constraintsRemoved,
@@ -68,12 +73,28 @@ internal enum LegacyLayoutStats {
 
     /// Resets every counter (test harness isolation).
     internal static func reset() {
-        passes = 0; solves = 0; cachedPasses = 0; rebuilds = 0
+        passes = 0; solves = 0; cachedPasses = 0; fastPasses = 0; rebuilds = 0
         constraintsInstalled = 0; constraintsRemoved = 0
         variables = 0; lastPassMicroseconds = 0; totalMicroseconds = 0
     }
 
     // MARK: Recording
+
+    /// Records an O(1) no-change pass: the mutation generation was unchanged, so
+    /// the cached result was returned without walking the tree.
+    internal static func noteFastPass(microseconds: Double) {
+        passes += 1
+        cachedPasses += 1
+        fastPasses += 1
+        lastPassMicroseconds = microseconds
+        totalMicroseconds += microseconds
+        if enabled {
+            let line = "legacy-autolayout: pass=\(passes) action=fast " +
+                "us=\(String(format: "%.2f", microseconds)) solves=\(solves) " +
+                "cached=\(cachedPasses) fast=\(fastPasses) rebuilds=\(rebuilds)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+    }
 
     internal static func notePass(microseconds: Double, solved: Bool, rebuilt: Bool) {
         passes += 1
@@ -85,7 +106,7 @@ internal enum LegacyLayoutStats {
             let action = rebuilt ? "rebuild" : (solved ? "update" : "cached")
             let line = "legacy-autolayout: pass=\(passes) action=\(action) " +
                 "us=\(String(format: "%.1f", microseconds)) solves=\(solves) " +
-                "cached=\(cachedPasses) rebuilds=\(rebuilds)\n"
+                "cached=\(cachedPasses) fast=\(fastPasses) rebuilds=\(rebuilds)\n"
             FileHandle.standardError.write(Data(line.utf8))
         }
     }

@@ -40,6 +40,23 @@ vendor/UIKitBackports/Tests/run-autolayout-tests.sh /tmp/al-harness
 The output directory must not exist; all results (logs, golden frames, bench
 output) are kept there. The harness never modifies the repository.
 
+## No-change fast path
+
+The engine keeps a process-wide mutation generation (`LegacyLayoutMutation`)
+bumped by every constraint/property/tree mutation (constraint add/remove,
+constant/priority, translates/intrinsic/priority/baseline changes, subview
+insertion/removal, participating geometry changes). The persistent solver
+records the generation it consumed; when the next pass sees the same value and
+the same writing direction, it returns the cached result without walking the
+item tree (~0.5 us even for 200 rows). Mutations that are not routed through the
+bridge (test fakes must bump explicitly; `layoutSetFrame` and the engine's
+internal autoresizing bookkeeping are suppressed) simply fall back to the
+diff/solve path, never to a stale result.
+
+The golden reference is pinned in the script (`GOLDEN_REF`, default `f27d2e0b`,
+the last rebuild-per-pass engine) so the behavioural baseline does not move when
+newer engine commits land.
+
 ## Counters
 
 `LegacyLayoutStats` (internal) counts passes, solves, cached passes, rebuilds,

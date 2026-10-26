@@ -48,6 +48,10 @@ internal struct Row {
     internal init(constant: Double = 0.0) {
         self.symbolStorage = []
         self.coefficientStorage = []
+        // Rows are built term-by-term; the typical row has a handful of cells.
+        // Reserving avoids several array growths per constraint build.
+        symbolStorage.reserveCapacity(8)
+        coefficientStorage.reserveCapacity(8)
         self.constant = constant
     }
 

@@ -176,7 +176,14 @@ internal final class LegacyLayoutSolver {
 
     // MARK: Item variables
 
-    /// The ten variables Auto Layout keeps per item.
+    /// Four variables per item: origin and size on each axis.
+    ///
+    /// Auto Layout's other attributes are algebraic combinations of these, and
+    /// this engine now expands them inline (maxX = minX + width, centerX =
+    /// minX + width/2, baselines = edge + offset) instead of allocating
+    /// additional variables plus a defining equality each. That removes 6
+    /// variables and 6 solver rows per item from every build; the solution set
+    /// is identical because the removed equations were exact definitions.
     ///
     /// `item` is weak so a persistent solver never keeps a removed view alive
     /// between passes. During a pass every item is alive (the caller holds the
@@ -186,15 +193,9 @@ internal final class LegacyLayoutSolver {
         weak var item: LegacyLayoutItem?
         let isRoot: Bool
         let minX: Variable
-        let maxX: Variable
         let minY: Variable
-        let maxY: Variable
         let width: Variable
         let height: Variable
-        let centerX: Variable
-        let centerY: Variable
-        let firstBaseline: Variable
-        let lastBaseline: Variable
     }
 
     /// A constraint translated into solver form.
@@ -255,8 +256,15 @@ internal final class LegacyLayoutSolver {
     private var changeCount = 0
     /// The result of the last writing pass, served unchanged when nothing moved.
     private var lastResult: LegacyLayoutResult?
+    /// The mutation generation this solver's solution reflects. The engine
+    /// returns `cachedLayoutResult` directly when the global generation still
+    /// matches (O(1) no-change pass, no tree walk).
+    internal private(set) var consumedGeneration = 0
     /// Whether the last `update` served the cached result without solving.
     internal private(set) var lastUpdateWasCached = false
+
+    /// The previous pass's result, valid while the mutation generation matches.
+    internal var cachedLayoutResult: LegacyLayoutResult? { lastResult }
 
     /// A previously installed user constraint.
     private struct InstalledUserConstraint {
@@ -337,6 +345,11 @@ internal final class LegacyLayoutSolver {
         passRemovedConstraints = 0
         collectItems()
         createVariables()
+        // Allocation hint for the build path: per item the engine installs the
+        // intrinsic size guarantees (2), the weak stays (4) and typically a few
+        // user constraints, over 4 variables.
+        solver.reserveCapacity(constraintCount: items.count * 10 + 4,
+                               variableCount: items.count * 4)
         installImplicitConstraints()
         installAutoresizingConstraints()
         installStays()
@@ -352,6 +365,7 @@ internal final class LegacyLayoutSolver {
         // Keep the solver cache cheap and leak-free: the persistent state below
         // is all identity-based; the pass-local strong references are dropped.
         clearPassState()
+        consumedGeneration = LegacyLayoutMutation.generation
         return result
     }
 
@@ -394,6 +408,7 @@ internal final class LegacyLayoutSolver {
             // without touching the tableau or allocating a new result.
             lastUpdateWasCached = true
             clearPassState()
+            consumedGeneration = LegacyLayoutMutation.generation
             return cached
         }
         lastUpdateWasCached = false
@@ -402,6 +417,7 @@ internal final class LegacyLayoutSolver {
         advanceStayValues(from: result)
         if writingFrames { lastResult = result }
         clearPassState()
+        consumedGeneration = LegacyLayoutMutation.generation
         return result
     }
 
@@ -468,23 +484,19 @@ internal final class LegacyLayoutSolver {
 
     private func createVariables() {
         let rootIdentifier = ObjectIdentifier(root as AnyObject)
-        for (index, item) in items.enumerated() {
+        variables.reserveCapacity(items.count)
+        for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
-            let prefix = "\(index)"
+            // Names are debug-only; empty names avoid one string allocation and
+            // interpolation per variable in the build path.
             variables[identifier] = ItemVariables(
                 identifier: identifier,
                 item: item,
                 isRoot: identifier == rootIdentifier,
-                minX: Variable("\(prefix).minX"),
-                maxX: Variable("\(prefix).maxX"),
-                minY: Variable("\(prefix).minY"),
-                maxY: Variable("\(prefix).maxY"),
-                width: Variable("\(prefix).width"),
-                height: Variable("\(prefix).height"),
-                centerX: Variable("\(prefix).centerX"),
-                centerY: Variable("\(prefix).centerY"),
-                firstBaseline: Variable("\(prefix).firstBaseline"),
-                lastBaseline: Variable("\(prefix).lastBaseline")
+                minX: Variable(),
+                minY: Variable(),
+                width: Variable(),
+                height: Variable()
             )
         }
     }
@@ -492,61 +504,10 @@ internal final class LegacyLayoutSolver {
     // MARK: Implicit (system) constraints
 
     private func installImplicitConstraints() {
-        // 1. The geometry relationships that define the attribute expressions.
-        for item in items {
-            guard let vars = variables[ObjectIdentifier(item as AnyObject)] else {
-                continue
-            }
-            installRequired(
-                Expression(vars.maxX)
-                    .minus(Expression(vars.minX))
-                    .minus(Expression(vars.width)),
-                .equal,
-                name: "\(item): maxX = minX + width"
-            )
-            installRequired(
-                Expression(vars.maxY)
-                    .minus(Expression(vars.minY))
-                    .minus(Expression(vars.height)),
-                .equal,
-                name: "\(item): maxY = minY + height"
-            )
-            installRequired(
-                Expression(vars.centerX)
-                    .minus(Expression(vars.minX))
-                    .minus(Expression(vars.width).times(0.5)),
-                .equal,
-                name: "\(item): centerX = minX + width / 2"
-            )
-            installRequired(
-                Expression(vars.centerY)
-                    .minus(Expression(vars.minY))
-                    .minus(Expression(vars.height).times(0.5)),
-                .equal,
-                name: "\(item): centerY = minY + height / 2"
-            )
-
-            // Baselines are only defined for items that provide baseline metrics;
-            // plain UIView has none, so no equation is invented for it (spec §2.5).
-            if let firstOffset = finite(item.layoutFirstBaselineOffsetFromTop) {
-                installRequired(
-                    Expression(vars.firstBaseline)
-                        .minus(Expression(vars.minY))
-                        .minus(Expression(constant: firstOffset)),
-                    .equal,
-                    name: "\(item): firstBaseline = minY + offset"
-                )
-            }
-            if let lastOffset = finite(item.layoutLastBaselineOffsetFromBottom) {
-                installRequired(
-                    Expression(vars.lastBaseline)
-                        .minus(Expression(vars.maxY))
-                        .plus(Expression(constant: lastOffset)),
-                    .equal,
-                    name: "\(item): lastBaseline = maxY - offset"
-                )
-            }
-        }
+        // The per-item geometry equations that used to define maxX/maxY/centerX/
+        // centerY (and baseline variables) are gone: `expression(for:attribute:)`
+        // expands those attributes algebraically from origin+size, which is the
+        // same solution set without the extra variables and rows.
 
         // 2. Sizes can never be negative (documented UIKit behaviour, engine-level
         //    inequality rather than an NSLayoutConstraint; spec §3.3).
@@ -692,7 +653,7 @@ internal final class LegacyLayoutSolver {
                                 .equal, "autoresizing: minX = x0"))
             // superview.width == child.maxX(frame-relative) + right gap
             expressions.append((superviewWidthExpression
-                                    .minus(Expression(vars.maxX))
+                                    .minus(Expression(vars.minX).plus(Expression(vars.width)))
                                     .plus(superviewMinXExpression)
                                     .minus(Expression(constant: Double(rightGap))),
                                 .equal, "autoresizing: superview.width = maxX + right gap"))
@@ -710,7 +671,7 @@ internal final class LegacyLayoutSolver {
             expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
                                 .equal, "autoresizing: width = w0"))
             expressions.append((superviewWidthExpression
-                                    .minus(Expression(vars.maxX))
+                                    .minus(Expression(vars.minX).plus(Expression(vars.width)))
                                     .plus(superviewMinXExpression)
                                     .minus(Expression(constant: Double(rightGap))),
                                 .equal, "autoresizing: superview.width = maxX + right gap"))
@@ -745,7 +706,7 @@ internal final class LegacyLayoutSolver {
             expressions.append((frameMinY.minus(Expression(constant: Double(y0))),
                                 .equal, "autoresizing: minY = y0"))
             expressions.append((superviewHeightExpression
-                                    .minus(Expression(vars.maxY))
+                                    .minus(Expression(vars.minY).plus(Expression(vars.height)))
                                     .plus(superviewMinYExpression)
                                     .minus(Expression(constant: Double(bottomGap))),
                                 .equal, "autoresizing: superview.height = maxY + bottom gap"))
@@ -762,7 +723,7 @@ internal final class LegacyLayoutSolver {
             expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
                                 .equal, "autoresizing: height = h0"))
             expressions.append((superviewHeightExpression
-                                    .minus(Expression(vars.maxY))
+                                    .minus(Expression(vars.minY).plus(Expression(vars.height)))
                                     .plus(superviewMinYExpression)
                                     .minus(Expression(constant: Double(bottomGap))),
                                 .equal, "autoresizing: superview.height = maxY + bottom gap"))
@@ -867,7 +828,7 @@ internal final class LegacyLayoutSolver {
         for index in 0..<4 {
             guard let value = values[index] else { continue }
             if let constraint = install(expressions[index].minus(Expression(constant: value)),
-                                        .equal, strength: strength, name: "stay: field \(index)") {
+                                        .equal, strength: strength, name: nil) {
                 installed.append(constraint)
             }
         }
@@ -1267,42 +1228,46 @@ internal final class LegacyLayoutSolver {
         case .left:
             return Expression(variables.minX)
         case .right:
-            return Expression(variables.maxX)
+            return maxXExpression(variables)
         case .leading:
-            if direction == .leftToRight {
-                return Expression(variables.minX)
-            }
-            return Expression(variables.maxX)
+            return direction == .leftToRight ? Expression(variables.minX) : maxXExpression(variables)
         case .trailing:
-            if direction == .leftToRight {
-                return Expression(variables.maxX)
-            }
-            return Expression(variables.minX)
+            return direction == .leftToRight ? maxXExpression(variables) : Expression(variables.minX)
         case .top:
             return Expression(variables.minY)
         case .bottom:
-            return Expression(variables.maxY)
+            return maxYExpression(variables)
         case .width:
             return Expression(variables.width)
         case .height:
             return Expression(variables.height)
         case .centerX:
-            return Expression(variables.centerX)
+            return Expression(variables.minX).plus(Expression(variables.width).times(0.5))
         case .centerY:
-            return Expression(variables.centerY)
+            return Expression(variables.minY).plus(Expression(variables.height).times(0.5))
         case .firstBaseline:
             // Only supported when the item exposes baseline metrics; a plain view
-            // has no baseline and no equation was installed for its variable.
-            guard firstBaselineOffsets[variables.identifier] != nil else {
+            // has no baseline (spec §2.5).
+            guard let offset = firstBaselineOffsets[variables.identifier] else {
                 return nil
             }
-            return Expression(variables.firstBaseline)
+            return Expression(variables.minY).plus(Expression(constant: Double(offset)))
         case .lastBaseline:
-            guard lastBaselineOffsets[variables.identifier] != nil else {
+            guard let offset = lastBaselineOffsets[variables.identifier] else {
                 return nil
             }
-            return Expression(variables.lastBaseline)
+            return maxYExpression(variables).minus(Expression(constant: Double(offset)))
         }
+    }
+
+    /// `maxX` as an expression: `minX + width`.
+    private func maxXExpression(_ variables: ItemVariables) -> Expression {
+        Expression(variables.minX).plus(Expression(variables.width))
+    }
+
+    /// `maxY` as an expression: `minY + height`.
+    private func maxYExpression(_ variables: ItemVariables) -> Expression {
+        Expression(variables.minY).plus(Expression(variables.height))
     }
 
     private func isDirectional(_ attribute: RRLayoutAttribute) -> Bool {

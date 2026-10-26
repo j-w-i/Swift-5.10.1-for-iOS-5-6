@@ -14,17 +14,39 @@ import CoreGraphics
 final class FakeItem: LegacyLayoutItem {
     weak var parent: FakeItem?
     var children: [FakeItem] = []
-    var frame: CGRect
-    var constraints: [RRLayoutConstraint] = []
-    var translates: Bool = false
+    /// Mirrors the production bridge: geometry and constraint/property changes
+    /// bump the global mutation generation, except the engine's own frame
+    /// write-back (layoutSetFrame), which must not invalidate its result.
+    var frame: CGRect {
+        didSet {
+            if !suppressesMutationBump { LegacyLayoutMutation.bump() }
+        }
+    }
+    var constraints: [RRLayoutConstraint] = [] {
+        didSet { LegacyLayoutMutation.bump() }
+    }
+    var translates: Bool = false {
+        didSet { LegacyLayoutMutation.bump() }
+    }
     var autosizingRef: LegacyAutoresizingReference?
-    var intrinsicSize = CGSize(width: -1, height: -1)
-    var huggingX: Float = 250
-    var huggingY: Float = 250
-    var compressionX: Float = 750
-    var compressionY: Float = 750
+    var intrinsicSize = CGSize(width: -1, height: -1) {
+        didSet { LegacyLayoutMutation.bump() }
+    }
+    var huggingX: Float = 250 {
+        didSet { LegacyLayoutMutation.bump() }
+    }
+    var huggingY: Float = 250 {
+        didSet { LegacyLayoutMutation.bump() }
+    }
+    var compressionX: Float = 750 {
+        didSet { LegacyLayoutMutation.bump() }
+    }
+    var compressionY: Float = 750 {
+        didSet { LegacyLayoutMutation.bump() }
+    }
     var firstBaselineOffset: CGFloat?
     var lastBaselineOffset: CGFloat?
+    private var suppressesMutationBump = false
     let label: String
 
     init(_ label: String, frame: CGRect, parent: FakeItem? = nil) {
@@ -36,7 +58,11 @@ final class FakeItem: LegacyLayoutItem {
     var layoutSuperitem: LegacyLayoutItem? { parent }
     var layoutSubitems: [LegacyLayoutItem] { children }
     var layoutFrame: CGRect { frame }
-    func layoutSetFrame(_ newFrame: CGRect) { frame = newFrame }
+    func layoutSetFrame(_ newFrame: CGRect) {
+        suppressesMutationBump = true
+        defer { suppressesMutationBump = false }
+        frame = newFrame
+    }
     var layoutConstraints: [RRLayoutConstraint] { constraints }
     var layoutTranslatesAutoresizingMaskIntoConstraints: Bool { translates }
     var layoutAutoresizingMask: RRAutoresizingMask { .none }
@@ -85,6 +111,7 @@ final class Tree {
         item.parent = parent
         parent.children.append(item)
         items.append(item)
+        LegacyLayoutMutation.bump()
         return item
     }
 
@@ -92,12 +119,14 @@ final class Tree {
         item.parent?.children.removeAll { $0 === item }
         item.parent = nil
         items.removeAll { $0 === item }
+        LegacyLayoutMutation.bump()
     }
 
     func reparent(_ item: FakeItem, to newParent: FakeItem) {
         item.parent?.children.removeAll { $0 === item }
         item.parent = newParent
         newParent.children.append(item)
+        LegacyLayoutMutation.bump()
     }
 }
 

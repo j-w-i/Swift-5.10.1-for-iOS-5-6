@@ -110,6 +110,35 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         )
     }
 
+    /// `-[UIView didAddSubview:]`: record that the item tree changed.
+    ///
+    /// The persistent solver's O(1) no-change path skips walking the tree, so every
+    /// structural mutation must bump the global mutation generation. This hook
+    /// (together with `willRemoveSubview:`) covers insertion, removal and
+    /// reparenting, which are all implemented through these two primitives.
+    @objc dynamic func rr_r_didAddSubview(_ subview: UIView) {
+        LegacyAutoLayoutInstaller.callOriginalVoidObject(
+            selector: NSSelectorFromString("didAddSubview:"),
+            receiver: self,
+            argument: subview
+        )
+        if LegacyAutoLayout.isActive {
+            LegacyLayoutMutation.bump()
+        }
+    }
+
+    /// `-[UIView willRemoveSubview:]`: record that the item tree changed.
+    @objc dynamic func rr_r_willRemoveSubview(_ subview: UIView) {
+        LegacyAutoLayoutInstaller.callOriginalVoidObject(
+            selector: NSSelectorFromString("willRemoveSubview:"),
+            receiver: self,
+            argument: subview
+        )
+        if LegacyAutoLayout.isActive {
+            LegacyLayoutMutation.bump()
+        }
+    }
+
     /// RRAutoLayout `rr_r_initWithCoder:`: decode `UIViewAutolayoutConstraints` after the original
     /// initialiser ran, install them through the legacy storage, then return the original result.
     ///
@@ -139,6 +168,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             argument: bounds
         )
         if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
     }
@@ -152,6 +182,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             argument: center
         )
         if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
     }
@@ -165,6 +196,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             argument: transform
         )
         if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
     }
@@ -340,6 +372,14 @@ internal enum LegacyAutoLayoutInstaller {
         exchangeIfPresent(
             original: NSSelectorFromString("setTransform:"),
             replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_setTransform(_:))
+        )
+        exchangeIfPresent(
+            original: NSSelectorFromString("didAddSubview:"),
+            replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_didAddSubview(_:))
+        )
+        exchangeIfPresent(
+            original: NSSelectorFromString("willRemoveSubview:"),
+            replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_willRemoveSubview(_:))
         )
 
         // 2. Provide the Auto Layout API surface that iOS 5 does not have.

@@ -56,6 +56,7 @@ let steady = passTimes.count > 1
 print(String(format: "mode=%@ rows=%d constraints=%d passes=%d avg=%.1f us/pass first=%@ steady=%@",
              mode, rows, rows * 4, passes, total / Double(passes), first, steady))
 print("counters: passes=\(stats.passes) solves=\(stats.solves) cached=\(stats.cachedPasses) " +
-      "rebuilds=\(stats.rebuilds) installed=\(stats.constraintsInstalled) " +
+      "fast=\(stats.fastPasses) rebuilds=\(stats.rebuilds) " +
+      "installed=\(stats.constraintsInstalled) " +
       "removed=\(stats.constraintsRemoved) variables=\(stats.variables)")
 exit(0)

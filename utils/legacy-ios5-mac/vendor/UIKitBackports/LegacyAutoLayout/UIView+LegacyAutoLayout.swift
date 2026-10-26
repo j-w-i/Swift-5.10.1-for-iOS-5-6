@@ -100,6 +100,7 @@ extension UIView {
         if !state.constraints.contains(where: { $0 === constraint }) {
             state.constraints.append(constraint)
             state.constraintsSorted = false
+            LegacyLayoutMutation.bump()
         }
         // Constraint changes can change the solved geometry; force a fresh autoresizing capture.
         legacyClearAutoresizingReference(self)
@@ -121,6 +122,7 @@ extension UIView {
             return
         }
         state.constraints.remove(at: index)
+        LegacyLayoutMutation.bump()
         legacyClearAutoresizingReference(self)
         legacySetNeedsUpdateConstraints()
     }
@@ -146,6 +148,7 @@ extension UIView {
         }
         set {
             legacyMutableState(self).translatesAutoresizingMaskIntoConstraints = newValue
+            LegacyLayoutMutation.bump()
             // A flag flip changes whether (and from which geometry) autoresizing constraints are
             // generated, so the captured reference is stale.
             legacyClearAutoresizingReference(self)
@@ -168,6 +171,7 @@ extension UIView {
         }
         set {
             legacyMutableState(self).intrinsicContentSize = newValue
+            LegacyLayoutMutation.bump()
             legacySetNeedsUpdateConstraints()
         }
     }
@@ -193,6 +197,7 @@ extension UIView {
         } else {
             state.contentHuggingPriorityVertical = CGFloat(priority)
         }
+        LegacyLayoutMutation.bump()
         // UIKit treats a hugging-priority change as an intrinsic-size invalidation.
         legacySetNeedsUpdateConstraints()
     }
@@ -216,6 +221,7 @@ extension UIView {
         } else {
             state.contentCompressionResistancePriorityVertical = CGFloat(priority)
         }
+        LegacyLayoutMutation.bump()
         legacySetNeedsUpdateConstraints()
     }
 
@@ -234,6 +240,7 @@ extension UIView {
         }
         set {
             legacyMutableState(self).firstBaselineOffsetFromTop = newValue
+            LegacyLayoutMutation.bump()
             legacySetNeedsUpdateConstraints()
         }
     }
@@ -246,6 +253,7 @@ extension UIView {
         }
         set {
             legacyMutableState(self).lastBaselineOffsetFromBottom = newValue
+            LegacyLayoutMutation.bump()
             legacySetNeedsUpdateConstraints()
         }
     }
@@ -333,11 +341,11 @@ extension UIView {
     /// `legacyConstraints`, which must stay the user-owned list) for the nib/ObjC `addConstraint:`
     /// flow and for tests; it does not feed the engine.
     internal func legacyUpdateAutoresizingConstraints() {
-        let translated: [RRLayoutConstraint]
-        if legacyTranslatesAutoresizingMaskIntoConstraints {
-            translated = LegacyAutoLayoutAutoresizing.framePinningConstraints(for: self)
-        } else {
-            translated = []
+        let translated: [RRLayoutConstraint] = LegacyLayoutMutation.withSuppressed {
+            if legacyTranslatesAutoresizingMaskIntoConstraints {
+                return LegacyAutoLayoutAutoresizing.framePinningConstraints(for: self)
+            }
+            return []
         }
         legacyMutableState(self).translatedAutoresizingConstraints = translated
     }

@@ -26,6 +26,10 @@ set -euo pipefail
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 VENDOR=$(CDPATH= cd -- "$HERE/.." && pwd -P)
 REPO=${REPO:-$(CDPATH= cd -- "$VENDOR/../../../.." && pwd -P)}
+# Golden reference: the last rebuild-per-pass engine (f27d2e0b). Frames from that
+# implementation are the ground truth for behavioural parity; pin it explicitly so
+# the reference does not move when newer engine commits land.
+GOLDEN_REF=${GOLDEN_REF:-f27d2e0b}
 PY=${PYTHON:-python3}
 OUT=${1:?Usage: run-autolayout-tests.sh OUT [ROWS...]}
 shift || true
@@ -38,6 +42,7 @@ mkdir -p "$OUT/build/parity" "$OUT/build/bench" "$OUT/build/golden-current" \
 
 ENGINE_SOURCES=(
   LegacyAutoLayout/LegacyLayoutEngine.swift
+  LegacyAutoLayout/LegacyLayoutGeneration.swift
   LegacyAutoLayout/LegacyLayoutItem.swift
   LegacyAutoLayout/LegacyLayoutSolver.swift
   LegacyAutoLayout/LegacyLayoutStats.swift
@@ -97,12 +102,12 @@ BASELINE_DIR="$OUT/baseline"
 mkdir -p "$BASELINE_DIR"
 for rel in "${BASELINE_SOURCES[@]}"; do
   mkdir -p "$BASELINE_DIR/$(dirname "$rel")"
-  git -C "$REPO" show "HEAD:utils/legacy-ios5-mac/vendor/UIKitBackports/$rel" > "$BASELINE_DIR/$rel"
+  git -C "$REPO" show "$GOLDEN_REF:utils/legacy-ios5-mac/vendor/UIKitBackports/$rel" > "$BASELINE_DIR/$rel"
 done
 mkdir -p "$BASELINE_DIR/Cassowary"
 for name in "$VENDOR"/Cassowary/*.swift; do
   base=$(basename "$name")
-  git -C "$REPO" show "HEAD:utils/legacy-ios5-mac/vendor/UIKitBackports/Cassowary/$base" \
+  git -C "$REPO" show "$GOLDEN_REF:utils/legacy-ios5-mac/vendor/UIKitBackports/Cassowary/$base" \
     > "$BASELINE_DIR/Cassowary/$base"
 done
 /usr/bin/xcrun swiftc -emit-module -emit-library -module-name Cassowary -O \
@@ -146,7 +151,7 @@ PY
 echo "=== 3. benchmark"
 LEGACY_AUTOLAYOUT_STATS=1 "$OUT/build/bench/program" persistent 5 3 \
   > /dev/null 2> "$OUT/stats.log"
-grep -q "action=cached" "$OUT/stats.log" || {
+grep -qE "action=(cached|fast)" "$OUT/stats.log" || {
   echo 'FAIL: LEGACY_AUTOLAYOUT_STATS=1 did not report cached passes' >&2
   cat "$OUT/stats.log" >&2
   exit 1

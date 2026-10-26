@@ -68,6 +68,18 @@ public final class Solver {
     /// never basic stay nil.
     private var basicRows: [Row?] = []
 
+    /// Pre-sizes the build-path containers for a system with `constraintCount`
+    /// constraints and `variableCount` variables. Purely an allocation hint.
+    public func reserveCapacity(constraintCount: Int, variableCount: Int) {
+        constraints.reserveCapacity(constraintCount)
+        constraintTags.reserveCapacity(constraintCount)
+        basicRows.reserveCapacity(constraintCount * 3)
+        basicSymbols.reserveCapacity(constraintCount * 3)
+        variableSymbols.reserveCapacity(variableCount)
+        orderedVariables.reserveCapacity(variableCount)
+        externalValues.reserveCapacity(variableCount)
+    }
+
     /// The basic symbols sorted by symbol id. Maintained on every basis change so
     /// tableau traversals never re-sort the whole basis (the dominant cost in
     /// the previous implementation).

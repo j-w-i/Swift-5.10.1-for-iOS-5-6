@@ -153,10 +153,14 @@ final class RRLayoutConstraint: NSObject {
     /// enforce" and is mapped to the weakest strength (see `RRLayoutPriority.swift`);
     /// modern UIKit rejects priorities `<= 0` at creation, but this backport stays
     /// tolerant so corrupt archives cannot crash the layout pass.
-    var priority: RRLayoutPriority = RRLayoutPriorityValue.required
+    var priority: RRLayoutPriority = RRLayoutPriorityValue.required {
+        didSet { LegacyLayoutMutation.bump() }
+    }
 
     /// The constant term of the constraint equation. Settable, like Apple's.
-    var constant: CGFloat
+    var constant: CGFloat {
+        didSet { LegacyLayoutMutation.bump() }
+    }
 
     /// An optional identifier for debugging. Settable, like Apple's.
     var identifier: String?
@@ -379,6 +383,7 @@ final class RRLayoutConstraint: NSObject {
                 return
             }
             _isActive = newValue
+            LegacyLayoutMutation.bump()
             if newValue {
                 // Drop-in path: activating a constraint must be enough to start the engine on iOS 5.
                 LegacyAutoLayout.ensureInstalled()

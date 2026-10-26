@@ -281,6 +281,61 @@ func main() {
               "steady(cached=\(afterSteady.cachedPasses), solves=\(afterSteady.solves)) OK")
     }
 
+    // 11. Mutation-generation fast path: repeat passes are O(1) (no tree walk,
+    //     no solve), and every mutation kind invalidates the cached solution.
+    do {
+        LegacyLayoutEngine.resetPersistentState()
+        LegacyLayoutStats.reset()
+        let engine = LegacyLayoutEngine()
+        let tree = Tree(root: FakeItem("root", frame: CGRect(x: 0, y: 0, width: 320, height: 480)))
+        let item = FakeItem("item", frame: CGRect(x: 0, y: 0, width: 100, height: 20))
+        tree.add(item, to: tree.root)
+        addPin(tree, item, top: 0)
+        _ = engine.layout(tree.root)
+        let framesAfterFirst = snapshot(tree, engine.solve(tree.root))
+        let base = LegacyLayoutStats.snapshot
+        for _ in 0..<3 { _ = engine.layout(tree.root) }
+        let steady = LegacyLayoutStats.snapshot
+        checkEqual(steady.fastPasses - base.fastPasses, 3,
+                   "three no-change passes must all take the O(1) fast path")
+        checkEqual(steady.solves, base.solves, "no-change passes must not solve")
+        check(differences(snapshot(tree, engine.solve(tree.root)), framesAfterFirst).isEmpty,
+              "fast path must preserve frames")
+
+        // Constant change: must not be served from the cache and must be applied.
+        item.constraints[0].constant = 40
+        _ = engine.layout(tree.root)
+        let afterConstant = LegacyLayoutStats.snapshot
+        checkEqual(afterConstant.fastPasses - steady.fastPasses, 0,
+                   "a constant mutation must not take the fast path")
+        check(abs(item.frame.minX - 40) < 1e-6, "constant change must be applied (\(item.frame.minX))")
+
+        // Priority change: invalidates the cached solution.
+        item.constraints[3].priority = 900
+        _ = engine.layout(tree.root)
+        let afterPriority = LegacyLayoutStats.snapshot
+        checkEqual(afterPriority.fastPasses - afterConstant.fastPasses, 0,
+                   "a priority mutation must not take the fast path")
+
+        // Frame-only mutation (auto Layout participant): invalidates as well.
+        tree.root.frame = CGRect(x: 0, y: 0, width: 400, height: 480)
+        _ = engine.layout(tree.root)
+        let afterResize = LegacyLayoutStats.snapshot
+        checkEqual(afterResize.fastPasses - afterPriority.fastPasses, 0,
+                   "a root resize must not take the fast path")
+        // left == root.left + 40 (constant changed above), right == root.right - 8.
+        check(abs(item.frame.width - 352) < 1e-6,
+              "root resize must re-solve pinned edges (width \(item.frame.width))")
+
+        // And the system settles back into the O(1) path.
+        _ = engine.layout(tree.root)
+        let afterSettle = LegacyLayoutStats.snapshot
+        checkEqual(afterSettle.fastPasses - afterResize.fastPasses, 1,
+                   "the pass after a mutation must return to the fast path")
+        print("mutation generation: fast=\(afterSettle.fastPasses) " +
+              "solves=\(afterSettle.solves) cached=\(afterSettle.cachedPasses) OK")
+    }
+
     finishHarness()
 }
 

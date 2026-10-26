@@ -8,7 +8,11 @@
 import Foundation
 
 /// A single term of a linear expression: `coefficient * variable`.
-public final class Term: Hashable, CustomStringConvertible {
+///
+/// A value type: expressions build many short term lists while the layout engine
+/// compiles constraints, so a struct avoids one heap allocation per term. Equality
+/// and hashing follow variable identity, as before.
+public struct Term: Hashable, CustomStringConvertible {
 
     public let variable: Variable
     public let coefficient: Double
@@ -19,7 +23,7 @@ public final class Term: Hashable, CustomStringConvertible {
     }
 
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(variable)
+        hasher.combine(ObjectIdentifier(variable))
         hasher.combine(coefficient)
     }
 

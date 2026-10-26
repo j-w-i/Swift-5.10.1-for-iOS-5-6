@@ -167,6 +167,7 @@ final class LegacyLayoutEngine {
     private struct CacheEntry {
         weak var root: AnyObject?
         var solver: LegacyLayoutSolver
+        var direction: RRLayoutDirection
         var lastUsed: Int
     }
 
@@ -204,19 +205,33 @@ final class LegacyLayoutEngine {
 
         if usesPersistentSolver {
             Self.pruneCacheIfNeeded()
-            if var entry = Self.solverCache[identifier],
-               entry.root === rootObject,
-               let result = entry.solver.update(root: root,
-                                                direction: direction,
-                                                writingFrames: true) {
-                Self.cacheTick += 1
-                entry.lastUsed = Self.cacheTick
-                Self.solverCache[identifier] = entry
-                Self.notePass(start: start,
-                              solver: entry.solver,
-                              cached: entry.solver.lastUpdateWasCached,
-                              rebuilt: false)
-                return result
+            if var entry = Self.solverCache[identifier], entry.root === rootObject {
+                // O(1) no-change path: nothing that can affect the constraint
+                // system has mutated since this solver's last pass, so return its
+                // result without walking the item tree or touching the tableau.
+                if entry.direction == direction,
+                   entry.solver.consumedGeneration == LegacyLayoutMutation.generation,
+                   let cached = entry.solver.cachedLayoutResult {
+                    Self.cacheTick += 1
+                    entry.lastUsed = Self.cacheTick
+                    Self.solverCache[identifier] = entry
+                    LegacyLayoutStats.noteFastPass(
+                        microseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1000.0)
+                    return cached
+                }
+                if let result = entry.solver.update(root: root,
+                                                    direction: direction,
+                                                    writingFrames: true) {
+                    Self.cacheTick += 1
+                    entry.lastUsed = Self.cacheTick
+                    entry.direction = direction
+                    Self.solverCache[identifier] = entry
+                    Self.notePass(start: start,
+                                  solver: entry.solver,
+                                  cached: entry.solver.lastUpdateWasCached,
+                                  rebuilt: false)
+                    return result
+                }
             }
         }
 
@@ -225,7 +240,7 @@ final class LegacyLayoutEngine {
         let solver = LegacyLayoutSolver(root: root, direction: direction)
         let result = solver.solve(writingFrames: true)
         if usesPersistentSolver {
-            Self.store(solver: solver, root: rootObject, identifier: identifier)
+            Self.store(solver: solver, root: rootObject, identifier: identifier, direction: direction)
         }
         Self.notePass(start: start, solver: solver, cached: false, rebuilt: true)
         return result
@@ -241,9 +256,13 @@ final class LegacyLayoutEngine {
 
     // MARK: Cache plumbing
 
-    private static func store(solver: LegacyLayoutSolver, root: AnyObject, identifier: ObjectIdentifier) {
+    private static func store(solver: LegacyLayoutSolver,
+                              root: AnyObject,
+                              identifier: ObjectIdentifier,
+                              direction: RRLayoutDirection) {
         cacheTick += 1
-        solverCache[identifier] = CacheEntry(root: root, solver: solver, lastUsed: cacheTick)
+        solverCache[identifier] = CacheEntry(root: root, solver: solver,
+                                            direction: direction, lastUsed: cacheTick)
         if solverCache.count > maximumCachedRoots {
             evictOldest()
         }

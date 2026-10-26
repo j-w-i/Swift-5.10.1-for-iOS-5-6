@@ -13,6 +13,13 @@ import Foundation
 /// expressions and never mutate the receiver. The constant is the only mutable
 /// component, mirroring the reference implementations where a row keeps track of
 /// its constant separately.
+///
+/// Implementation note: terms live in a plain array and are merged with a linear
+/// scan (expressions built by the layout engine have a handful of terms), instead
+/// of an array plus a per-variable index dictionary. The layout build path creates
+/// many short expressions per constraint; the dictionary was pure allocation and
+/// hashing overhead. Term order (first-occurrence order) and coefficient merging
+/// are identical to the previous implementation.
 public final class Expression: CustomStringConvertible {
 
     /// The terms of the expression, in insertion order (deterministic).
@@ -21,25 +28,19 @@ public final class Expression: CustomStringConvertible {
     /// The constant part of the expression.
     public var constant: Double
 
-    /// Index into `terms` keyed by variable identity, so terms can be merged.
-    private var termIndices: [ObjectIdentifier: Int]
-
     public init(constant: Double = 0.0) {
         self.constant = constant
         self.terms = []
-        self.termIndices = [:]
     }
 
     public init(_ term: Term) {
         self.constant = 0.0
         self.terms = [term]
-        self.termIndices = [ObjectIdentifier(term.variable): 0]
     }
 
     public init(_ variable: Variable, _ coefficient: Double = 1.0) {
         self.constant = 0.0
         self.terms = [Term(variable, coefficient)]
-        self.termIndices = [ObjectIdentifier(variable): 0]
     }
 
     /// Whether the expression has no variable terms.
@@ -92,37 +93,30 @@ public final class Expression: CustomStringConvertible {
     /// Adds a term, merging coefficients for an already present variable.
     /// Internal so the solver can reuse expressions while building its rows.
     internal func add(_ term: Term, merging: Bool) {
-        if let index = termIndices[ObjectIdentifier(term.variable)] {
-            if merging {
-                let existing = terms[index]
-                let coefficient = existing.coefficient + term.coefficient
+        if merging {
+            for index in terms.indices where terms[index].variable === term.variable {
+                let coefficient = terms[index].coefficient + term.coefficient
                 if coefficient == 0.0 {
                     terms.remove(at: index)
-                    rebuildIndices()
                 } else {
-                    terms[index] = Term(existing.variable, coefficient)
+                    terms[index] = Term(term.variable, coefficient)
                 }
-            } else {
-                terms.append(term)
-                termIndices[ObjectIdentifier(term.variable)] = terms.count - 1
+                return
             }
-        } else if term.coefficient != 0.0 || !merging {
+            if term.coefficient != 0.0 {
+                terms.append(term)
+            }
+        } else {
             terms.append(term)
-            termIndices[ObjectIdentifier(term.variable)] = terms.count - 1
         }
     }
 
     /// The coefficient of `variable` in this expression, or `0` when absent.
     public func coefficient(of variable: Variable) -> Double {
-        guard let index = termIndices[ObjectIdentifier(variable)] else { return 0.0 }
-        return terms[index].coefficient
-    }
-
-    private func rebuildIndices() {
-        termIndices.removeAll(keepingCapacity: true)
-        for (index, term) in terms.enumerated() {
-            termIndices[ObjectIdentifier(term.variable)] = index
+        for term in terms where term.variable === variable {
+            return term.coefficient
         }
+        return 0.0
     }
 
     public var description: String {
