@@ -245,6 +245,14 @@ internal final class LegacyLayoutSolver {
     private var installedUserConstraints: [ObjectIdentifier: InstalledUserConstraint] = [:]
     private var installedIntrinsicConstraints: [ObjectIdentifier: InstalledIntrinsicConstraints] = [:]
     private var installedAutoresizingConstraints: [ObjectIdentifier: InstalledAutoresizingConstraints] = [:]
+    /// User constraints classified once per build (required rows go into the
+    /// presolve batch, optional rows after it).
+    private var userRequiredConstraints: [CompiledConstraint] = []
+    private var userOptionalConstraints: [CompiledConstraint] = []
+    /// Expression -> source constraint for the current build, so required rows that
+    /// the presolve batch had to relax can be reported as broken like the ordinary
+    /// install path does.
+    private var userConstraintSourceByExpression: [ObjectIdentifier: RRLayoutConstraint] = [:]
     private var installedStays: [ObjectIdentifier: InstalledStays] = [:]
     /// Cumulative bookkeeping counters (diagnostics).
     internal private(set) var installedConstraintCount = 0
@@ -254,8 +262,16 @@ internal final class LegacyLayoutSolver {
     internal private(set) var passRemovedConstraints = 0
     /// Mutations performed by the last incremental pass.
     private var changeCount = 0
+    /// Set when the last `install` row was fully presolved: it was not added to
+    /// the solver, so it must not be recorded as a solver constraint.
+    private var lastInstallWasDropped = false
     /// The result of the last writing pass, served unchanged when nothing moved.
     private var lastResult: LegacyLayoutResult?
+    /// Set when a build declined presolve because a required row would have been
+    /// relaxed. Such a system keeps rebuilding on later passes: the ordinary path
+    /// relaxes the row internally, so incremental diff bookkeeping is not a
+    /// faithful description of the installed tableau.
+    private var rebuildOnly = false
     /// The mutation generation this solver's solution reflects. The engine
     /// returns `cachedLayoutResult` directly when the global generation still
     /// matches (O(1) no-change pass, no tree walk).
@@ -350,10 +366,63 @@ internal final class LegacyLayoutSolver {
         // user constraints, over 4 variables.
         solver.reserveCapacity(constraintCount: items.count * 10 + 4,
                                variableCount: items.count * 4)
+        prepareUserConstraints()
+        guard Solver.presolvesEnabled else {
+            // Presolve disabled (differential tests): the ordinary rebuild path,
+            // exactly as before this round.
+            installImplicitConstraints()
+            installAutoresizingConstraints()
+            installStays()
+            installUserRequiredConstraints()
+            installIntrinsicContentConstraints()
+            installUserOptionalConstraints()
+            return finishSolve(writingFrames: writingFrames)
+        }
+        // Required rows are buffered so the guarded presolve can substitute
+        // one-free-variable equalities before any tableau row is created. The
+        // weak stays / intrinsic / optional rows go in afterwards and are
+        // rewritten (or dropped) with the presolved values.
+        // In strict compatibility mode Solver.presolvesEnabled is false, so
+        // endPresolveBatch installs the buffered rows through the ordinary path.
+        if LegacyLayoutEngine.strictRebuildMode {
+            Solver.presolvesEnabled = false
+        }
+        solver.beginPresolveBatch()
         installImplicitConstraints()
         installAutoresizingConstraints()
-        installStays()
-        installUserConstraints()
+        installUserRequiredConstraints()
+        solver.endPresolveBatch()
+        if !solver.presolveActive {
+            // The build declined presolve (guard failed) but the ordinary path is
+            // now in use. Keep rebuilding on later passes too: this guarantees the
+            // shipped engine never mixes a presolve attempt with incremental
+            // tableau diffs, so reported frames/broken constraints always come
+            // from one consistent rebuild.
+            rebuildOnly = true
+        }
+        if !solver.batchRejectedRequired.isEmpty {
+            // A required row would have to be relaxed. The ordinary path records
+            // which constraints are broken; presolve cannot reproduce that from
+            // rewritten rows, so decline the whole system and rebuild it exactly
+            // as the non-presolve engine does.
+            resetBuildState()
+            installImplicitConstraints()
+            installAutoresizingConstraints()
+            installStays()
+            installUserRequiredConstraints()
+            installIntrinsicContentConstraints()
+            installUserOptionalConstraints()
+        } else {
+            installStays()
+            installIntrinsicContentConstraints()
+            installUserOptionalConstraints()
+        }
+        return finishSolve(writingFrames: writingFrames)
+    }
+
+    /// Shared tail of a rebuild: record the installed structure, refresh external
+    /// values, extract the result and advance the stays.
+    private func finishSolve(writingFrames: Bool) -> LegacyLayoutResult {
         recordInstalledStructure()
         solver.updateVariables()
         let result = extractResult(writingFrames: writingFrames)
@@ -379,6 +448,13 @@ internal final class LegacyLayoutSolver {
                          direction: RRLayoutDirection,
                          writingFrames: Bool) -> LegacyLayoutResult? {
         guard isInitialized else { return nil }
+        if solver.presolveActive || rebuildOnly {
+            // Presolve removed variables from the tableau; rewrite-on-diff would
+            // be a second subtle implementation. Rebuilding through the same
+            // presolve path is cheap and keeps persisted and rebuilt systems
+            // identical by construction.
+            return nil
+        }
         rootStorage = root
         guard direction == installedDirection else {
             rootStorage = nil
@@ -965,35 +1041,37 @@ internal final class LegacyLayoutSolver {
 
     /// Full rebuild of the user constraints; also records what was installed so
     /// later passes can diff against it.
-    private func installUserConstraints() {
+    /// Classifies the subtree's user constraints once per build; the required
+    /// rows are installed in the presolve batch, the optional ones afterwards.
+    private func prepareUserConstraints() {
         let constraints = collectConstraints()
-        var required: [CompiledConstraint] = []
-        var optional: [CompiledConstraint] = []
-        required.reserveCapacity(constraints.count)
+        userRequiredConstraints.removeAll(keepingCapacity: true)
+        userOptionalConstraints.removeAll(keepingCapacity: true)
+        userRequiredConstraints.reserveCapacity(constraints.count)
         for constraint in constraints {
             guard let compiled = compile(constraint) else {
                 continue
             }
             if compiled.isRequired {
-                required.append(compiled)
+                userRequiredConstraints.append(compiled)
             } else {
-                optional.append(compiled)
+                userOptionalConstraints.append(compiled)
             }
         }
+    }
 
-        // Required first. A required constraint that cannot be satisfied is
-        // recorded as broken and re-added at the documented "broken" strength so
-        // it still influences the solve as the first thing to satisfy.
-        for compiled in required {
+    /// Required user rows. A required constraint that cannot be satisfied is
+    /// recorded as broken and re-added at the documented "broken" strength so it
+    /// still influences the solve as the first thing to satisfy.
+    private func installUserRequiredConstraints() {
+        for compiled in userRequiredConstraints {
             installUserConstraint(compiled)
         }
+    }
 
-        // Intrinsic content size constraints are optional; they rank with the
-        // item's hugging / compression-resistance priorities.
-        installIntrinsicContentConstraints()
-
-        // Then the user's optional constraints, at their mapped strengths.
-        for compiled in optional {
+    /// Optional user rows, at their mapped strengths.
+    private func installUserOptionalConstraints() {
+        for compiled in userOptionalConstraints {
             installUserConstraint(compiled)
         }
     }
@@ -1005,11 +1083,17 @@ internal final class LegacyLayoutSolver {
         let identifier = ObjectIdentifier(compiled.source)
         if let constraint = install(compiled.expression, compiled.operator,
                                     strength: compiled.strength, name: compiled.name) {
+            userConstraintSourceByExpression[ObjectIdentifier(constraint.expression)] = compiled.source
             installedUserConstraints[identifier] = InstalledUserConstraint(
                 source: compiled.source,
                 signature: constraintSignature(compiled.source),
                 solverConstraints: [constraint],
                 broken: false)
+            return
+        }
+        if lastInstallWasDropped {
+            // Presolve reduced this row to a satisfied (optional) constant; the
+            // solver never saw it, so there is nothing to record.
             return
         }
         brokenConstraints.append(compiled.source)
@@ -1473,6 +1557,43 @@ internal final class LegacyLayoutSolver {
         return install(expression, op, strength: .required, name: name) != nil
     }
 
+    /// Discards the presolve attempt and every piece of build bookkeeping it
+    /// produced. Called when the batch had to relax a required row: the whole
+    /// system is then rebuilt through the ordinary per-constraint path so
+    /// `brokenConstraints` reporting and incremental state are identical to the
+    /// non-presolve engine (never a mixed state).
+    private func resetBuildState() {
+        solver.reset()
+        brokenConstraints.removeAll(keepingCapacity: true)
+        installedUserConstraints.removeAll(keepingCapacity: true)
+        installedIntrinsicConstraints.removeAll(keepingCapacity: true)
+        installedAutoresizingConstraints.removeAll(keepingCapacity: true)
+        installedStays.removeAll(keepingCapacity: true)
+        userConstraintSourceByExpression.removeAll(keepingCapacity: true)
+        installedConstraintCount = 0
+        removedConstraintCount = 0
+        passInstalledConstraints = 0
+        passRemovedConstraints = 0
+        changeCount = 0
+        isInitialized = false
+        installedItemOrder.removeAll(keepingCapacity: true)
+        installedSuperitems.removeAll(keepingCapacity: true)
+        installedRootSize = .zero
+        lastResult = nil
+        lastInstallWasDropped = false
+        rebuildOnly = true
+    }
+
+    /// Whether every variable in the expression was eliminated by presolve, so
+    /// the solver will fold the row into a constant and drop it.
+    private func isFullyPresolved(_ expression: Expression) -> Bool {
+        guard solver.hasPresolvedVariables else { return false }
+        for term in expression.terms where !solver.isPresolved(term.variable) {
+            return false
+        }
+        return true
+    }
+
     /// Installs one constraint. Returns the solver constraint, or `nil` if the
     /// solver rejected it (unsatisfiable required constraint or solver error);
     /// the engine then skips it and keeps going.
@@ -1481,6 +1602,11 @@ internal final class LegacyLayoutSolver {
                          _ op: RelationalOperator,
                          strength: Strength,
                          name: String?) -> Constraint? {
+        lastInstallWasDropped = false
+        if isFullyPresolved(expression) {
+            lastInstallWasDropped = true
+            return nil
+        }
         let constraint = Constraint(expression, op, strength: strength, name: name)
         do {
             try solver.addConstraint(constraint)

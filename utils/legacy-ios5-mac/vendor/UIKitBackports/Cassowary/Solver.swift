@@ -118,6 +118,51 @@ public final class Solver {
     /// The last values written back by `updateVariables()`.
     private var externalValues: [Int: Double] = [:]
 
+    // MARK: Presolve (required-equality elimination)
+
+    /// Switches the guarded presolve pass (required equalities with one free
+    /// variable are substituted directly instead of becoming tableau rows).
+    /// Tests use it to compare with and without the pass.
+    public static var presolvesEnabled = true
+
+    /// Values of variables eliminated by the presolve pass.
+    public private(set) var presolvedValues: [Int: Double] = [:]
+
+    /// Whether `variable` was eliminated by the presolve pass.
+    public func isPresolved(_ variable: Variable) -> Bool {
+        presolvedValues[variable.id] != nil
+    }
+
+    /// Whether a presolve pass has eliminated at least one variable.
+    public var hasPresolvedVariables: Bool {
+        !presolvedValues.isEmpty
+    }
+
+    /// Whether the last build used presolve (an incremental update must then
+    /// rebuild, because eliminated variables are not in the tableau).
+    public private(set) var presolveActive = false
+
+    /// When non-nil, constraints are buffered for a presolve batch.
+    private var presolveBatch: [Constraint]?
+
+    /// Presolve statistics: applied builds, fallbacks, eliminated variables.
+    public private(set) var presolveAppliedCount = 0
+    public private(set) var presolveFallbackCount = 0
+    public private(set) var presolvedVariableCount = 0
+
+    /// Required rows from the last batch that the solver could not satisfy and
+    /// relaxed at the "broken" strength; the engine maps these back to the
+    /// caller's constraints for `brokenConstraints` reporting.
+    public private(set) var batchRejectedRequired: [Constraint] = []
+
+    /// Process-wide presolve counters for the differential tests.
+    public private(set) static var totalPresolveApplied = 0
+    public private(set) static var totalPresolveFallback = 0
+    public static func resetPresolveStatistics() {
+        totalPresolveApplied = 0
+        totalPresolveFallback = 0
+    }
+
     /// Variables whose external value changed since the last `fetchChanges()`.
     private var changedVariables: Set<Variable> = []
 
@@ -149,17 +194,43 @@ public final class Solver {
     ///   required and cannot be satisfied together with the constraints already
     ///   in the solver. The solver state is unchanged in that case.
     public func addConstraint(_ constraint: Constraint) throws {
+        if presolveBatch != nil {
+            presolveBatch?.append(constraint)
+            return
+        }
+        var constraint = constraint
+        if !presolvedValues.isEmpty {
+            // A variable eliminated by presolve is a known constant: rewrite the
+            // row (or drop it when it becomes constant).
+            let simplifiedExpression = simplified(constraint.expression, cancelling: presolvedValues)
+            if simplifiedExpression.terms.isEmpty {
+                if constraint.strength == .required && !holds(simplifiedExpression.constant, constraint.op) {
+                    throw SolverError.internalInconsistency("presolved constraints conflict")
+                }
+                return
+            }
+            constraint = Constraint(simplifiedExpression, constraint.op,
+                                    strength: constraint.strength, name: constraint.name)
+        }
         // Hot path: when no edit variables are registered, a failure can be
         // rolled back by rebuilding the tableau from the (small) constraint
         // list instead of snapshotting the whole tableau. Copying every row and
         // basis array on each add was the dominant cost of a full layout build.
         if edits.isEmpty {
-            do {
-                try addConstraintInternalNoSnapshot(constraint)
+            if constraint.strength == .required && presolvedValues.isEmpty {
+                // Exact rollback (as in the rebuild-per-pass reference) for
+                // required rows: the state after a failed required add decides
+                // which later constraints the engine reports as broken.
+                try addConstraintInternal(constraint)
                 constraints.append(constraint)
-            } catch {
-                rebuildFromConstraintList()
-                throw error
+            } else {
+                do {
+                    try addConstraintInternalNoSnapshot(constraint)
+                    constraints.append(constraint)
+                } catch {
+                    rebuildFromConstraintList()
+                    throw error
+                }
             }
         } else {
             try addConstraintInternal(constraint)
@@ -467,7 +538,8 @@ public final class Solver {
     /// The current value of a variable in the last solution (0 if it never
     /// appeared / was never updated).
     public func value(of variable: Variable) -> Double {
-        externalValues[variable.id] ?? 0.0
+        if let presolved = presolvedValues[variable.id] { return presolved }
+        return externalValues[variable.id] ?? 0.0
     }
 
     /// Variables whose external values changed since the previous call, with
@@ -480,6 +552,206 @@ public final class Solver {
         let sorted = changedVariables.sorted { $0.id < $1.id }
         changedVariables.removeAll()
         return sorted.map { ($0, externalValues[$0.id] ?? 0.0) }
+    }
+
+    // MARK: - Presolve batch
+
+    /// Starts buffering constraints for a guarded presolve pass. The engine adds
+    /// the required constraints (implicit, autoresizing and user required) into
+    /// the batch, then calls `endPresolveBatch()`.
+    public func beginPresolveBatch() {
+        presolveBatch = []
+        batchRejectedRequired.removeAll()
+    }
+
+    /// Runs the guarded presolve over the buffered constraints and installs the
+    /// remainder into the tableau.
+    ///
+    /// Guards: no edit variables, required equalities only as definitions, and
+    /// the whole batch falls back to the ordinary install path (in order) if a
+    /// substituted constraint becomes a violated constant or the elimination does
+    /// not converge.
+    public func endPresolveBatch() {
+        guard let batch = presolveBatch else { return }
+        presolveBatch = nil
+        guard !batch.isEmpty else { return }
+        guard Solver.presolvesEnabled, edits.isEmpty else {
+            installBatch(batch)
+            return
+        }
+
+        var pending: [Expression?] = batch.map { $0.expression }
+        var operations: [RelationalOperator] = batch.map { $0.op }
+        var strengths: [Strength] = batch.map { $0.strength }
+        var names: [String?] = batch.map { $0.name }
+        var values: [Int: Double] = [:]
+        var guardOK = true
+        var progress = true
+        var passes = 0
+        while progress && guardOK && passes < 24 {
+            progress = false
+            passes += 1
+            for index in pending.indices {
+                guard let uncertain = pending[index] else { continue }
+                let simplifiedExpression = simplified(uncertain, cancelling: values)
+                let op = operations[index]
+                let required = strengths[index] == .required
+                if required && op == .equal && simplifiedExpression.terms.count == 1 {
+                    let term = simplifiedExpression.terms[0]
+                    let value = -simplifiedExpression.constant / term.coefficient
+                    if values[term.variable.id] != nil {
+                        guardOK = false
+                        break
+                    }
+                    values[term.variable.id] = value
+                    pending[index] = nil
+                    progress = true
+                    continue
+                }
+                if simplifiedExpression.terms.isEmpty {
+                    if required && !holds(simplifiedExpression.constant, op) {
+                        guardOK = false
+                        break
+                    }
+                    pending[index] = nil
+                    progress = true
+                    continue
+                }
+                pending[index] = simplifiedExpression
+            }
+        }
+        if !guardOK || progress {
+            // Guard failed (conflict) or elimination did not converge: install the
+            // original batch with the ordinary path, no presolve at all.
+            presolveFallbackCount += 1
+            Solver.totalPresolveFallback += 1
+            presolvedValues.removeAll()
+            presolveActive = false
+            installBatch(batch)
+            return
+        }
+
+        // Collect the remaining rows, eliminating exact duplicate required rows.
+        var remaining: [Constraint] = []
+        var seen: Set<PresolvedRowKey> = []
+        for index in pending.indices {
+            guard let uncertain = pending[index] else { continue }
+            let sim = simplified(uncertain, cancelling: values)
+            if sim.terms.isEmpty {
+                if strengths[index] == .required && !holds(sim.constant, operations[index]) {
+                    presolveFallbackCount += 1
+                    Solver.totalPresolveFallback += 1
+                    presolvedValues.removeAll()
+                    presolveActive = false
+                    installBatch(batch)
+                    return
+                }
+                continue
+            }
+            let constraint = Constraint(sim, operations[index], strength: strengths[index], name: names[index])
+            if strengths[index] == .required,
+               !seen.insert(PresolvedRowKey(constraint)).inserted {
+                continue
+            }
+            remaining.append(constraint)
+        }
+
+        presolvedValues = values
+        presolvedVariableCount += values.count
+        presolveAppliedCount += 1
+        Solver.totalPresolveApplied += 1
+        presolveActive = true
+        for constraint in remaining {
+            do {
+                try addConstraintInternalNoSnapshot(constraint)
+                constraints.append(constraint)
+            } catch {
+                if constraint.strength == .required {
+                    // Match the ordinary path: a required row the solver cannot
+                    // satisfy is retried at the "broken" strength.
+                    batchRejectedRequired.append(constraint)
+                    let relaxed = Constraint(constraint.expression.plus(Expression(constant: 0)),
+                                             constraint.op,
+                                             strength: Strength.clip(Strength.required.value - 1),
+                                             name: constraint.name)
+                    try? addConstraintInternalNoSnapshot(relaxed)
+                    constraints.append(relaxed)
+                }
+            }
+        }
+        updateVariables()
+    }
+
+    /// Installs a buffered batch through the ordinary per-constraint path.
+    private func installBatch(_ batch: [Constraint]) {
+        for constraint in batch {
+            do {
+                try addConstraintInternalNoSnapshot(constraint)
+                constraints.append(constraint)
+            } catch {
+                if constraint.strength == .required {
+                    batchRejectedRequired.append(constraint)
+                    let relaxed = Constraint(constraint.expression.plus(Expression(constant: 0)),
+                                             constraint.op,
+                                             strength: Strength.clip(Strength.required.value - 1),
+                                             name: constraint.name)
+                    try? addConstraintInternalNoSnapshot(relaxed)
+                    constraints.append(relaxed)
+                }
+            }
+        }
+        updateVariables()
+    }
+
+    /// Rebuilds an expression with eliminated variables folded into the constant.
+    private func simplified(_ expression: Expression, cancelling values: [Int: Double]) -> Expression {
+        var constant = expression.constant
+        let result = Expression(constant: 0.0)
+        for term in expression.terms {
+            if let value = values[term.variable.id] {
+                constant += term.coefficient * value
+            } else {
+                result.add(term, merging: true)
+            }
+        }
+        result.constant = constant
+        return result
+    }
+
+    /// Whether `constant <op> 0` holds.
+    private func holds(_ constant: Double, _ op: RelationalOperator) -> Bool {
+        switch op {
+        case .equal:
+            return nearZero(constant)
+        case .lessThanOrEqual:
+            return constant <= 0.0 || nearZero(constant)
+        case .greaterThanOrEqual:
+            return constant >= 0.0 || nearZero(constant)
+        }
+    }
+
+    /// Canonical key for exact duplicate required rows.
+    private struct PresolvedRowKey: Hashable {
+        private let operation: Int
+        private let constant: Double
+        private let terms: [Int64]
+
+        init(_ constraint: Constraint) {
+            switch constraint.op {
+            case .equal: operation = 0
+            case .lessThanOrEqual: operation = 1
+            case .greaterThanOrEqual: operation = 2
+            }
+            constant = constraint.expression.constant
+            var encoded: [Int64] = []
+            encoded.reserveCapacity(constraint.expression.terms.count)
+            for term in constraint.expression.terms {
+                // Pack (variable id, coefficient bits) deterministically.
+                encoded.append((Int64(term.variable.id) << 32) | Int64(term.coefficient.bitPattern & 0xFFFF_FFFF))
+            }
+            encoded.sort()
+            terms = encoded
+        }
     }
 
     /// Removes all constraints, edit variables and external values.
@@ -497,6 +769,9 @@ public final class Solver {
         edits.removeAll()
         externalValues.removeAll()
         changedVariables.removeAll()
+        presolvedValues.removeAll()
+        presolveActive = false
+        presolveBatch = nil
         idTick = 1
     }
 

@@ -171,6 +171,14 @@ final class LegacyLayoutEngine {
         var lastUsed: Int
     }
 
+    /// Diagnostic/strict compatibility mode: `LEGACY_AUTOLAYOUT_FORCE_REBUILD=1`
+    /// disables both the persistent solver cache and the presolve batch, so every
+    /// dirty pass rebuilds the system exactly like the pre-optimisation engine.
+    /// Intended for A/B verification on device; it does not change the API.
+    internal static let strictRebuildMode: Bool = {
+        ProcessInfo.processInfo.environment["LEGACY_AUTOLAYOUT_FORCE_REBUILD"] == "1"
+    }()
+
     private static var solverCache: [ObjectIdentifier: CacheEntry] = [:]
     private static var cacheTick = 0
 
@@ -205,7 +213,8 @@ final class LegacyLayoutEngine {
 
         if usesPersistentSolver {
             Self.pruneCacheIfNeeded()
-            if var entry = Self.solverCache[identifier], entry.root === rootObject {
+            if var entry = Self.solverCache[identifier], entry.root === rootObject,
+               !Self.strictRebuildMode {
                 // O(1) no-change path: nothing that can affect the constraint
                 // system has mutated since this solver's last pass, so return its
                 // result without walking the item tree or touching the tableau.
@@ -261,8 +270,10 @@ final class LegacyLayoutEngine {
                               identifier: ObjectIdentifier,
                               direction: RRLayoutDirection) {
         cacheTick += 1
+        if !Self.strictRebuildMode {
         solverCache[identifier] = CacheEntry(root: root, solver: solver,
                                             direction: direction, lastUsed: cacheTick)
+        }
         if solverCache.count > maximumCachedRoots {
             evictOldest()
         }

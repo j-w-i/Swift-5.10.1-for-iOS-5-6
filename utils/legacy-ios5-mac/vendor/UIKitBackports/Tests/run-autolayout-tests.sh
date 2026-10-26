@@ -148,6 +148,55 @@ if problems:
 print('PASS: %d golden frames match the previous rebuild-per-pass engine' % len(old))
 PY
 
+echo "=== 2b. presolve differential (presolve on vs disabled, frames within 1e-6)"
+mkdir -p "$OUT/build/presolve-diff"
+cp "$VENDOR/Tests/autolayout_presolve_diff.swift" "$OUT/build/presolve-diff/main.swift"
+build_host "$OUT/build/presolve-diff"
+"$OUT/build/presolve-diff/program" > "$OUT/presolve-diff.log" 2>&1
+cat "$OUT/presolve-diff.log"
+
+echo "=== 2c. broken/relaxed-constraint diagnostics (presolve vs presolve-off vs f27d2e0b)"
+mkdir -p "$OUT/build/broken-diag-current" "$OUT/build/broken-diag-baseline"
+cp "$VENDOR/Tests/autolayout_broken_diag.swift" "$OUT/build/broken-diag-current/main.swift"
+cp "$VENDOR/Tests/autolayout_broken_diag.swift" "$OUT/build/broken-diag-baseline/main.swift"
+/usr/bin/xcrun swiftc -O -DNEW_ENGINE -I "$CASS" -L "$CASS" -lCassowary \
+  "$STUBS" "${ENGINE_PATHS[@]}" "$OUT/build/broken-diag-current/main.swift" \
+  -o "$OUT/build/broken-diag-current/program"
+/usr/bin/xcrun swiftc -O -I "$BASELINE_DIR" -L "$BASELINE_DIR" -lCassowary \
+  "$STUBS" "${BASELINE_ENGINE[@]}" "$OUT/build/broken-diag-baseline/main.swift" \
+  -o "$OUT/build/broken-diag-baseline/program"
+"$OUT/build/broken-diag-current/program" > "$OUT/broken-diag-current.txt"
+"$OUT/build/broken-diag-baseline/program" > "$OUT/broken-diag-baseline.txt"
+"$PY" - "$OUT/broken-diag-current.txt" "$OUT/broken-diag-baseline.txt" <<'PYDIAG'
+import sys
+def read(path, mode_filter=None):
+    data = {}
+    for line in open(path):
+        name, step, mode, count, ids = line.strip().split('|')
+        if mode_filter is not None and mode != mode_filter:
+            continue
+        data[(name, step)] = (int(count), ids)
+    return data
+current_path, baseline_path = sys.argv[1], sys.argv[2]
+on = read(current_path, 'on')
+off = read(current_path, 'off')
+baseline = read(baseline_path)
+if on.keys() != off.keys():
+    raise SystemExit('broken-diag: presolve on/off scenario sets differ: %s' % (sorted(on.keys() ^ off.keys())[:5],))
+if baseline.keys() != on.keys():
+    raise SystemExit('broken-diag: baseline/current scenario sets differ: %s' % (sorted(baseline.keys() ^ on.keys())[:5],))
+problems = []
+for key in on:
+    if on[key] != off[key]:
+        problems.append('%s: presolve-on %r != presolve-off %r' % (key, on[key], off[key]))
+    if on[key] != baseline[key]:
+        problems.append('%s: presolve %r != f27d2e0b %r' % (key, on[key], baseline[key]))
+if problems:
+    raise SystemExit('broken-diag: %d differences:\n%s' % (len(problems), '\n'.join(problems[:20])))
+broken_total = sum(v[0] for v in on.values())
+print('PASS: %d conflict scenarios (%d broken/relaxed constraints) report identically with presolve on, presolve off and the f27d2e0b reference' % (len(on), broken_total))
+PYDIAG
+
 echo "=== 3. benchmark"
 LEGACY_AUTOLAYOUT_STATS=1 "$OUT/build/bench/program" persistent 5 3 \
   > /dev/null 2> "$OUT/stats.log"
