@@ -45,6 +45,24 @@ platform SDK; only its libc++ headers are borrowed from Xcode), and `crt1.3.1.o`
 the iOS standard library and modules, the 5.1.5 runtime with its atomics, and the legacy overlays - is built
 from these repos. No prebuilt Swift iOS standard library package is downloaded.
 
+## Distribution
+
+Finished builds are published by [Legacy-Swift-Toolchain-Builds](https://github.com/j-w-i/Legacy-Swift-Toolchain-Builds)
+as release assets (`swift-5.10.1-ios5.xctoolchain.tar.gz`,
+`swift-5.1.5-ios6-runtime.xctoolchain.tar.gz`) together with a `release-manifest.json` the kit consumes. From a
+finished build root:
+
+```bash
+cd Legacy-Swift-Toolchain-Builds
+GITHUB_TOKEN=<repo-scoped token> tools/publish.sh --build-root "$LEGACY_BUILD_ROOT"
+```
+
+The script packages both toolchains, creates a draft release, uploads the assets and manifest, then publishes,
+so the stable manifest URL
+`https://github.com/j-w-i/Legacy-Swift-Toolchain-Builds/releases/latest/download/release-manifest.json` always
+describes the newest build. A repository workflow re-hashes the released assets and re-attaches the manifest
+whenever a release is published.
+
 ## Honest status
 - Verified: a complete fresh-clone, empty-build-root run of `build-all.sh` (see below), including the 5.10.1 iOS stdlib
   built from source; the resulting toolchain passes every iOS 5 qualification check.
