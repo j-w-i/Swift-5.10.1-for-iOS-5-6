@@ -46,17 +46,38 @@ the iOS standard library and modules, the 5.1.5 runtime with its atomics, and th
 from these repos. No prebuilt Swift iOS standard library package is downloaded.
 
 ## Honest status
-- Verified: `fetch-deps.sh` from an empty directory; both patches apply to fresh upstream tags; the already-built toolchain works with the app (combined iOS 5/6 builds).
-- NOT verified: a from-scratch run of steps 2–6 on a clean machine (takes many hours). Steps 4–5 are still documented rather than wrapped in one `build-all.sh`; the old runtime inputs in step 5 are the least reproducible part.
+- Verified: a complete fresh-clone, empty-build-root run of `build-all.sh` (see below), including the 5.10.1 iOS stdlib
+  built from source; the resulting toolchain passes every iOS 5 qualification check.
+- Not source: the bootstrap compiler, Xcode and the pinned SDKs listed above (compiler bootstrap and platform SDKs).
+- Not verified: device execution of any build (qualification is static; `deviceExecution` stays `pending`).
 
-## Reproducibility proof (2026-10-26)
-From a fresh `git clone` of this repo into an empty directory, `utils/legacy-ios5-mac/build-all.sh` ran start to finish on
-an Apple Silicon Mac (macOS 27, 14 cores, Xcode 13.4.1 at a space-free path) and produced `out/swift-5.10.1-ios5.xctoolchain`
-(stages: tools, host-toolchain, baseline-toolchain, fetch-510, llvm-510, swift-510, driver-510, fetch-515, compiler-515, crt-515,
-runtime-515, overlays, assemble). With that toolchain:
-- `check-class-marking.sh`: PASS.
-- sample app, iOS 5.0, armv7: ARCHIVE SUCCEEDED, LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN.
-- sample app, iOS 7.0 floor, armv7+arm64 (guide route): ARCHIVE SUCCEEDED, LC_MAIN.
+## Reproducibility proof (2026-10-26): fresh clone, empty build root
+A fresh `git clone` of this repo into an empty directory, then `utils/legacy-ios5-mac/build-all.sh`, ran start to finish
+with `EXIT=0` on an Apple Silicon Mac (macOS 27, 14 cores, Xcode 13.4.1 at a space-free path). 65 minutes wall clock,
+stages and completion times:
+
+```
+tools 12:10:30   host-toolchain 12:10:46   fetch-510 12:12:18   llvm-510 12:13:15
+swift-510 12:23:31   stdlib-510-ios 12:36:21   driver-510 12:48:01   baseline-510 12:49:07
+fetch-515 12:49:08   compiler-515 12:49:46   crt-515 13:09:17   runtime-515 13:10:37
+runtime-package-515 13:14:27   overlays 13:14:29   assemble 13:14:57   qualify-ios5 13:15:00
+```
+
+The only downloads were cmake, ninja and the swift.org bootstrap compiler (`swift-5.10.1.pkg`); the prebuilt
+`swift-5.10.1-ios6.pkg` baseline is no longer fetched at all. Outputs:
+- `out/swift-5.10.1-ios5.xctoolchain` - default resources are the source-built 5.10.1 iOS stdlib (14 fat dylibs,
+  armv7+armv7s+arm64; 16 modules incl. `_Concurrency`), `usr/lib/swift_ios5` is the source-built 5.1.5 runtime plus
+  the rebuilt legacy overlays (47 dylibs).
+- `out/swift-5.1.5-ios6-runtime.xctoolchain[.tar.gz]` - 42 dylibs, `nm -u` shows zero `___atomic_*` imports.
+- `out/ios5-qualification/qualification-evidence.json` - `staticBuild`, `abiClassMarking`, `ios5Archive`,
+  `defaultIOS6Archive`, `imports` and `hostSignatures` all verified; `deviceExecution: pending`.
+- The toolchain's default `libswiftCore.dylib` hash equals the merged source-built tree
+  (`320d64f99a0de6acfedb52617ae133b064b7b68958a0644b03fb12388fdf4235`).
+
+Qualification details: the iOS 5 executable has `LC_VERSION_MIN 5.0`, `LC_UNIXTHREAD` and no `LC_MAIN`; the default
+resource tree builds a 7.0 armv7 executable with `LC_MAIN`; class marking PASS; the iOS 5 executable's Swift imports all
+resolve against the source-built `swift_ios5` dylibs. A fresh clone of `Legacy-Swift-Development-Kit` builds with
+`./build.sh --native` and its test suite passes.
 - `package-runtime-515.sh`: packaged the from-source 5.1.5 runtime (42 dylibs); `nm -u` shows zero `___atomic_*`
   imports and `libswiftCore.dylib` defines `___atomic_store/load/compare_exchange` itself. It refuses the stock
   swift.org runtime (same check, reproduced: 3 imports reported).
