@@ -46,6 +46,24 @@ cp -R "$L/lib/clang/$CLANG_VERSION" "$OUT/usr/lib/clang/"
 ln -sfn "../clang/$CLANG_VERSION" "$OUT/usr/lib/swift/clang"
 [ -f "$OUT/usr/lib/clang/$CLANG_VERSION/include/stdarg.h" ] || { echo "clang resource directory lacks stdarg.h" >&2; exit 1; }
 
+# Clang lowers `@available` checks to __isPlatformVersionAtLeast, which lives in the
+# iOS compiler-rt archive. The LLVM build ships no lib/darwin, so assemble the fat
+# armv7/armv7s/arm64 archive from the builtins this build compiled. Without it every
+# Objective-C dependency that uses availability fails to link with
+# "Undefined symbols: ___isPlatformVersionAtLeast".
+CLANG_DARWIN="$OUT/usr/lib/clang/$CLANG_VERSION/lib/darwin"
+mkdir -p "$CLANG_DARWIN"
+CRT_SLICES=()
+for arch in armv7 armv7s arm64; do
+  slice="$B/build/crt-510-$arch-ios70/libclang_rt.builtins_${arch}_ios.a"
+  [ -f "$slice" ] || { echo "missing iOS compiler-rt builtins for $arch (run stdlib-510-ios)" >&2; exit 1; }
+  CRT_SLICES+=("$slice")
+done
+/usr/bin/lipo -create "${CRT_SLICES[@]}" -output "$CLANG_DARWIN/libclang_rt.ios.a"
+/usr/bin/nm -gU "$CLANG_DARWIN/libclang_rt.ios.a" | /usr/bin/grep -q '__isPlatformVersionAtLeast' || {
+  echo "compiler-rt archive lacks __isPlatformVersionAtLeast" >&2; exit 1; }
+
+
 # Host compiler binaries built from source.
 cp "$S/bin/swift-frontend" "$OUT/usr/bin/"
 cp "$DRIVER" "$OUT/usr/bin/swift-driver"
