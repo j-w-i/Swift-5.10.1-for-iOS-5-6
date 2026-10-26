@@ -20,6 +20,8 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+#include <mach/mach_time.h>
+
 #import "PSTCollectionView.h"
 
 #if __has_include("PSTCollectionViewStats.h")
@@ -459,6 +461,336 @@ static void RunAllScenarios(HarnessRecorder *recorder, NSMutableDictionary *coun
                  });
 }
 
+#pragma mark - Native UIKit reference measurement
+
+// The same scenario is executed twice with identical geometry: once against
+// UIKit's native UICollectionView + UICollectionViewFlowLayout and once against
+// PSTCollectionView + PSTCollectionViewFlowLayout.  Only the layout path is
+// measured: a sample is the sum of the layout passes the scenario triggers.
+// Harness setup, view creation and the warm-up pass of steady-state scenarios
+// are outside the measured region.  min/median over several fresh repetitions.
+
+typedef NS_ENUM(int, HarnessEngine) {
+    HarnessEnginePST = 0,
+    HarnessEngineNative = 1,
+};
+
+@interface HarnessNativeDataSource : NSObject <UICollectionViewDataSource>
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *sectionCounts;
+@end
+
+@implementation HarnessNativeDataSource
+- (NSInteger)numberOfSectionsInCollectionView:(UICollectionView *)collectionView {
+    return (NSInteger)self.sectionCounts.count;
+}
+- (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
+    return [[self.sectionCounts objectAtIndex:(NSUInteger)section] integerValue];
+}
+- (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
+    return [collectionView dequeueReusableCellWithReuseIdentifier:@"native-reference-cell" forIndexPath:indexPath];
+}
+@end
+
+@interface HarnessTimingConfig : NSObject
+@property (nonatomic, strong) NSArray<NSNumber *> *counts;
+@property (nonatomic, assign) CGSize itemSize;
+@property (nonatomic, assign) UIEdgeInsets sectionInset;
+@property (nonatomic, assign) CGFloat lineSpacing;
+@property (nonatomic, assign) CGFloat interitemSpacing;
+@property (nonatomic, assign) CGSize headerSize;
+@property (nonatomic, assign) CGSize footerSize;
+@property (nonatomic, assign) CGSize bounds;
+@property (nonatomic, assign) BOOL horizontal;
+@end
+
+@implementation HarnessTimingConfig
+@end
+
+@interface HarnessTimingBundle : NSObject
+@property (nonatomic, assign) HarnessEngine engine;
+// id because the receiver is either a UICollectionView or a PSTCollectionView
+// (both UIScrollView subclasses, same runtime selectors for the scenarios).
+@property (nonatomic, strong) id view;
+@property (nonatomic, strong) id dataSource;
+@end
+
+@implementation HarnessTimingBundle
+@end
+
+static uint64_t HarnessNowNanoseconds(void) {
+    static mach_timebase_info_data_t timebase;
+    if (timebase.denom == 0) {
+        (void)mach_timebase_info(&timebase);
+    }
+    uint64_t absolute = mach_absolute_time();
+    if (timebase.denom == 0) {
+        return absolute;
+    }
+    return absolute * (uint64_t)timebase.numer / (uint64_t)timebase.denom;
+}
+
+static HarnessTimingConfig *HarnessConfig(NSArray<NSNumber *> *counts, CGSize itemSize, UIEdgeInsets sectionInset,
+                                          CGFloat lineSpacing, CGFloat interitemSpacing,
+                                          CGSize headerSize, CGSize footerSize, CGSize bounds, BOOL horizontal) {
+    HarnessTimingConfig *config = [HarnessTimingConfig new];
+    config.counts = counts;
+    config.itemSize = itemSize;
+    config.sectionInset = sectionInset;
+    config.lineSpacing = lineSpacing;
+    config.interitemSpacing = interitemSpacing;
+    config.headerSize = headerSize;
+    config.footerSize = footerSize;
+    config.bounds = bounds;
+    config.horizontal = horizontal;
+    return config;
+}
+
+static HarnessTimingBundle *HarnessMakeTimingBundle(HarnessEngine engine, HarnessTimingConfig *config) {
+    HarnessTimingBundle *bundle = [HarnessTimingBundle new];
+    bundle.engine = engine;
+    CGRect frame = CGRectMake(0, 0, config.bounds.width, config.bounds.height);
+    if (engine == HarnessEnginePST) {
+        HarnessDataSource *dataSource = [HarnessDataSource new];
+        dataSource.sectionCounts = [config.counts mutableCopy];
+        PSTCollectionViewFlowLayout *layout = [PSTCollectionViewFlowLayout new];
+        layout.itemSize = config.itemSize;
+        layout.sectionInset = config.sectionInset;
+        layout.minimumLineSpacing = config.lineSpacing;
+        layout.minimumInteritemSpacing = config.interitemSpacing;
+        layout.headerReferenceSize = config.headerSize;
+        layout.footerReferenceSize = config.footerSize;
+        layout.scrollDirection = config.horizontal ? PSTCollectionViewScrollDirectionHorizontal : PSTCollectionViewScrollDirectionVertical;
+        PSTCollectionView *view = [[PSTCollectionView alloc] initWithFrame:frame collectionViewLayout:layout];
+        view.dataSource = dataSource;
+        [view registerClass:PSTCollectionViewCell.class forCellWithReuseIdentifier:kHarnessCellIdentifier];
+        bundle.view = view;
+        bundle.dataSource = dataSource;
+    } else {
+        HarnessNativeDataSource *dataSource = [HarnessNativeDataSource new];
+        dataSource.sectionCounts = [config.counts mutableCopy];
+        UICollectionViewFlowLayout *layout = [UICollectionViewFlowLayout new];
+        layout.itemSize = config.itemSize;
+        layout.sectionInset = config.sectionInset;
+        layout.minimumLineSpacing = config.lineSpacing;
+        layout.minimumInteritemSpacing = config.interitemSpacing;
+        layout.headerReferenceSize = config.headerSize;
+        layout.footerReferenceSize = config.footerSize;
+        layout.scrollDirection = config.horizontal ? UICollectionViewScrollDirectionHorizontal : UICollectionViewScrollDirectionVertical;
+        UICollectionView *view = [[UICollectionView alloc] initWithFrame:frame collectionViewLayout:layout];
+        view.dataSource = dataSource;
+        [view registerClass:UICollectionViewCell.class forCellWithReuseIdentifier:@"native-reference-cell"];
+        bundle.view = view;
+        bundle.dataSource = dataSource;
+    }
+    return bundle;
+}
+
+// One full layout pass, as CoreAnimation would drive it.
+static uint64_t HarnessTimedLayoutPass(UIView *view) {
+    uint64_t start = HarnessNowNanoseconds();
+    [view setNeedsLayout];
+    [view layoutIfNeeded];
+    return HarnessNowNanoseconds() - start;
+}
+
+static double HarnessMin(NSArray<NSNumber *> *values) {
+    double result = values.count ? [values[0] doubleValue] : 0;
+    for (NSNumber *value in values) {
+        result = MIN(result, value.doubleValue);
+    }
+    return result;
+}
+
+static double HarnessMedian(NSArray<NSNumber *> *values) {
+    if (!values.count) return 0;
+    NSArray *sorted = [values sortedArrayUsingSelector:@selector(compare:)];
+    NSUInteger count = sorted.count;
+    if (count % 2 == 1) {
+        return [[sorted objectAtIndex:count / 2] doubleValue];
+    }
+    double lower = [[sorted objectAtIndex:count / 2 - 1] doubleValue];
+    double upper = [[sorted objectAtIndex:count / 2] doubleValue];
+    return (lower + upper) / 2.0;
+}
+
+static NSDictionary *HarnessMeasureEngine(HarnessEngine engine, HarnessTimingConfig *config, int reps,
+                                          uint64_t (^operation)(HarnessTimingBundle *)) {
+    NSMutableArray<NSNumber *> *samples = [NSMutableArray arrayWithCapacity:(NSUInteger)reps];
+    NSUInteger visibleCells = 0;
+    CGSize contentSize = CGSizeZero;
+    for (int repetition = 0; repetition < reps; repetition++) {
+        @autoreleasepool {
+            HarnessTimingBundle *bundle = HarnessMakeTimingBundle(engine, config);
+            uint64_t nanoseconds = operation(bundle);
+            [samples addObject:@(nanoseconds)];
+            visibleCells = ((UIView *)bundle.view).subviews.count;
+            UIScrollView *scrollView = (UIScrollView *)bundle.view;
+            if ([scrollView isKindOfClass:UIScrollView.class]) {
+                contentSize = scrollView.contentSize;
+            }
+            bundle.view = nil;
+            bundle.dataSource = nil;
+        }
+    }
+    return @{
+        @"ns" : samples,
+        @"min" : @(HarnessMin(samples)),
+        @"median" : @(HarnessMedian(samples)),
+        @"visibleSubviews" : @(visibleCells),
+        @"contentSize" : SizeJSON(contentSize),
+    };
+}
+
+static void HarnessAddComparison(NSMutableArray<NSDictionary *> *rows, NSString *name, int reps,
+                                 HarnessTimingConfig *config, uint64_t (^operation)(HarnessTimingBundle *)) {
+    NSDictionary *native = HarnessMeasureEngine(HarnessEngineNative, config, reps, operation);
+    NSDictionary *pst = HarnessMeasureEngine(HarnessEnginePST, config, reps, operation);
+    double nativeMedian = [native[@"median"] doubleValue];
+    double pstMedian = [pst[@"median"] doubleValue];
+    double nativeMin = [native[@"min"] doubleValue];
+    double pstMin = [pst[@"min"] doubleValue];
+    [rows addObject:@{
+        @"name" : name,
+        @"reps" : @(reps),
+        @"native" : native,
+        @"pst" : pst,
+        @"ratioMedian" : @(nativeMedian > 0 ? pstMedian / nativeMedian : 0),
+        @"ratioMin" : @(nativeMin > 0 ? pstMin / nativeMin : 0),
+    }];
+}
+
+// Performs one batch update (inserts then deletes) on a 200-item section and
+// measures the batch machinery plus the layout pass that settles it.
+static uint64_t HarnessRunBatchUpdateScenario(HarnessTimingBundle *bundle) {
+    id view = bundle.view;
+    NSMutableArray *sectionCounts = [bundle.dataSource valueForKey:@"sectionCounts"];
+    (void)HarnessTimedLayoutPass((UIView *)view); // warm
+
+    uint64_t total = 0;
+    uint64_t start = HarnessNowNanoseconds();
+    [UIView performWithoutAnimation:^{
+        [view performBatchUpdates:^{
+            NSInteger base = [sectionCounts[0] integerValue];
+            for (NSInteger row = base; row < base + 5; row++) {
+                [sectionCounts replaceObjectAtIndex:0 withObject:@(row + 1)];
+                [view insertItemsAtIndexPaths:@[[NSIndexPath indexPathForRow:row inSection:0]]];
+            }
+        } completion:nil];
+    }];
+    total += HarnessNowNanoseconds() - start;
+    total += HarnessTimedLayoutPass((UIView *)view);
+
+    start = HarnessNowNanoseconds();
+    [UIView performWithoutAnimation:^{
+        [view performBatchUpdates:^{
+            for (NSInteger row = 0; row < 5; row++) {
+                [sectionCounts replaceObjectAtIndex:0 withObject:@([sectionCounts[0] integerValue] - 1)];
+                [view deleteItemsAtIndexPaths:@[[NSIndexPath indexPathForRow:row inSection:0]]];
+            }
+        } completion:nil];
+    }];
+    total += HarnessNowNanoseconds() - start;
+    total += HarnessTimedLayoutPass((UIView *)view);
+    return total;
+}
+
+static NSArray<NSDictionary *> *HarnessRunNativeReferenceComparison(int reps) {
+    NSMutableArray<NSDictionary *> *rows = [NSMutableArray array];
+    CGSize bounds = CGSizeMake(320, 568);
+    UIEdgeInsets inset = UIEdgeInsetsMake(5, 5, 5, 5);
+    NSArray<NSNumber *> *singleSection = @[@200];
+
+    HarnessTimingConfig *standard = HarnessConfig(singleSection, CGSizeMake(50, 50), inset, 10, 10, CGSizeZero, CGSizeZero, bounds, NO);
+    HarnessTimingConfig *multiSection = HarnessConfig(@[@50, @50, @50, @50], CGSizeMake(60, 40), inset, 6, 6, CGSizeMake(0, 24), CGSizeMake(0, 16), bounds, NO);
+
+    // 1. Cold layout of a fresh collection view.
+    HarnessAddComparison(rows, @"cold-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        return HarnessTimedLayoutPass((UIView *)bundle.view);
+    });
+
+    // 2. Eight repeated layout passes with nothing changing.
+    HarnessAddComparison(rows, @"idle-x8-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        UIView *view = bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)view); // warm
+        uint64_t total = 0;
+        for (int i = 0; i < 8; i++) {
+            total += HarnessTimedLayoutPass((UIView *)view);
+        }
+        return total;
+    });
+
+    // 3. Ten scroll steps (one layout pass each).
+    HarnessAddComparison(rows, @"scroll-x10-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        UIScrollView *scrollView = (UIScrollView *)bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)scrollView); // warm
+        uint64_t total = 0;
+        for (int i = 0; i < 10; i++) {
+            scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, scrollView.contentOffset.y + 87.0);
+            total += HarnessTimedLayoutPass((UIView *)scrollView);
+        }
+        return total;
+    });
+
+    // 4. reloadData with unchanged data plus the settling layout pass.
+    HarnessAddComparison(rows, @"reload-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        id view = bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)view); // warm
+        uint64_t start = HarnessNowNanoseconds();
+        [view reloadData];
+        uint64_t total = HarnessNowNanoseconds() - start;
+        total += HarnessTimedLayoutPass((UIView *)view);
+        return total;
+    });
+
+    // 5. Insert then delete rows through performBatchUpdates.
+    HarnessAddComparison(rows, @"batch-insert-delete-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        return HarnessRunBatchUpdateScenario(bundle);
+    });
+
+    // 6. itemSize change + invalidation.
+    HarnessAddComparison(rows, @"item-size-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        id view = bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)view); // warm
+        uint64_t start = HarnessNowNanoseconds();
+        id layout = [view collectionViewLayout];
+        [layout setValue:[NSValue valueWithCGSize:CGSizeMake(80, 40)] forKey:@"itemSize"];
+        [layout invalidateLayout];
+        uint64_t total = HarnessNowNanoseconds() - start;
+        total += HarnessTimedLayoutPass((UIView *)view);
+        return total;
+    });
+
+    // 7. Bounds-size (frame) change.
+    HarnessAddComparison(rows, @"bounds-200", reps, standard, ^uint64_t(HarnessTimingBundle *bundle) {
+        UIView *view = (UIView *)bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)view); // warm
+        uint64_t start = HarnessNowNanoseconds();
+        view.frame = CGRectMake(0, 0, 375, 667);
+        uint64_t total = HarnessNowNanoseconds() - start;
+        total += HarnessTimedLayoutPass((UIView *)view);
+        return total;
+    });
+
+    // 8. Cold layout of four sections with headers and footers.
+    HarnessAddComparison(rows, @"multi-section-cold-200", reps, multiSection, ^uint64_t(HarnessTimingBundle *bundle) {
+        return HarnessTimedLayoutPass((UIView *)bundle.view);
+    });
+
+    // 9. Scrolling a multi-section collection with headers/footers.
+    HarnessAddComparison(rows, @"multi-section-scroll-x6-200", reps, multiSection, ^uint64_t(HarnessTimingBundle *bundle) {
+        UIScrollView *scrollView = (UIScrollView *)bundle.view;
+        (void)HarnessTimedLayoutPass((UIView *)scrollView); // warm
+        uint64_t total = 0;
+        for (int i = 0; i < 6; i++) {
+            scrollView.contentOffset = CGPointMake(0, scrollView.contentOffset.y + 150.0);
+            total += HarnessTimedLayoutPass((UIView *)scrollView);
+        }
+        return total;
+    });
+
+    return rows;
+}
+
 #pragma mark - Main
 
 int main(int argc, char *argv[]) {
@@ -484,10 +816,15 @@ int main(int argc, char *argv[]) {
         NSMutableDictionary *counters = [NSMutableDictionary dictionary];
         RunAllScenarios(recorder, counters);
 
+        // Measured after (and independently of) the behavioural scenarios so the
+        // golden geometry and per-scenario counters stay byte-identical.
+        NSArray<NSDictionary *> *nativeReference = HarnessRunNativeReferenceComparison(9);
+
         NSDictionary *payload = @{
             @"format" : @"pst-collection-perf-v1",
             @"scenarios" : recorder.scenarios,
             @"counters" : counters,
+            @"nativeReference" : @{@"reps" : @9, @"scenarios" : nativeReference},
         };
         NSError *error = nil;
         NSData *data = [NSJSONSerialization dataWithJSONObject:payload

@@ -54,12 +54,27 @@
     if (layoutAttributes != _layoutAttributes) {
         _layoutAttributes = layoutAttributes;
 
-        self.bounds = (CGRect){.origin = self.bounds.origin, .size = layoutAttributes.size};
-        self.center = layoutAttributes.center;
-        self.hidden = layoutAttributes.hidden;
-        self.layer.transform = layoutAttributes.transform3D;
-        self.layer.zPosition = layoutAttributes.zIndex;
-        self.layer.opacity = layoutAttributes.alpha;
+        // Skip property writes whose value is already correct.  This matters for
+        // freshly created cells (size/centre already match, everything else is a
+        // default) and for every cell that stays visible across a scroll pass.
+        if (!CGSizeEqualToSize(self.bounds.size, layoutAttributes.size)) {
+            self.bounds = (CGRect){.origin = self.bounds.origin, .size = layoutAttributes.size};
+        }
+        if (!CGPointEqualToPoint(self.center, layoutAttributes.center)) {
+            self.center = layoutAttributes.center;
+        }
+        if (self.hidden != layoutAttributes.hidden) {
+            self.hidden = layoutAttributes.hidden;
+        }
+        if (!CATransform3DEqualToTransform(self.layer.transform, layoutAttributes.transform3D)) {
+            self.layer.transform = layoutAttributes.transform3D;
+        }
+        if (self.layer.zPosition != layoutAttributes.zIndex) {
+            self.layer.zPosition = layoutAttributes.zIndex;
+        }
+        if (self.layer.opacity != layoutAttributes.alpha) {
+            self.layer.opacity = layoutAttributes.alpha;
+        }
     }
 }
 
@@ -86,7 +101,6 @@
     UIView *_contentView;
     UIView *_backgroundView;
     UIView *_selectedBackgroundView;
-    UILongPressGestureRecognizer *_menuGesture;
     id _selectionSegueTemplate;
     id _highlightingSupport;
     struct {
@@ -112,8 +126,6 @@
         _contentView = [[UIView alloc] initWithFrame:self.bounds];
         _contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self addSubview:_contentView];
-
-        _menuGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(menuGesture:)];
     }
     return self;
 }
@@ -131,8 +143,6 @@
         _backgroundView = [[UIView alloc] initWithFrame:self.bounds];
         _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self insertSubview:_backgroundView belowSubview:_contentView];
-
-        _menuGesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(menuGesture:)];
     }
     return self;
 }

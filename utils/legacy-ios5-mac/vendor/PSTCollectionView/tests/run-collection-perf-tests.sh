@@ -100,6 +100,20 @@ if any(totals.values()):
     print(f'\n{"TOTAL":{width}}  ' + '  '.join(f'{totals[k]:>16}' for k in keys))
 PY
 
+python3 - "$OUT/result.json" <<'PY2'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+reference = doc.get('nativeReference')
+if not reference:
+    raise SystemExit(0)
+print(f"\nnative UIKit reference vs PST (reps={reference['reps']}, layout path only, ns; ratio = pst/native):")
+print(f"{'scenario':28} {'native min':>12} {'native med':>12} {'pst min':>12} {'pst med':>12} {'ratio med':>10} {'ratio min':>10}")
+for row in reference['scenarios']:
+    native = row['native']
+    pst = row['pst']
+    print(f"{row['name']:28} {native['min']:12.0f} {native['median']:12.0f} {pst['min']:12.0f} {pst['median']:12.0f} {row['ratioMedian']:10.2f} {row['ratioMin']:10.2f}")
+PY2
+
 if [ "$status" -ne 0 ]; then
   echo "harness exited $status" >&2
   exit "$status"

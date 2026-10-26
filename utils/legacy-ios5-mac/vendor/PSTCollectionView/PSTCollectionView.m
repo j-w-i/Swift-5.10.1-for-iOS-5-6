@@ -129,6 +129,10 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // Layout attributes currently being applied while a data-source creates a
     // cell; dequeueReusableCell... reuses them instead of deriving a second copy.
     PSTCollectionViewLayoutAttributes *_pstLayoutAttributesBeingApplied;
+    // True while any visible reusable view has zIndex > 0.  addControlledSubview
+    // only has to scan/reorder subviews when this is true; the common cell-only
+    // grid must not copy and scan the whole subview array per inserted cell.
+    BOOL _pstHasFloatingViews;
     char filler[232]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 @property (nonatomic, strong) PSTCollectionViewData *collectionViewData;
@@ -189,6 +193,28 @@ static BOOL PSTLayoutAttributesAlreadyApplied(PSTCollectionViewLayoutAttributes 
     if (view.layer.zPosition != attributes.zIndex) return NO;
     if (!CATransform3DEqualToTransform(view.layer.transform, attributes.transform3D)) return NO;
     return YES;
+}
+
+// The compatibility layer mapped a registered UIKit cell class onto the PST
+// class; this only has to be resolved once per process, not per created cell.
+static Class PSTNativeCollectionViewCellClass(void) {
+    static Class cachedClass = Nil;
+    static BOOL resolved = NO;
+    if (!resolved) {
+        cachedClass = NSClassFromString(@"UICollectionViewCell");
+        resolved = YES;
+    }
+    return cachedClass;
+}
+
+static Class PSTNativeCollectionReusableViewClass(void) {
+    static Class cachedClass = Nil;
+    static BOOL resolved = NO;
+    if (!resolved) {
+        cachedClass = NSClassFromString(@"UICollectionReusableView");
+        resolved = YES;
+    }
+    return cachedClass;
 }
 
 static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
@@ -518,7 +544,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }else {
             Class cellClass = [_cellClassDict objectForKey:identifier];
             // compatibility layer
-            Class collectionViewCellClass = NSClassFromString(@"UICollectionViewCell");
+            Class collectionViewCellClass = PSTNativeCollectionViewCellClass();
             if (collectionViewCellClass && [cellClass isEqual:collectionViewCellClass]) {
                 cellClass = PSTCollectionViewCell.class;
             }
@@ -558,7 +584,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             }
         }else {
             Class viewClass = [_supplementaryViewClassDict objectForKey:kindAndIdentifier];
-            Class reusableViewClass = NSClassFromString(@"UICollectionReusableView");
+            Class reusableViewClass = PSTNativeCollectionReusableViewClass();
             if (reusableViewClass && [viewClass isEqual:reusableViewClass]) {
                 viewClass = PSTCollectionReusableView.class;
             }
@@ -613,7 +639,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }else {
             NSDictionary *decorationViewClassDict = collectionViewLayout.decorationViewClassDict;
             Class viewClass = [decorationViewClassDict objectForKey:elementKind];
-            Class reusableViewClass = NSClassFromString(@"UICollectionReusableView");
+            Class reusableViewClass = PSTNativeCollectionReusableViewClass();
             if (reusableViewClass && [viewClass isEqual:reusableViewClass]) {
                 viewClass = PSTCollectionReusableView.class;
             }
@@ -677,6 +703,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     [_indexPathsForSelectedItems removeAllObjects];
     [_indexPathsForHighlightedItems removeAllObjects];
     _pstVisibleViewsMatchAttributes = NO;
+    _pstHasFloatingViews = NO;
 
     [self setNeedsLayout];
 }
@@ -1370,6 +1397,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 applyNewLayoutBlock();
             } completion:^(BOOL finished) {
                 freeUnusedViews();
+                _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
                 _collectionViewFlags.updatingLayout = NO;
 
                 // layout subviews for updating content offset or size while updating layout
@@ -1384,6 +1412,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             self.contentSize = contentRect.size;
             applyNewLayoutBlock();
             freeUnusedViews();
+            _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
         }
     }
 }
@@ -1474,6 +1503,19 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
 - (PSTCollectionViewExt *)extVars {
     return objc_getAssociatedObject(self, &kPSTColletionViewExt);
+}
+
+// Recompute whether any currently visible reusable view floats (zIndex > 0).
+// Used after bulk operations that apply attributes to many views at once.
+- (BOOL)pstVisibleViewsHaveFloatingViews {
+    NSEnumerator *enumerator = [_allVisibleViewsDict objectEnumerator];
+    PSTCollectionReusableView *view = nil;
+    while ((view = [enumerator nextObject]) != nil) {
+        if (view.layoutAttributes.zIndex > 0) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (void)invalidateLayout {
@@ -1594,6 +1636,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }
     }
 
+    _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
     _pstLastVisibleLayoutAttributesGeneration = [_collectionViewData layoutAttributesGeneration];
     _pstLastVisibleBounds = self.bounds;
     _pstVisibleViewsMatchAttributes = YES;
@@ -1679,6 +1722,17 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // We take the max to ensure we insert at a non negative index because a negative index will silently fail to insert the view
     NSInteger insertionIndex = MAX((NSInteger)(self.subviews.count - (self.dragging ? 1 : 0)), 0);
     [self insertSubview:subview atIndex:insertionIndex];
+
+    // z-index ordering only matters when a visible view floats above the normal
+    // cell layer.  Keep that fact instead of copying and scanning the whole
+    // subview array for every newly visible cell.
+    if (subview.layoutAttributes.zIndex > 0) {
+        _pstHasFloatingViews = YES;
+    }
+    if (!_pstHasFloatingViews) {
+        return;
+    }
+
     // One subviews snapshot for both the scroll-indicator and the z-index scan.
     NSArray *subviews = self.subviews;
     UIView *scrollIndicatorView = nil;
@@ -2020,6 +2074,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 		[view applyLayoutAttributes:attrs];
 	}
 	[CATransaction commit];
+	_pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
 
     [_layout finalizeCollectionViewUpdates];
 }
