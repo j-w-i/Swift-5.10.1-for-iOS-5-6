@@ -196,6 +196,12 @@ bash "$HERE/check-backports-api.sh" "$TC" "$SDK" "$OUTPUT/backports-api" \
   > "$OUTPUT/logs/backports-api.log" 2>&1 \
   || { tail -40 "$OUTPUT/logs/backports-api.log" >&2; die "UIKit backport API check failed"; }
 
+# Foundation is part of the same SDK contract: prove client names, linkage and
+# unsupported-member gating against the actual assembled overlay, not only mocks.
+bash "$HERE/check-foundation-api.sh" "$TC" "$SDK" "$OUTPUT/foundation-api" \
+  > "$OUTPUT/logs/foundation-api.log" 2>&1 \
+  || { tail -40 "$OUTPUT/logs/foundation-api.log" >&2; die "Foundation backport API check failed"; }
+
 echo "== 4/5 default resource tree still builds iOS 7.0 (LC_MAIN)"
 mkdir -p "$OUTPUT/default-ios6-app"
 printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n' > "$OUTPUT/default-ios6-app/main.swift"

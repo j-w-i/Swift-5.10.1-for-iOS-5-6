@@ -127,11 +127,13 @@ case "$DEPLOYMENT" in 5.0|5.1|5.1.1|7.0) ;; *) fail 'Unsupported IOS_DEPLOYMENT_
 COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionView.a"
 BACKPORTS_ARCHIVE="$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a"
 COMPOSITIONAL_ARCHIVE="$STAGE/probes/compositional-layout-runtime/libswiftLegacyCompositionalLayout.a"
+FOUNDATION_ARCHIVE="$STAGE/probes/foundation-runtime/libswiftLegacyFoundationBackports.a"
 case "$DEPLOYMENT" in
   5.*)
     [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE"
     [ -s "$BACKPORTS_ARCHIVE" ] || fail "Missing source-built UIKit backport runtime: $BACKPORTS_ARCHIVE"
     [ -s "$COMPOSITIONAL_ARCHIVE" ] || fail "Missing source-built compositional layout runtime: $COMPOSITIONAL_ARCHIVE"
+    [ -s "$FOUNDATION_ARCHIVE" ] || fail "Missing source-built Foundation backport runtime: $FOUNDATION_ARCHIVE"
     ;;
 esac
 COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
@@ -178,7 +180,10 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
       EXTRA=(-framework CoreGraphics) ;;
     Foundation)
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib")
-      EXTRA=("${FOUNDATION_OBJECTS[@]}" -framework Foundation -framework CoreFoundation -framework CoreGraphics -lc++) ;;
+      EXTRA=("${FOUNDATION_OBJECTS[@]}" -framework Foundation -framework CoreFoundation -framework CoreGraphics -lc++)
+      case "$DEPLOYMENT" in
+        5.*) EXTRA+=(-Xlinker -force_load -Xlinker "$FOUNDATION_ARCHIVE") ;;
+      esac ;;
     *)
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib" "$OUT/libswiftFoundation.dylib")
       EXTRA=(-framework "$name" -lc++)

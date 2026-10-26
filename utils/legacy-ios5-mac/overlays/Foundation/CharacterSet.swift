@@ -15,6 +15,23 @@ import CoreFoundation
 import _SwiftCoreFoundationOverlayShims
 import _SwiftFoundationOverlayShims
 
+
+#if LEGACY_IOS5
+// iOS 7 URL character sets are native class properties lowered by the legacy
+// importer. NSCharacterSet/CFCharacterSet are toll-free bridged, so retaining the
+// CF object keeps the native identity that the percent encoder's URL-component
+// rules rely on. The sets are cached; a missing runtime archive fails closed with
+// an unrecognized-selector trap rather than silently returning an empty set.
+private enum _LegacyURLCharacterSets {
+    static let userAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlUserAllowed as CFCharacterSet)
+    static let passwordAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlPasswordAllowed as CFCharacterSet)
+    static let hostAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlHostAllowed as CFCharacterSet)
+    static let pathAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlPathAllowed as CFCharacterSet)
+    static let queryAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlQueryAllowed as CFCharacterSet)
+    static let fragmentAllowed = CharacterSet(_uncopiedImmutableReference: NSCharacterSet.urlFragmentAllowed as CFCharacterSet)
+}
+#endif
+
 private func _utfRangeToCFRange(_ inRange : Range<Unicode.Scalar>) -> CFRange {
     return CFRange(
         location: Int(inRange.lowerBound.value),
@@ -520,56 +537,92 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
 
     /// Returns the character set for characters allowed in a user URL subcomponent.
     public static var urlUserAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.userAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLUserAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLUserAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     /// Returns the character set for characters allowed in a password URL subcomponent.
     public static var urlPasswordAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.passwordAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLPasswordAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPasswordAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     /// Returns the character set for characters allowed in a host URL subcomponent.
     public static var urlHostAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.hostAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLHostAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLHostAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     /// Returns the character set for characters allowed in a path URL component.
     public static var urlPathAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.pathAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLPathAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPathAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     /// Returns the character set for characters allowed in a query URL component.
     public static var urlQueryAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.queryAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLQueryAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLQueryAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     /// Returns the character set for characters allowed in a fragment URL component.
     public static var urlFragmentAllowed : CharacterSet {
+#if LEGACY_IOS5
+        // iOS 5 has neither the CF nor the private NSURLComponents accessor;
+        // Extras installs the native selector with exact cached ASCII sets.
+        return _LegacyURLCharacterSets.fragmentAllowed
+#else
         if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
             return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLFragmentAllowedCharacterSet() as NSCharacterSet)
         } else {
             return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLFragmentAllowedCharacterSet() as! NSCharacterSet)
         }
+#endif
     }
     
     // MARK: Immutable functions

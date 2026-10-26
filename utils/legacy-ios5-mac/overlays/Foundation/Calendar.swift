@@ -13,6 +13,8 @@
 @_exported import Foundation // Clang module
 import _SwiftFoundationOverlayShims
 
+
+
 /**
  `Calendar` encapsulates information about systems of reckoning time in which the beginning, length, and divisions of a year are defined. It provides information about the calendar and support for calendrical computations such as determining the range of a given calendrical unit and adding units to a given absolute time.
 */
@@ -622,40 +624,70 @@ public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxi
     /// - parameter date1: A date to check for containment.
     /// - parameter date2: A date to check for containment.
     /// - returns: `true` if `date1` and `date2` are in the same day.
+#if LEGACY_IOS5
+    // The legacy importer/compiler lowers these iOS 8 native selectors for the
+    // armv7/iOS 5 Foundation module, so the standard bridged call is used
+    // directly (no runtime lookup, ARC ownership is modeled by Swift).
+    public func isDate(_ date1: Date, inSameDayAs date2: Date) -> Bool {
+        return _handle.map { $0.isDate(date1, inSameDayAs: date2) }
+    }
+#else
     @available(iOS 8.0, *)
     public func isDate(_ date1: Date, inSameDayAs date2: Date) -> Bool {
         return _handle.map { $0.isDate(date1, inSameDayAs: date2) }
     }
+#endif
     
     
     /// Returns `true` if the given date is within today, as defined by the calendar and calendar's locale.
     ///
     /// - parameter date: The specified date.
     /// - returns: `true` if the given date is within today.
+#if LEGACY_IOS5
+    // iOS 8 selector lowered by the legacy importer; standard bridged call.
+    public func isDateInToday(_ date: Date) -> Bool {
+        return _handle.map { $0.isDateInToday(date) }
+    }
+#else
     @available(iOS 8.0, *)
     public func isDateInToday(_ date: Date) -> Bool {
         return _handle.map { $0.isDateInToday(date) }
     }
+#endif
     
     
     /// Returns `true` if the given date is within yesterday, as defined by the calendar and calendar's locale.
     ///
     /// - parameter date: The specified date.
     /// - returns: `true` if the given date is within yesterday.
+#if LEGACY_IOS5
+    // iOS 8 selector lowered by the legacy importer; standard bridged call.
+    public func isDateInYesterday(_ date: Date) -> Bool {
+        return _handle.map { $0.isDateInYesterday(date) }
+    }
+#else
     @available(iOS 8.0, *)
     public func isDateInYesterday(_ date: Date) -> Bool {
         return _handle.map { $0.isDateInYesterday(date) }
     }
+#endif
     
     
     /// Returns `true` if the given date is within tomorrow, as defined by the calendar and calendar's locale.
     ///
     /// - parameter date: The specified date.
     /// - returns: `true` if the given date is within tomorrow.
+#if LEGACY_IOS5
+    // iOS 8 selector lowered by the legacy importer; standard bridged call.
+    public func isDateInTomorrow(_ date: Date) -> Bool {
+        return _handle.map { $0.isDateInTomorrow(date) }
+    }
+#else
     @available(iOS 8.0, *)
     public func isDateInTomorrow(_ date: Date) -> Bool {
         return _handle.map { $0.isDateInTomorrow(date) }
     }
+#endif
     
     
     /// Returns `true` if the given date is within a weekend period, as defined by the calendar and calendar's locale.

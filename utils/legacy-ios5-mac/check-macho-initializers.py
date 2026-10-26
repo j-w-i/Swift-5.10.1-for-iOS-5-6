@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Audit unstripped, PST-containing armv7 dylib constructor instruction state.
 
-Usage: check-macho-initializers.py DYLIB | --self-test
-Checks all S_MOD_INIT_FUNC_POINTERS entries and requires both PST constructors.
+Usage: check-macho-initializers.py [--generic] DYLIB | --self-test
+Checks all S_MOD_INIT_FUNC_POINTERS entries. By default also requires both PST
+constructors; --generic audits other dylibs without the UIKit-specific names.
 Read-only: no Mach-O rewriting, external tools, or installed-output changes.
 """
 import struct
 import sys
 from pathlib import Path
 
-def audit(path):
-    audit_bytes(Path(path).read_bytes())
+def audit(path, require_pst=True):
+    audit_bytes(Path(path).read_bytes(), require_pst=require_pst)
 
 
-def audit_bytes(data):
+def audit_bytes(data, require_pst=True):
     def unpack(fmt, offset):
         size = struct.calcsize(fmt)
         if offset < 0 or offset + size > len(data):
@@ -87,7 +88,7 @@ def audit_bytes(data):
             checked.extend(name for name, _ in targets)
             print('initializer 0x%08x: %s (%s)' %
                   (pointer, ', '.join(name for name, _ in targets), 'Thumb' if pointer & 1 else 'ARM'))
-    for required in ('PSTInstallIndexPathAdditions', 'PSTCreateUICollectionViewClasses'):
+    for required in (('PSTInstallIndexPathAdditions', 'PSTCreateUICollectionViewClasses') if require_pst else ()):
         if not any(name.endswith(required) for name in checked):
             raise ValueError('missing audited PST constructor: ' + required)
     print('PASS: linked initializer pointers agree with ARM/Thumb symbol state')
@@ -127,10 +128,21 @@ def self_test():
         ('unmapped pointer', fixture((0x3000, 0x1004), (0, 0)), 'lacks a defined code symbol'),
         ('truncated image', b'\xce\xfa\xed\xfe', 'truncated'),
     )
-    for name, data, expected in cases:
+    def without_pst_names(data):
+        for name in (b'PSTInstallIndexPathAdditions', b'PSTCreateUICollectionViewClasses'):
+            data = data.replace(name, b'X' * len(name))
+        return data
+    generic = without_pst_names(fixture((0x1000, 0x1004), (0, 0)))
+    unsafe_generic = without_pst_names(fixture((0x1000, 0x1004), (8, 8)))
+    cases = tuple((name, data, expected, True) for name, data, expected in cases) + (
+        ('generic constructors', generic, None, False),
+        ('PST requirement retained', generic, 'missing audited PST constructor', True),
+        ('generic instruction mismatch', unsafe_generic, 'instruction-state mismatch', False),
+    )
+    for name, data, expected, require_pst in cases:
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                audit_bytes(data)
+                audit_bytes(data, require_pst=require_pst)
         except ValueError as error:
             if expected is None or expected not in str(error):
                 raise ValueError('self-test %s: unexpected rejection: %s' % (name, error))
@@ -144,9 +156,11 @@ if __name__ == '__main__':
     try:
         if sys.argv[1:] == ['--self-test']:
             self_test()
+        elif len(sys.argv) == 3 and sys.argv[1] == '--generic':
+            audit(sys.argv[2], require_pst=False)
         elif len(sys.argv) == 2:
             audit(sys.argv[1])
         else:
-            raise ValueError('usage: check-macho-initializers.py DYLIB | --self-test')
+            raise ValueError('usage: check-macho-initializers.py [--generic] DYLIB | --self-test')
     except (ValueError, IndexError, OSError, struct.error) as error:
         raise SystemExit('FAIL: ' + str(error))

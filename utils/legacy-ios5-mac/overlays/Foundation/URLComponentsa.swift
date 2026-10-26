@@ -56,7 +56,9 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     }
     
     // Returns a URL string created from the NSURLComponents. If the NSURLComponents has an authority component (user, password, host or port) and a path component, then the path must either begin with "/" or be an empty string. If the NSURLComponents does not have an authority component (user, password, host or port) and has a path component, the path component must not start with "//". If those requirements are not met, nil is returned.
-    @available(macOS 10.10, iOS 8.0, *)
+    #if !LEGACY_IOS5
+@available(macOS 10.10, iOS 8.0, *)
+#endif
     public var string: String? {
         return _handle.map { $0.string }
     }
@@ -190,6 +192,7 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
         set { _applyMutation { $0.percentEncodedFragment = newValue } }
     }
     
+#if !LEGACY_IOS5
     @available(macOS 10.11, iOS 9.0, *)
     private func _toStringRange(_ r : NSRange) -> Range<String.Index>? {
         guard let s = self.string else { return nil }
@@ -267,6 +270,26 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     public var rangeOfFragment: Range<String.Index>? {
         return _toStringRange(_handle.map { $0.rangeOfFragment })
     }
+#else
+    // The imported class always names the backport facade, even on newer OSes.
+    // Do not expose selectors it does not implement behind availability guards.
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfScheme: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfUser: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfPassword: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfHost: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfPort: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfPath: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfQuery: Range<String.Index>? { fatalError("unavailable") }
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var rangeOfFragment: Range<String.Index>? { fatalError("unavailable") }
+#endif
 
     /// Returns an array of query items for this `URLComponents`, in the order in which they appear in the original query string.
     ///
@@ -277,7 +300,9 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     /// The setter combines an array containing any number of `URLQueryItem`s, each of which represents a single key-value pair, into a query string and sets the `URLComponents` query property. Passing an empty array sets the query component of the `URLComponents` to an empty string. Passing nil removes the query component of the `URLComponents`.
     ///
     /// - note: If a name-value pair in a query is empty (i.e. the query string starts with '&', ends with '&', or has "&&" within it), you get a `URLQueryItem` with a zero-length name and a nil value. If a query's name-value pair has nothing before the equals sign, you get a zero-length name. If a query's name-value pair has nothing after the equals sign, you get a zero-length value. If a query's name-value pair has no equals sign, the query name-value pair string is the name and you get a nil value.
-    @available(macOS 10.10, iOS 8.0, *)
+    #if !LEGACY_IOS5
+@available(macOS 10.10, iOS 8.0, *)
+#endif
     public var queryItems: [URLQueryItem]? {
         get { return _handle.map { $0.queryItems } }
         set { _applyMutation { $0.queryItems = newValue } }
@@ -286,11 +311,19 @@ public struct URLComponents : ReferenceConvertible, Hashable, Equatable, _Mutabl
     /// Returns an array of query items for this `URLComponents`, in the order in which they appear in the original query string. Any percent-encoding in a query item name or value is retained
     ///
     /// The setter combines an array containing any number of `URLQueryItem`s, each of which represents a single key-value pair, into a query string and sets the `URLComponents` query property. This property assumes the query item names and values are already correctly percent-encoded, and that the query item names do not contain the query item delimiter characters '&' and '='. Attempting to set an incorrectly percent-encoded query item or a query item name with the query item delimiter characters '&' and '=' will cause a `fatalError`.
+#if LEGACY_IOS5
+    @available(*, unavailable, message: "not implemented by the legacy iOS 5 Foundation runtime")
+    public var percentEncodedQueryItems: [URLQueryItem]? {
+        get { fatalError("unavailable") }
+        set { fatalError("unavailable") }
+    }
+#else
     @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
     public var percentEncodedQueryItems: [URLQueryItem]? {
         get { return _handle.map { $0.percentEncodedQueryItems } }
         set { _applyMutation { $0.percentEncodedQueryItems = newValue } }
     }
+#endif
 	
     public func hash(into hasher: inout Hasher) {
         hasher.combine(_handle._uncopiedReference())
@@ -334,9 +367,13 @@ extension URLComponents : CustomStringConvertible, CustomDebugStringConvertible,
         if let p = self.port { c.append((label: "port", value: p)) }
         
         c.append((label: "path", value: self.path))
+        #if LEGACY_IOS5
+        if let qi = self.queryItems { c.append((label: "queryItems", value: qi)) }
+        #else
         if #available(macOS 10.10, iOS 8.0, *) {
             if let qi = self.queryItems { c.append((label: "queryItems", value: qi)) }
         }
+        #endif
         if let f = self.fragment { c.append((label: "fragment", value: f)) }
         let m = Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
         return m
@@ -381,7 +418,9 @@ extension NSURLComponents : _HasCustomAnyHashableRepresentation {
 
 
 /// A single name-value pair, for use with `URLComponents`.
+#if !LEGACY_IOS5
 @available(macOS 10.10, iOS 8.0, *)
+#endif
 public struct URLQueryItem : ReferenceConvertible, Hashable, Equatable {
     public typealias ReferenceType = NSURLQueryItem
     
@@ -408,13 +447,17 @@ public struct URLQueryItem : ReferenceConvertible, Hashable, Equatable {
         hasher.combine(_queryItem)
     }
 
-    @available(macOS 10.10, iOS 8.0, *)
+    #if !LEGACY_IOS5
+@available(macOS 10.10, iOS 8.0, *)
+#endif
     public static func ==(lhs: URLQueryItem, rhs: URLQueryItem) -> Bool {
         return lhs._queryItem.isEqual(rhs as NSURLQueryItem)
     }
 }
 
+#if !LEGACY_IOS5
 @available(macOS 10.10, iOS 8.0, *)
+#endif
 extension URLQueryItem : CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     
     public var description: String {
@@ -438,7 +481,9 @@ extension URLQueryItem : CustomStringConvertible, CustomDebugStringConvertible, 
     }
 }
 
+#if !LEGACY_IOS5
 @available(macOS 10.10, iOS 8.0, *)
+#endif
 extension URLQueryItem : _ObjectiveCBridgeable {
     public static func _getObjectiveCType() -> Any.Type {
         return NSURLQueryItem.self
@@ -468,7 +513,9 @@ extension URLQueryItem : _ObjectiveCBridgeable {
     }
 }
 
+#if !LEGACY_IOS5
 @available(macOS 10.10, iOS 8.0, *)
+#endif
 extension NSURLQueryItem : _HasCustomAnyHashableRepresentation {
     // Must be @nonobjc to avoid infinite recursion during bridging.
     @nonobjc

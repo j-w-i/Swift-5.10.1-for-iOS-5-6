@@ -28,6 +28,8 @@
 @_exported import Foundation // Clang module
 #endif
 
+
+
 // Open Issues
 // ===========
 //
@@ -1026,6 +1028,14 @@ extension StringProtocol where Index == String.Index {
   /// Returns a new string created by replacing all characters in the string
   /// not in the specified set with percent encoded characters.
   // NSString -stringByAddingPercentEncodingWithAllowedCharacters: is iOS 7+.
+#if LEGACY_IOS5
+  // iOS 7 selector lowered by the legacy importer; standard bridged call.
+  public func addingPercentEncoding(
+    withAllowedCharacters allowedCharacters: CharacterSet
+  ) -> String? {
+    return _ns.addingPercentEncoding(withAllowedCharacters: allowedCharacters)
+  }
+#else
   @available(macOS 10.9, iOS 7.0, *)
   public func addingPercentEncoding(
     withAllowedCharacters allowedCharacters: CharacterSet
@@ -1043,6 +1053,7 @@ extension StringProtocol where Index == String.Index {
       allowedCharacters
     )
   }
+#endif
 
   // - (NSString *)stringByAppendingFormat:(NSString *)format, ...
 
@@ -1100,10 +1111,17 @@ extension StringProtocol where Index == String.Index {
   /// A new string made from the string by replacing all percent encoded
   /// sequences with the matching UTF-8 characters.
   // NSString -stringByRemovingPercentEncoding is iOS 7+.
+#if LEGACY_IOS5
+  // iOS 7 selector lowered by the legacy importer; standard bridged call.
+  public var removingPercentEncoding: String? {
+    return _ns.removingPercentEncoding
+  }
+#else
   @available(macOS 10.9, iOS 7.0, *)
   public var removingPercentEncoding: String? {
     return _ns.removingPercentEncoding
   }
+#endif
 
   // - (NSString *)
   //     stringByReplacingCharactersInRange:(NSRange)range

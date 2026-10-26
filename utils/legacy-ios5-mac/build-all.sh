@@ -143,6 +143,10 @@ overlays() { # prepare + build + link the rewritten overlays
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/backports-runtime"
   bash "$HERE/build-compositional-layout.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/compositional-layout-runtime"
+  # Foundation backports use native SDK signatures and live in the Foundation
+  # overlay runtime, never a separate package or client-side linker setting.
+  bash "$HERE/build-foundation-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/foundation-runtime"
   bash "$HERE/build-overlay-stage.sh" "$ROOT/bootstrap" "$ROOT/build/swift/bin/swift-frontend" "$SDK" --legacy-marking
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \

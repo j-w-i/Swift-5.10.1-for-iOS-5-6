@@ -190,6 +190,190 @@ static bool isLegacyUIKitDeclaration(const ASTContext &ctx, const clang::Decl *d
       module->getTopLevelModule()->Name == "UIKit";
 }
 
+/// Foundation backports share UIKit's opt-in and actual Clang target contract:
+/// neither iOS 6 nor a same-named declaration in another module is changed.
+static bool isLegacyFoundationDeclaration(const ASTContext &ctx,
+                                          const clang::Decl *decl) {
+  auto module = decl->getOwningModule();
+  return usesLegacyUIKitBackportDeclarations(ctx) && module &&
+      module->getTopLevelModule()->Name == "Foundation";
+}
+
+static unsigned legacyFoundationFamilyCeiling(StringRef name) {
+  return llvm::StringSwitch<unsigned>(name)
+      .Case("NSURLComponents", 8)
+      .Case("NSURLQueryItem", 8)
+      .Cases("NSISO8601DateFormatter", "NSISO8601DateFormatOptions", 10)
+      .Cases("NSURLSession", "NSURLSessionConfiguration", "NSURLSessionTask", 7)
+      .Cases("NSURLSessionDataTask", "NSURLSessionUploadTask", "NSURLSessionDownloadTask", 7)
+      .Cases("NSURLSessionDelegate", "NSURLSessionTaskDelegate", 7)
+      .Cases("NSURLSessionDataDelegate", "NSURLSessionDownloadDelegate", 7)
+      .Cases("NSDataBase64EncodingOptions", "NSDataBase64DecodingOptions", 7)
+      .Cases("NSDataBase64Encoding64CharacterLineLength", "NSDataBase64Encoding76CharacterLineLength", 7)
+      .Cases("NSDataBase64EncodingEndLineWithCarriageReturn", "NSDataBase64EncodingEndLineWithLineFeed", 7)
+      .Case("NSDataBase64DecodingIgnoreUnknownCharacters", 7)
+      .Case("NSURLSessionTaskState", 7)
+      .Cases("NSURLSessionTaskStateRunning", "NSURLSessionTaskStateSuspended", 7)
+      .Cases("NSURLSessionTaskStateCanceling", "NSURLSessionTaskStateCompleted", 7)
+      .Cases("NSISO8601DateFormatWithYear", "NSISO8601DateFormatWithMonth", 10)
+      .Cases("NSISO8601DateFormatWithDay", "NSISO8601DateFormatWithTime", 10)
+      .Cases("NSISO8601DateFormatWithTimeZone", "NSISO8601DateFormatWithSpaceBetweenDateAndTime", 10)
+      .Cases("NSISO8601DateFormatWithDashSeparatorInDate", "NSISO8601DateFormatWithColonSeparatorInTime", 10)
+      .Cases("NSISO8601DateFormatWithColonSeparatorInTimeZone", "NSISO8601DateFormatWithFullDate", 10)
+      .Cases("NSISO8601DateFormatWithFullTime", "NSISO8601DateFormatWithInternetDateTime", 10)
+      .Case("NSISO8601DateFormatWithFractionalSeconds", 11)
+      .Default(0);
+}
+
+static bool legacyFoundationProperty(StringRef member, StringRef property) {
+  return member == property ||
+      (member.startswith("set") && member.endswith(":") &&
+       member.drop_front(3).drop_back().equals_insensitive(property));
+}
+
+/// Match complete selectors, not just their first slot: overloads such as
+/// uploadTaskWithRequest:fromFile: must not inherit fromData:'s capability.
+static unsigned legacyFoundationDeclarationCeiling(const clang::Decl *decl) {
+  std::string selector;
+  StringRef member;
+  if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl)) {
+    selector = method->getSelector().getAsString();
+    member = selector;
+  } else if (auto property = dyn_cast<clang::ObjCPropertyDecl>(decl)) {
+    member = property->getName();
+  }
+  if (!member.empty()) {
+    auto dc = decl->getDeclContext();
+    if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
+      dc = category->getClassInterface();
+    auto named = dyn_cast<clang::NamedDecl>(dc);
+    if (!named || !named->getIdentifier()) return 0;
+    StringRef owner = named->getName();
+    auto property = [&](std::initializer_list<StringRef> names) {
+      return llvm::any_of(names, [&](StringRef name) {
+        return legacyFoundationProperty(member, name);
+      });
+    };
+    if (owner == "NSURLComponents") {
+      if (property({"scheme", "user", "password", "host", "port", "path",
+                    "query", "fragment", "percentEncodedUser",
+                    "percentEncodedPassword", "percentEncodedHost",
+                    "percentEncodedPath", "percentEncodedQuery",
+                    "percentEncodedFragment", "queryItems", "string", "URL"}))
+        return 8;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("init", "initWithString:", "componentsWithString:", 8)
+          .Cases("initWithURL:resolvingAgainstBaseURL:",
+                 "componentsWithURL:resolvingAgainstBaseURL:", 8)
+          .Cases("URLRelativeToURL:", "copyWithZone:", 8).Default(0);
+    }
+    if (owner == "NSURLQueryItem") {
+      if (member == "name" || member == "value") return 8;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("initWithName:value:", "queryItemWithName:value:", 8)
+          .Cases("copyWithZone:", "initWithCoder:", "encodeWithCoder:", 8)
+          .Case("supportsSecureCoding", 8).Default(0);
+    }
+    if (owner == "NSISO8601DateFormatter") {
+      if (property({"timeZone", "formatOptions"})) return 10;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("init", "stringFromDate:", "dateFromString:", 10)
+          .Case("stringFromDate:timeZone:formatOptions:", 10).Default(0);
+    }
+    if (owner == "NSTimer")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("timerWithTimeInterval:repeats:block:",
+                 "scheduledTimerWithTimeInterval:repeats:block:",
+                 "initWithFireDate:interval:repeats:block:", 10).Default(0);
+    if (owner == "NSCalendar")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("isDateInToday:", "isDateInYesterday:", "isDateInTomorrow:", 8)
+          .Case("isDate:inSameDayAsDate:", 8).Default(0);
+    if (owner == "NSString")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("stringByAddingPercentEncodingWithAllowedCharacters:",
+                 "stringByRemovingPercentEncoding", 7).Default(0);
+    if (owner == "NSCharacterSet")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("URLUserAllowedCharacterSet", "URLPasswordAllowedCharacterSet", 7)
+          .Cases("URLHostAllowedCharacterSet", "URLPathAllowedCharacterSet", 7)
+          .Cases("URLQueryAllowedCharacterSet", "URLFragmentAllowedCharacterSet", 7)
+          .Default(0);
+    if (owner == "NSURLSessionConfiguration") {
+      if (property({"requestCachePolicy", "timeoutIntervalForRequest",
+                    "HTTPAdditionalHeaders", "HTTPShouldSetCookies",
+                    "HTTPShouldUsePipelining"})) return 7;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("defaultSessionConfiguration", "copyWithZone:", 7).Default(0);
+    }
+    if (owner == "NSURLSession") {
+      if (property({"sessionDescription"}) || member == "configuration" ||
+          member == "delegate" || member == "delegateQueue") return 7;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("sharedSession", "sessionWithConfiguration:", 7)
+          .Case("sessionWithConfiguration:delegate:delegateQueue:", 7)
+          .Cases("finishTasksAndInvalidate", "invalidateAndCancel",
+                 "getTasksWithCompletionHandler:", 7)
+          .Cases("dataTaskWithRequest:", "dataTaskWithURL:", 7)
+          .Cases("dataTaskWithRequest:completionHandler:",
+                 "dataTaskWithURL:completionHandler:", 7)
+          .Cases("downloadTaskWithRequest:", "downloadTaskWithURL:", 7)
+          .Cases("downloadTaskWithRequest:completionHandler:",
+                 "downloadTaskWithURL:completionHandler:", 7)
+          .Cases("uploadTaskWithRequest:fromData:",
+                 "uploadTaskWithRequest:fromData:completionHandler:", 7).Default(0);
+    }
+    if (owner == "NSURLSessionTask") {
+      if (property({"taskDescription"})) return 7;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("state", "taskIdentifier", "originalRequest", "currentRequest", 7)
+          .Cases("response", "error", "countOfBytesReceived", 7)
+          .Cases("countOfBytesExpectedToReceive", "countOfBytesSent",
+                 "countOfBytesExpectedToSend", 7)
+          .Cases("resume", "cancel", 7).Default(0);
+    }
+    if (owner == "NSURLSessionDelegate")
+      return member == "URLSession:didBecomeInvalidWithError:" ? 7 : 0;
+    if (owner == "NSURLSessionTaskDelegate")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("URLSession:task:didCompleteWithError:",
+                 "URLSession:task:didSendBodyData:totalBytesSent:totalBytesExpectedToSend:", 7)
+          .Default(0);
+    if (owner == "NSURLSessionDataDelegate")
+      return member == "URLSession:dataTask:didReceiveData:" ? 7 : 0;
+    if (owner == "NSURLSessionDownloadDelegate")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("URLSession:downloadTask:didFinishDownloadingToURL:",
+                 "URLSession:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:", 7)
+          .Default(0);
+    return 0;
+  }
+  if (auto named = dyn_cast<clang::NamedDecl>(decl))
+    if (named->getIdentifier())
+      if (auto ceiling = legacyFoundationFamilyCeiling(named->getName()))
+        return ceiling;
+  // Constants are allowlisted individually above. Do not lower a future option
+  // merely because its enclosing enum/typedef belongs to a supported family.
+  return 0;
+}
+
+/// Class references always bind to a facade, including inside a newer-OS
+/// availability guard. A later SDK annotation cannot make a missing facade
+/// selector safe. Deny every unsupported member of remapped families; ordinary
+/// Foundation classes and nonlegacy targets retain native availability.
+static bool isUnsupportedLegacyFoundationMember(const clang::Decl *decl) {
+  if (!isa<clang::ObjCMethodDecl>(decl) && !isa<clang::ObjCPropertyDecl>(decl))
+    return false;
+  auto dc = decl->getDeclContext();
+  if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
+    dc = category->getClassInterface();
+  auto named = dyn_cast<clang::NamedDecl>(dc);
+  if (!named || !named->getIdentifier()) return false;
+  unsigned ceiling = legacyFoundationFamilyCeiling(named->getName());
+  if (!ceiling || legacyFoundationDeclarationCeiling(decl)) return false;
+  return true;
+}
+
 static bool isUnsupportedLegacyLayoutMember(const clang::Decl *decl) {
   StringRef member;
   if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))
@@ -8117,6 +8301,15 @@ void ClangImporter::Implementation::importAttributes(
   // equivalents.
   bool AnyUnavailable = MappedDecl->getAttrs().isUnavailable(C);
   bool legacyUIKitDecl = isLegacyUIKitDeclaration(C, ClangDecl);
+  bool legacyFoundationDecl = isLegacyFoundationDeclaration(C, ClangDecl);
+  if (legacyFoundationDecl &&
+      (isUnsupportedLegacyFoundationMember(ClangDecl) ||
+       (isAsync && legacyFoundationDeclarationCeiling(ClangDecl)) ||
+       ClangDecl->getNameAsString() == "NSISO8601DateFormatWithWeekOfYear")) {
+    MappedDecl->getAttrs().add(AvailableAttr::createPlatformAgnostic(
+        C, "not implemented by the legacy iOS 5 Foundation runtime"));
+    AnyUnavailable = true;
+  }
   if (legacyUIKitDecl && isUnsupportedLegacyLayoutMember(ClangDecl)) {
     MappedDecl->getAttrs().add(AvailableAttr::createPlatformAgnostic(
         C, "not implemented by the legacy iOS 5 compositional layout runtime"));
@@ -8290,6 +8483,18 @@ void ClangImporter::Implementation::importAttributes(
 
       if (legacyUIKit && introduced > llvm::VersionTuple(5, 0)) {
         unsigned ceiling = legacyUIKitDeclarationCeiling(ClangDecl);
+        if (ceiling && introduced <= llvm::VersionTuple(ceiling, 0))
+          introduced = llvm::VersionTuple(5, 0);
+      }
+
+      if (legacyFoundationDecl && Platform == "ios" &&
+          introduced > llvm::VersionTuple(5, 0)) {
+        unsigned ceiling = legacyFoundationDeclarationCeiling(ClangDecl);
+        // Fractional seconds is the one implemented iOS 11 option; do not
+        // accidentally expose all subsequent ISO formatter additions.
+        if (ClangDecl->getNameAsString() ==
+            "NSISO8601DateFormatWithFractionalSeconds")
+          ceiling = 11;
         if (ceiling && introduced <= llvm::VersionTuple(ceiling, 0))
           introduced = llvm::VersionTuple(5, 0);
       }

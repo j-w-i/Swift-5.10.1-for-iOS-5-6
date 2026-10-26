@@ -903,7 +903,7 @@ importer::addCommonInvocationArguments(
   // Discriminate these PCMs from native UIKit and earlier importer mappings.
   // Bump this value if the declaration/linkage transformation changes.
   if (usesLegacyCollectionDeclarations(ctx))
-    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=3");
+    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=5");
 
   for (auto extraArg : importerOpts.ExtraArgs) {
     invocationArgStrs.push_back(extraArg);

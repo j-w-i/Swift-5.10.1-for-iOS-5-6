@@ -265,6 +265,13 @@ try:
                  'IBPNSCollectionLayoutSection', 'IBPNSCollectionLayoutItem'):
         if '_OBJC_CLASS_$_' + name not in collection_symbols:
             fail('UIKit overlay lacks integrated backport class: ' + name)
+    foundation_symbols = run(NM, '-gU', linked / 'libswiftFoundation.dylib')
+    for name in ('URLComponents', 'URLQueryItem', 'ISO8601DateFormatter',
+                 'URLSession', 'URLSessionConfiguration', 'URLSessionTask',
+                 'URLSessionDataTask', 'URLSessionUploadTask', 'URLSessionDownloadTask'):
+        if '_OBJC_CLASS_$_FBP' + name not in foundation_symbols:
+            fail('Foundation overlay lacks integrated backport class: FBP' + name)
+    nonempty(stage / 'probes/foundation-runtime/legacy-foundation/LICENSE')
     # Redistribution notices for the vendored backports travel with the runtime,
     # and a self-describing inventory hash-binds them into qualification.
     notices = slot / 'legacy-backports'
@@ -274,7 +281,8 @@ try:
             ('collection-runtime/legacy-collection', 'collection', False),
             ('backports-runtime/legacy-backports', 'backports', False),
             ('backports-runtime/include', 'include', True),
-            ('compositional-layout-runtime/legacy-compositional-layout', 'compositional', False)):
+            ('compositional-layout-runtime/legacy-compositional-layout', 'compositional', False),
+            ('foundation-runtime/legacy-foundation', 'foundation', False)):
         source = stage / 'probes' / source_name
         if not source.is_dir():
             fail('Missing backport packaging directory: ' + str(source))
@@ -308,6 +316,8 @@ try:
     # iOS 5 dyld needs the pointer's instruction-state bit to match its code.
     run(sys.executable, os.environ['LEGACY_CHECK_MACHO_INITIALIZERS'],
         str(ios / 'libswiftUIKit.dylib'))
+    run(sys.executable, os.environ['LEGACY_CHECK_MACHO_INITIALIZERS'], '--generic',
+        str(ios / 'libswiftFoundation.dylib'))
     # Every dylib this pipeline links for iOS 5 must be free of data pointers
     # that enter Thumb code without the interworking bit (iOS 5 dyld trap).
     for name in OVERLAYS:

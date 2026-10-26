@@ -51,7 +51,8 @@ bool swift::usesLegacyUIKitBackportDeclarations(const ASTContext &ctx) {
 /// Modify only declaration linkage, never SDK signatures or availability.
 /// Raw lexing skips comments/strings and distinguishes definitions from forward
 /// declarations and categories. Apply edits backwards to retain token offsets.
-static std::string legacyCollectionHeader(StringRef text, bool backportFacades) {
+static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
+                                          bool foundationFacades = false) {
   struct Edit { size_t offset; std::string text; };
   SmallVector<Edit, 16> edits;
   clang::LangOptions opts;
@@ -77,6 +78,26 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades) 
       if ((!interface && !protocol) || tokens[i + 3].is(clang::tok::l_paren) ||
           tokens[i + 3].is(clang::tok::semi) || tokens[i + 3].is(clang::tok::comma))
         continue;
+      if (foundationFacades) {
+        // Preserve SDK declarations and Swift API notes; only bind class
+        // references to the source-built missing-native Foundation facades.
+        // Delegate protocols deliberately retain Apple's runtime identity.
+        StringRef runtime = interface ? llvm::StringSwitch<StringRef>(name)
+            .Case("NSURLComponents", "FBPURLComponents")
+            .Case("NSURLQueryItem", "FBPURLQueryItem")
+            .Case("NSISO8601DateFormatter", "FBPISO8601DateFormatter")
+            .Case("NSURLSession", "FBPURLSession")
+            .Case("NSURLSessionConfiguration", "FBPURLSessionConfiguration")
+            .Case("NSURLSessionTask", "FBPURLSessionTask")
+            .Case("NSURLSessionDataTask", "FBPURLSessionDataTask")
+            .Case("NSURLSessionUploadTask", "FBPURLSessionUploadTask")
+            .Case("NSURLSessionDownloadTask", "FBPURLSessionDownloadTask")
+            .Default("") : StringRef();
+        if (!runtime.empty())
+          edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
+              "__attribute__((objc_runtime_name(\"" + runtime.str() + "\"))) "});
+        continue;
+      }
       bool supported = interface
           ? (name == "UICollectionView" || name == "UICollectionViewCell" ||
              name == "UICollectionReusableView" || name == "UICollectionViewLayout" ||
@@ -701,6 +722,26 @@ static void getLegacyCollectionFileMapping(
   // Original iOS 5 SDKs have no collection declarations; only these use the
   // generated supplemental header, imported as part of UIKit's own umbrella.
 }
+// The Foundation supplement uses the same target guard as UIKit, but no
+// additional client module or bridging header. Native API notes remain intact.
+static void getLegacyFoundationFileMapping(
+    ClangInvocationFileMapping &result, ASTContext &ctx,
+    const llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> &vfs) {
+  if (!usesLegacyUIKitBackportDeclarations(ctx) ||
+      ctx.SearchPathOpts.getSDKPath().empty())
+    return;
+  Path headers(ctx.SearchPathOpts.getSDKPath());
+  llvm::sys::path::append(headers, "System", "Library", "Frameworks");
+  llvm::sys::path::append(headers, "Foundation.framework", "Headers");
+  for (StringRef file : {"NSURL.h", "NSURLComponents.h", "NSURLSession.h",
+                        "NSISO8601DateFormatter.h"}) {
+    Path path(headers);
+    llvm::sys::path::append(path, file);
+    if (auto source = vfs->getBufferForFile(path))
+      result.overridenFiles.emplace_back(path.str().str(),
+          legacyCollectionHeader(source.get()->getBuffer(), false, true));
+  }
+}
 } // namespace
 
 ClangInvocationFileMapping swift::getClangInvocationFileMapping(
@@ -715,6 +756,7 @@ ClangInvocationFileMapping swift::getClangInvocationFileMapping(
 
   result.redirectedFiles.append(GetWindowsFileMappings(ctx, vfs));
   getLegacyCollectionFileMapping(result, ctx, vfs);
+  getLegacyFoundationFileMapping(result, ctx, vfs);
 
   return result;
 }

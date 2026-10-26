@@ -4,10 +4,12 @@
 // `base64EncodedStringWithOptions:` family that the Darwin Foundation overlay's `Data`
 // forwards to. Sending those selectors raises `unrecognized selector`.
 //
-// The implementation below is Apple's swift-corelibs-foundation `NSData.swift`
-// (tag swift-5.1.5-RELEASE, `// MARK: - Base64 Methods`), copied UNMODIFIED: it is pure
-// Swift with no platform dependency. Only the surrounding namespace differs (an
-// `enum`, so the `private static` members become `fileprivate`-reachable helpers).
+// Derived from Apple's swift-corelibs-foundation `NSData.swift`
+// (tag swift-5.1.5-RELEASE, `// MARK: - Base64 Methods`), under that project's
+// Apache License 2.0 with Runtime Library Exception. The namespace is adapted
+// for the legacy overlay. Compatibility fixes omit a final line terminator and
+// reject malformed padding longer than two characters; native Swift Data is
+// the valid-input oracle, not NSData's conflicting-line-length flag behaviour.
 //
 // Compiled only when LEGACY_IOS5 is defined; stock builds use the real NSData methods.
 //
@@ -17,9 +19,8 @@
 
 import Foundation
 
-// NSData.Base64EncodingOptions/Base64DecodingOptions are iOS 7+ SDK types, so the
-// helper namespace is only usable where those option types are available.
-@available(macOS 10.9, iOS 7.0, *)
+// These SDK option types are scalar-only and explicitly supported by the legacy
+// importer; no iOS 7 NSData selectors are called by this implementation.
 @usableFromInline
 internal enum _LegacyBase64 {
     @usableFromInline typealias Base64EncodingOptions = NSData.Base64EncodingOptions
@@ -152,7 +153,7 @@ internal enum _LegacyBase64 {
             index += 1
         }
         
-        guard (validCharacterCount + paddingCount)%4 == 0 else {
+        guard paddingCount <= 2, (validCharacterCount + paddingCount)%4 == 0 else {
             //invalid character count
             return nil
         }
@@ -192,12 +193,14 @@ internal enum _LegacyBase64 {
         
         var currentLineCount = 0
         let appendByteToResult : (UInt8) -> Void = {
-            result.append($0)
-            currentLineCount += 1
+            // Insert a separator only when another output character follows.
+            // A complete final 64/76-character line has no trailing terminator.
             if let options = lineOptions, currentLineCount == options.lineLength {
                 result.append(contentsOf: options.separator)
                 currentLineCount = 0
             }
+            result.append($0)
+            currentLineCount += 1
         }
         
         var currentByte : UInt8 = 0

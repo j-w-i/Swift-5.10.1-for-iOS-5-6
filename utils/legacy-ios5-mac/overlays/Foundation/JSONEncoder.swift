@@ -811,11 +811,15 @@ extension __JSONEncoder {
             return NSNumber(value: 1000.0 * date.timeIntervalSince1970)
 
         case .iso8601:
+            #if LEGACY_IOS5
+            return NSString(string: _iso8601Formatter.string(from: date))
+            #else
             if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
                 return NSString(string: _iso8601Formatter.string(from: date))
             } else {
                 fatalError("ISO8601DateFormatter is unavailable on this platform.")
             }
+            #endif
 
         case .formatted(let formatter):
             return NSString(string: formatter.string(from: date))
@@ -2422,6 +2426,13 @@ extension __JSONDecoder {
             return Date(timeIntervalSince1970: double / 1000.0)
 
         case .iso8601:
+            #if LEGACY_IOS5
+            let string = try self.unbox(value, as: String.self)!
+            guard let date = _iso8601Formatter.date(from: string) else {
+                throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: self.codingPath, debugDescription: "Expected date string to be ISO8601-formatted."))
+            }
+            return date
+            #else
             if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
                 let string = try self.unbox(value, as: String.self)!
                 guard let date = _iso8601Formatter.date(from: string) else {
@@ -2432,6 +2443,7 @@ extension __JSONDecoder {
             } else {
                 fatalError("ISO8601DateFormatter is unavailable on this platform.")
             }
+            #endif
 
         case .formatted(let formatter):
             let string = try self.unbox(value, as: String.self)!
@@ -2573,7 +2585,9 @@ fileprivate struct _JSONKey : CodingKey {
 //===----------------------------------------------------------------------===//
 
 // NOTE: This value is implicitly lazy and _must_ be lazy. We're compiled against the latest SDK (w/ ISO8601DateFormatter), but linked against whichever Foundation the user has. ISO8601DateFormatter might not exist, so we better not hit this code path on an older OS.
+#if !LEGACY_IOS5
 @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+#endif
 fileprivate var _iso8601Formatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = .withInternetDateTime
