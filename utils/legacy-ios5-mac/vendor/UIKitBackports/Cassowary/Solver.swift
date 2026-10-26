@@ -85,6 +85,13 @@ public final class Solver {
     /// the previous implementation).
     private var basicSymbols: [Symbol] = []
 
+    /// Column index: for each symbol id, the basic symbols whose rows contain it,
+    /// sorted by basic symbol id. Substitution and the ratio test then visit only
+    /// the rows that can contain the pivot symbol instead of scanning the whole
+    /// basis. Lists stay sorted so per-row processing order (and therefore every
+    /// pivot tie-break) is the same as the previous full-basis scan.
+    private var rowsBySymbol: [Int: [Symbol]] = [:]
+
     /// External variables in the order their tableau symbols were allocated.
     /// This matches the previous `variableSymbols.sorted(by: symbol id)` order,
     /// without the per-update sort.
@@ -92,7 +99,7 @@ public final class Solver {
 
     /// Maps caller-created variables to their tableau symbols. Symbols are
     /// allocated lazily, the first time a variable appears in a constraint.
-    private var variableSymbols: [Variable: Symbol] = [:]
+    private var variableSymbols: [Int: Symbol] = [:]
 
     /// The objective function: the weighted sum of the error symbols of all
     /// non-required constraints.
@@ -109,7 +116,7 @@ public final class Solver {
     private var edits: [Variable: EditInfo] = [:]
 
     /// The last values written back by `updateVariables()`.
-    private var externalValues: [Variable: Double] = [:]
+    private var externalValues: [Int: Double] = [:]
 
     /// Variables whose external value changed since the last `fetchChanges()`.
     private var changedVariables: Set<Variable> = []
@@ -179,15 +186,30 @@ public final class Solver {
         guard let tag = constraintTags[identifier] else {
             throw SolverError.unknownConstraint
         }
-        let snapshot = makeSnapshot()
-        do {
-            try removeConstraintInternal(constraint, tag: tag)
-            if let index = constraints.firstIndex(where: { $0 === constraint }) {
-                constraints.remove(at: index)
+        if edits.isEmpty {
+            // No edit variables: a failure can be rolled back by replaying the
+            // committed constraint list, which is far cheaper than copying the
+            // whole tableau (rows are reference types).
+            do {
+                try removeConstraintInternal(constraint, tag: tag)
+                if let index = constraints.firstIndex(where: { $0 === constraint }) {
+                    constraints.remove(at: index)
+                }
+            } catch {
+                rebuildFromConstraintList()
+                throw error
             }
-        } catch {
-            restore(snapshot)
-            throw error
+        } else {
+            let snapshot = makeSnapshot()
+            do {
+                try removeConstraintInternal(constraint, tag: tag)
+                if let index = constraints.firstIndex(where: { $0 === constraint }) {
+                    constraints.remove(at: index)
+                }
+            } catch {
+                restore(snapshot)
+                throw error
+            }
         }
     }
 
@@ -218,7 +240,7 @@ public final class Solver {
         guard clipped < Strength.required else {
             throw SolverError.internalInconsistency("an edit variable cannot have required strength")
         }
-        let constant = externalValues[variable] ?? 0.0
+        let constant = externalValues[variable.id] ?? 0.0
         // The edit constraint is `variable - constant == 0`; note that
         // `Expression(variable, coefficient)` takes a coefficient, so the
         // constant has to be built explicitly.
@@ -330,7 +352,30 @@ public final class Solver {
     ///   re-optimized. The solver state is unchanged when this throws.
     public func updateConstraintConstants(_ updates: [(Constraint, Double)]) throws {
         guard !updates.isEmpty else { return }
+        // The build/stay path has no edit variables; roll back by replaying the
+        // committed constraint list instead of snapshotting the (reference-typed)
+        // tableau. Edit-variable users keep the snapshot path below.
+        if edits.isEmpty {
+            do {
+                try applyConstantUpdates(updates)
+            } catch {
+                rebuildFromConstraintList()
+                throw error
+            }
+            return
+        }
         let snapshot = makeSnapshot()
+        do {
+            try applyConstantUpdates(updates)
+        } catch {
+            restore(snapshot)
+            throw error
+        }
+    }
+
+    /// Applies a batch of constant changes and re-optimizes once. Callers own
+    /// rollback (snapshot or constraint-list replay).
+    private func applyConstantUpdates(_ updates: [(Constraint, Double)]) throws {
         var applied: [(Expression, Double)] = []
         applied.reserveCapacity(updates.count)
         do {
@@ -348,34 +393,33 @@ public final class Solver {
                 throw SolverError.internalInconsistency("the dual simplex failed to re-optimize changed constants")
             }
         } catch {
-            for (expression, oldConstant) in applied { expression.constant = oldConstant }
-            restore(snapshot)
+            for (expression, oldConstant) in applied {
+                expression.constant = oldConstant
+            }
             throw error
         }
     }
 
     /// Applies a constant delta to the tableau row(s) of a constraint, mirroring
     /// `suggestValue(_:_:)`'s use of the constraint's marker/other error symbols.
+    /// Rows are reference types, so these updates mutate them in place.
     private func adjustTableauConstant(tag: ConstraintTag, delta: Double) {
-        if var row = basicRow(tag.marker) {
+        if let row = basicRow(tag.marker) {
             let newConstant = row.add(-delta)
-            storeBasicRow(row, for: tag.marker)
             if newConstant < 0.0 {
                 infeasibleRows.append(tag.marker)
             }
-        } else if var row = basicRow(tag.other) {
+        } else if let row = basicRow(tag.other) {
             let newConstant = row.add(delta)
-            storeBasicRow(row, for: tag.other)
             if newConstant < 0.0 {
                 infeasibleRows.append(tag.other)
             }
         } else {
             for basic in basicSymbols {
-                guard var row = basicRow(basic) else { continue }
+                guard let row = basicRow(basic) else { continue }
                 let coefficient = row.coefficient(for: tag.marker)
                 if coefficient != 0.0 {
                     let newConstant = row.add(delta * coefficient)
-                    storeBasicRow(row, for: basic)
                     if newConstant < 0.0 && !basic.isExternal {
                         infeasibleRows.append(basic)
                     }
@@ -392,15 +436,15 @@ public final class Solver {
     /// Variables that were never written to the tableau report `0`.
     public func updateVariables() {
         for variable in orderedVariables {
-            guard let symbol = variableSymbols[variable] else { continue }
+            guard let symbol = variableSymbols[variable.id] else { continue }
             let newValue = basicRow(symbol)?.constant ?? 0.0
-            if let oldValue = externalValues[variable] {
+            if let oldValue = externalValues[variable.id] {
                 if oldValue != newValue {
-                    externalValues[variable] = newValue
+                    externalValues[variable.id] = newValue
                     changedVariables.insert(variable)
                 }
             } else {
-                externalValues[variable] = newValue
+                externalValues[variable.id] = newValue
                 // The implicit previous value of an unknown variable is zero.
                 if newValue != 0.0 {
                     changedVariables.insert(variable)
@@ -423,7 +467,7 @@ public final class Solver {
     /// The current value of a variable in the last solution (0 if it never
     /// appeared / was never updated).
     public func value(of variable: Variable) -> Double {
-        externalValues[variable] ?? 0.0
+        externalValues[variable.id] ?? 0.0
     }
 
     /// Variables whose external values changed since the previous call, with
@@ -435,7 +479,7 @@ public final class Solver {
         updateVariables()
         let sorted = changedVariables.sorted { $0.id < $1.id }
         changedVariables.removeAll()
-        return sorted.map { ($0, externalValues[$0] ?? 0.0) }
+        return sorted.map { ($0, externalValues[$0.id] ?? 0.0) }
     }
 
     /// Removes all constraints, edit variables and external values.
@@ -444,6 +488,7 @@ public final class Solver {
         constraintTags.removeAll()
         basicRows.removeAll()
         basicSymbols.removeAll()
+        rowsBySymbol.removeAll()
         orderedVariables.removeAll()
         variableSymbols.removeAll()
         objective = Row()
@@ -468,26 +513,31 @@ public final class Solver {
         var basicRows: [Row?]
         var basicSymbols: [Symbol]
         var orderedVariables: [Variable]
-        var variableSymbols: [Variable: Symbol]
+        var variableSymbols: [Int: Symbol]
         var objective: Row
         var artificialRow: Row?
         var infeasibleRows: [Symbol]
         var edits: [Variable: EditInfo]
-        var externalValues: [Variable: Double]
+        var externalValues: [Int: Double]
         var changedVariables: Set<Variable>
         var idTick: Int
     }
 
     private func makeSnapshot() -> Snapshot {
-        Snapshot(
+        var rowsCopy: [Row?] = []
+        rowsCopy.reserveCapacity(basicRows.count)
+        for row in basicRows {
+            rowsCopy.append(row.map { Row(copying: $0) })
+        }
+        return Snapshot(
             constraints: constraints,
             constraintTags: constraintTags,
-            basicRows: basicRows,
+            basicRows: rowsCopy,
             basicSymbols: basicSymbols,
             orderedVariables: orderedVariables,
             variableSymbols: variableSymbols,
-            objective: objective,
-            artificialRow: artificialRow,
+            objective: Row(copying: objective),
+            artificialRow: artificialRow.map { Row(copying: $0) },
             infeasibleRows: infeasibleRows,
             edits: edits,
             externalValues: externalValues,
@@ -510,6 +560,7 @@ public final class Solver {
         externalValues = snapshot.externalValues
         changedVariables = snapshot.changedVariables
         idTick = snapshot.idTick
+        rebuildSymbolIndex()
     }
 
     // MARK: - Adding constraints
@@ -556,7 +607,7 @@ public final class Solver {
         // The committed list was consistent before the failed add, so replaying
         // it succeeds deterministically (same symbol allocation order).
         for constraint in committed {
-            try? addConstraintInternal(constraint)
+            try? addConstraintInternalNoSnapshot(constraint)
         }
         _ = variableOrder
     }
@@ -698,7 +749,11 @@ public final class Solver {
     private func addWithArtificialVariable(_ row: Row) throws -> Bool {
         let artificialSymbol = makeSymbol(.slack)
         setBasicRow(row, for: artificialSymbol)
-        artificialRow = row
+        // Keep the artificial objective as an independent copy: rows are
+        // reference types now, and the previous value-typed implementation had
+        // two independent copies here. Aliasing them would make substitution
+        // operate on a row while it is being iterated.
+        artificialRow = Row(copying: row)
 
         try optimize(objectiveRow: .artificial)
 
@@ -739,22 +794,16 @@ public final class Solver {
     /// Newly infeasible rows are recorded so a later dual optimization can fix
     /// them.
     private func substitute(_ symbol: Symbol, _ row: Row) {
-        for basic in basicSymbols {
-            guard let stored = basicRow(basic) else { continue }
-            guard stored.coefficient(for: symbol) != 0.0 else {
-                // Most rows do not contain the symbol. Keep the feasibility
-                // bookkeeping identical to the reference implementation, but
-                // skip the copy-on-write round trip for untouched rows.
+        if let containing = rowsBySymbol[symbol.id] {
+            for basic in containing {
+                guard let stored = basicRow(basic) else { continue }
+                let previousSymbols = stored.symbols
+                stored.substitute(symbol, with: row)
+                unindexSymbols(previousSymbols, basic: basic)
+                indexRowSymbols(stored, basic: basic)
                 if !basic.isExternal && stored.constant < 0.0 {
                     infeasibleRows.append(basic)
                 }
-                continue
-            }
-            var updatedRow = stored
-            updatedRow.substitute(symbol, with: row)
-            storeBasicRow(updatedRow, for: basic)
-            if !basic.isExternal && updatedRow.constant < 0.0 {
-                infeasibleRows.append(basic)
             }
         }
         objective.substitute(symbol, with: row)
@@ -830,12 +879,7 @@ public final class Solver {
 
     /// The first non-dummy symbol with a negative coefficient in the objective.
     private func getEnteringSymbol(_ objective: Row) -> Symbol {
-        for symbol in objective.symbols {
-            if !symbol.isDummy && objective.coefficient(for: symbol) < 0.0 {
-                return symbol
-            }
-        }
-        return .invalid
+        return objective.firstNegativePivotableSymbol() ?? .invalid
     }
 
     /// The symbol whose ratio `objectiveCoefficient / rowCoefficient` is
@@ -872,14 +916,16 @@ public final class Solver {
     private func getLeavingRow(_ entering: Symbol) -> Symbol? {
         var ratio = Double.greatestFiniteMagnitude
         var found: Symbol?
-        for basic in basicSymbols {
-            guard !basic.isExternal, let row = basicRow(basic) else { continue }
-            let coefficient = row.coefficient(for: entering)
-            if coefficient < 0.0 {
-                let candidate = -row.constant / coefficient
-                if candidate < ratio {
-                    ratio = candidate
-                    found = basic
+        if let containing = rowsBySymbol[entering.id] {
+            for basic in containing {
+                guard !basic.isExternal, let row = basicRow(basic) else { continue }
+                let coefficient = row.coefficient(for: entering)
+                if coefficient < 0.0 {
+                    let candidate = -row.constant / coefficient
+                    if candidate < ratio {
+                        ratio = candidate
+                        found = basic
+                    }
                 }
             }
         }
@@ -994,11 +1040,11 @@ public final class Solver {
     /// Allocation order determines every symbol id, so the ids — and therefore
     /// all tie-breaks — depend only on the sequence of calls into the solver.
     private func symbol(for variable: Variable) -> Symbol {
-        if let symbol = variableSymbols[variable] {
+        if let symbol = variableSymbols[variable.id] {
             return symbol
         }
         let symbol = makeSymbol(.external)
-        variableSymbols[variable] = symbol
+        variableSymbols[variable.id] = symbol
         orderedVariables.append(variable)
         return symbol
     }
@@ -1027,13 +1073,19 @@ public final class Solver {
     }
 
     private func setBasicRow(_ row: Row, for symbol: Symbol) {
-        if basicRow(symbol) == nil { insertBasicSymbol(symbol) }
+        if let previous = basicRow(symbol) {
+            unindexRowSymbols(previous, basic: symbol)
+        } else {
+            insertBasicSymbol(symbol)
+        }
         storeBasicRow(row, for: symbol)
+        indexRowSymbols(row, basic: symbol)
     }
 
     @discardableResult
     private func removeBasicRow(for symbol: Symbol) -> Row? {
         guard let row = basicRow(symbol) else { return nil }
+        unindexRowSymbols(row, basic: symbol)
         basicRows[symbol.id] = nil
         removeBasicSymbol(symbol)
         return row
@@ -1067,6 +1119,57 @@ public final class Solver {
                 basicSymbols.remove(at: middle)
                 return
             }
+        }
+    }
+
+    // MARK: - Column index
+
+    private func indexRowSymbols(_ row: Row, basic: Symbol) {
+        for contained in row.symbols {
+            var list = rowsBySymbol[contained.id] ?? []
+            var low = 0
+            var high = list.count
+            while low < high {
+                let middle = (low + high) / 2
+                if list[middle].id < basic.id {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            if low < list.count && list[low] == basic { continue }
+            list.insert(basic, at: low)
+            rowsBySymbol[contained.id] = list
+        }
+    }
+
+    private func unindexRowSymbols(_ row: Row, basic: Symbol) {
+        unindexSymbols(row.symbols, basic: basic)
+    }
+
+    private func unindexSymbols(_ symbols: [Symbol], basic: Symbol) {
+        for contained in symbols {
+            guard var list = rowsBySymbol[contained.id] else { continue }
+            var found = false
+            for index in list.indices where list[index] == basic {
+                list.remove(at: index)
+                found = true
+                break
+            }
+            if !found { continue }
+            if list.isEmpty {
+                rowsBySymbol.removeValue(forKey: contained.id)
+            } else {
+                rowsBySymbol[contained.id] = list
+            }
+        }
+    }
+
+    private func rebuildSymbolIndex() {
+        rowsBySymbol.removeAll(keepingCapacity: true)
+        for symbol in basicSymbols {
+            guard let row = basicRow(symbol) else { continue }
+            indexRowSymbols(row, basic: symbol)
         }
     }
 }

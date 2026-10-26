@@ -821,14 +821,22 @@ internal final class LegacyLayoutSolver {
     private func installStayConstraints(_ values: StayValues,
                                         vars: ItemVariables,
                                         strength: Strength) -> [Constraint] {
-        let expressions = [Expression(vars.minX), Expression(vars.minY),
-                           Expression(vars.width), Expression(vars.height)]
         var installed: [Constraint] = []
         installed.reserveCapacity(4)
         for index in 0..<4 {
             guard let value = values[index] else { continue }
-            if let constraint = install(expressions[index].minus(Expression(constant: value)),
-                                        .equal, strength: strength, name: nil) {
+            // `variable - value == 0` built directly: one Expression instead of
+            // three (the previous minus(Expression(constant:)) form allocated a
+            // constant expression plus a result per stay).
+            let expression: Expression
+            switch index {
+            case 0: expression = Expression(vars.minX)
+            case 1: expression = Expression(vars.minY)
+            case 2: expression = Expression(vars.width)
+            default: expression = Expression(vars.height)
+            }
+            expression.constant = -value
+            if let constraint = install(expression, .equal, strength: strength, name: nil) {
                 installed.append(constraint)
             }
         }
@@ -961,6 +969,7 @@ internal final class LegacyLayoutSolver {
         let constraints = collectConstraints()
         var required: [CompiledConstraint] = []
         var optional: [CompiledConstraint] = []
+        required.reserveCapacity(constraints.count)
         for constraint in constraints {
             guard let compiled = compile(constraint) else {
                 continue
@@ -1095,23 +1104,31 @@ internal final class LegacyLayoutSolver {
     /// Constraints owned by any item of the subtree, plus activated constraints
     /// that reference a subtree item, de-duplicated by object identity.
     private func collectConstraints() -> [RRLayoutConstraint] {
-        var seen: Set<ObjectIdentifier> = []
+        let activated = LegacyActiveConstraintRegistry.shared.activeConstraints()
         var result: [RRLayoutConstraint] = []
+        result.reserveCapacity(items.count * 4)
+        if activated.isEmpty {
+            // Common build path: constraints are owned by exactly one view, so no
+            // de-duplication set is needed (it was an allocation + n hashes per
+            // build).
+            for item in items {
+                result.append(contentsOf: item.layoutConstraints)
+            }
+            return result
+        }
+        var seen: Set<ObjectIdentifier> = []
+        seen.reserveCapacity(result.capacity)
         for item in items {
             for constraint in item.layoutConstraints {
-                let identifier = ObjectIdentifier(constraint)
-                if seen.insert(identifier).inserted {
+                if seen.insert(ObjectIdentifier(constraint)).inserted {
                     result.append(constraint)
                 }
             }
         }
-        for constraint in LegacyActiveConstraintRegistry.shared.activeConstraints() {
-            let identifier = ObjectIdentifier(constraint)
-            if seen.contains(identifier) {
-                continue
-            }
+        for constraint in activated {
+            if seen.contains(ObjectIdentifier(constraint)) { continue }
             if constraintReferencesSubtreeItem(constraint) {
-                seen.insert(identifier)
+                seen.insert(ObjectIdentifier(constraint))
                 result.append(constraint)
             }
         }
