@@ -1,0 +1,13 @@
+#!/bin/bash
+# CMake on an Apple Silicon host (even under Rosetta) injects "-arch <host>" into every compile line. The Swift stdlib
+# build then adds "-target armv7-apple-ios.. -arch armv7", and clang rejects the combination (the host arch wins and
+# the iOS SDK headers say "Unsupported architecture"). Drop the injected host arch when the compile targets another arch.
+real="${CLANG_WRAP_REAL:?}"; args=(); cross=0
+for a in "$@"; do case "$a" in armv7-apple-ios*|armv7s-apple-ios*|arm64-apple-ios*) cross=1;; esac; done
+skip=0
+for a in "$@"; do
+  if [ $skip = 1 ]; then skip=0; [ "$a" = x86_64 ] && [ $cross = 1 ] && continue; args+=("-arch" "$a"); continue; fi
+  if [ "$a" = -arch ]; then skip=1; continue; fi
+  args+=("$a")
+done
+exec arch -x86_64 "$real" "${args[@]}"
