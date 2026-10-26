@@ -52,6 +52,12 @@ internal final class LegacyViewState: NSObject {
 
     /// `needsLayout`; false when the view is clean.
     internal var needsLayout = false
+    /// Whether this view already asked its container for a layout pass since the
+    /// last constraints/layout pass. Constraint bursts (a stack view activating
+    /// dozens of constraints) used to send one native `setNeedsLayout` per
+    /// constraint to the container; one per burst is enough and is what native
+    /// Auto Layout effectively does.
+    internal var containerInvalidated = false
 
     /// Last global invalidation counter consumed by this view's constraint walk.
     internal var handledInvalidation = -1

@@ -459,34 +459,45 @@ internal final class LegacyActiveConstraintRegistry {
 
     private final class Entry {
         weak var constraint: RRLayoutConstraint?
-        init(constraint: RRLayoutConstraint) {
+        /// Activation order, so `activeConstraints()` keeps the deterministic
+        /// order the engine's constraint collection relied on.
+        let sequence: UInt64
+        init(constraint: RRLayoutConstraint, sequence: UInt64) {
             self.constraint = constraint
+            self.sequence = sequence
         }
     }
 
     private let lock = NSLock()
-    private var entries: [Entry] = []
+    /// ObjectIdentifier -> entry. O(1) register/unregister/contains; the previous
+    /// array of weak entries made activation and teardown O(n^2) (linear scan +
+    /// weak loads per constraint), which dominated the device churn profile.
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    private var nextSequence: UInt64 = 0
+    private var registrationCount = 0
 
     private init() {}
 
     internal func register(_ constraint: RRLayoutConstraint) {
         lock.lock()
         defer { lock.unlock() }
-        pruneLocked()
-        for entry in entries {
-            if entry.constraint === constraint {
-                return
-            }
+        let identifier = ObjectIdentifier(constraint)
+        if let existing = entries[identifier], existing.constraint === constraint {
+            return
         }
-        entries.append(Entry(constraint: constraint))
+        // Reclaim dead slots occasionally instead of on every registration.
+        registrationCount += 1
+        if registrationCount % 64 == 0 {
+            pruneLocked()
+        }
+        entries[identifier] = Entry(constraint: constraint, sequence: nextSequence)
+        nextSequence += 1
     }
 
     internal func unregister(_ constraint: RRLayoutConstraint) {
         lock.lock()
         defer { lock.unlock() }
-        entries.removeAll { entry in
-            entry.constraint === constraint || entry.constraint == nil
-        }
+        entries.removeValue(forKey: ObjectIdentifier(constraint))
     }
 
     /// A snapshot of all live activated constraints, in activation order.
@@ -496,15 +507,23 @@ internal final class LegacyActiveConstraintRegistry {
         pruneLocked()
         var result: [RRLayoutConstraint] = []
         result.reserveCapacity(entries.count)
-        for entry in entries {
-            if let constraint = entry.constraint {
-                result.append(constraint)
-            }
+        for entry in entries.values {
+            if let constraint = entry.constraint { result.append(constraint) }
+        }
+        // Activation order is the engine's documented deterministic order.
+        result.sort { lhs, rhs in
+            let lhsIdentifier = ObjectIdentifier(lhs)
+            let rhsIdentifier = ObjectIdentifier(rhs)
+            let lhsSequence = entries[lhsIdentifier]?.sequence ?? 0
+            let rhsSequence = entries[rhsIdentifier]?.sequence ?? 0
+            return lhsSequence < rhsSequence
         }
         return result
     }
 
     private func pruneLocked() {
-        entries.removeAll { $0.constraint == nil }
+        if entries.contains(where: { $0.value.constraint == nil }) {
+            entries = entries.filter { $0.value.constraint != nil }
+        }
     }
 }

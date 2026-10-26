@@ -283,7 +283,9 @@ extension UIView {
         engine.layout(self)
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = wasApplyingLayoutFrames
 
-        legacyMutableState(self).needsLayout = false
+        let state = legacyMutableState(self)
+        state.needsLayout = false
+        state.containerInvalidated = false
     }
 
     /// Marks this view as needing a layout pass (backport of `setNeedsLayout`).
@@ -312,6 +314,7 @@ extension UIView {
         }
 
         legacyMutableState(self).constraintsAreClean = true
+        legacyMutableState(self).containerInvalidated = false
     }
 
     // MARK: Internal bridge hooks (used by LegacyAutoLayoutSwizzling)
@@ -392,6 +395,9 @@ extension UIView {
     /// subview must schedule a layout of the container, not of the subview in isolation.
     internal func legacyInformContainerThatSubviewsNeedUpdateConstraints() {
         guard let superview = superview else { return }
+        let state = legacyMutableState(self)
+        guard !state.containerInvalidated else { return }
+        state.containerInvalidated = true
         LegacyAutoLayoutRuntime.containerLayoutInvalidationCount += 1
         superview.setNeedsLayout()
     }

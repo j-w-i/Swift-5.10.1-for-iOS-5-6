@@ -249,10 +249,10 @@ internal final class LegacyLayoutSolver {
     /// presolve batch, optional rows after it).
     private var userRequiredConstraints: [CompiledConstraint] = []
     private var userOptionalConstraints: [CompiledConstraint] = []
-    /// Expression -> source constraint for the current build, so required rows that
-    /// the presolve batch had to relax can be reported as broken like the ordinary
-    /// install path does.
-    private var userConstraintSourceByExpression: [ObjectIdentifier: RRLayoutConstraint] = [:]
+    /// Batch index -> caller constraint for the current build, so required rows
+    /// that the presolve batch had to relax can be reported as broken like the
+    /// ordinary install path does.
+    private var presolveBatchSourceByIndex: [Int: RRLayoutConstraint] = [:]
     private var installedStays: [ObjectIdentifier: InstalledStays] = [:]
     /// Cumulative bookkeeping counters (diagnostics).
     internal private(set) var installedConstraintCount = 0
@@ -400,23 +400,24 @@ internal final class LegacyLayoutSolver {
             // from one consistent rebuild.
             rebuildOnly = true
         }
-        if !solver.batchRejectedRequired.isEmpty {
-            // A required row would have to be relaxed. The ordinary path records
-            // which constraints are broken; presolve cannot reproduce that from
-            // rewritten rows, so decline the whole system and rebuild it exactly
-            // as the non-presolve engine does.
-            resetBuildState()
-            installImplicitConstraints()
-            installAutoresizingConstraints()
-            installStays()
-            installUserRequiredConstraints()
-            installIntrinsicContentConstraints()
-            installUserOptionalConstraints()
-        } else {
-            installStays()
-            installIntrinsicContentConstraints()
-            installUserOptionalConstraints()
+        if !solver.batchRejectedIndices.isEmpty {
+            // A required row had to be relaxed while installing the batch. Report
+            // the caller's constraint as broken (mapped by batch index, because the
+            // installed row may be a rewritten/simplified copy) instead of
+            // discarding the whole (cheap) batch and rebuilding through the
+            // ordinary per-constraint path. That rebuild took a full tableau
+            // snapshot per required row, which made the conflicting-autoresizing
+            // churn path O(n^2) on device.
+            for index in solver.batchRejectedIndices {
+                guard let source = presolveBatchSourceByIndex[index] else { continue }
+                if !brokenConstraints.contains(where: { $0 === source }) {
+                    brokenConstraints.append(source)
+                }
+            }
         }
+        installStays()
+        installIntrinsicContentConstraints()
+        installUserOptionalConstraints()
         return finishSolve(writingFrames: writingFrames)
     }
 
@@ -1082,8 +1083,8 @@ internal final class LegacyLayoutSolver {
     private func installUserConstraint(_ compiled: CompiledConstraint) {
         let identifier = ObjectIdentifier(compiled.source)
         if let constraint = install(compiled.expression, compiled.operator,
-                                    strength: compiled.strength, name: compiled.name) {
-            userConstraintSourceByExpression[ObjectIdentifier(constraint.expression)] = compiled.source
+                                    strength: compiled.strength, name: compiled.name,
+                                    source: compiled.source) {
             installedUserConstraints[identifier] = InstalledUserConstraint(
                 source: compiled.source,
                 signature: constraintSignature(compiled.source),
@@ -1569,7 +1570,7 @@ internal final class LegacyLayoutSolver {
         installedIntrinsicConstraints.removeAll(keepingCapacity: true)
         installedAutoresizingConstraints.removeAll(keepingCapacity: true)
         installedStays.removeAll(keepingCapacity: true)
-        userConstraintSourceByExpression.removeAll(keepingCapacity: true)
+        presolveBatchSourceByIndex.removeAll(keepingCapacity: true)
         installedConstraintCount = 0
         removedConstraintCount = 0
         passInstalledConstraints = 0
@@ -1601,11 +1602,15 @@ internal final class LegacyLayoutSolver {
     private func install(_ expression: Expression,
                          _ op: RelationalOperator,
                          strength: Strength,
-                         name: String?) -> Constraint? {
+                         name: String?,
+                         source: RRLayoutConstraint? = nil) -> Constraint? {
         lastInstallWasDropped = false
         if isFullyPresolved(expression) {
             lastInstallWasDropped = true
             return nil
+        }
+        if let source = source, solver.isCollectingPresolveBatch {
+            presolveBatchSourceByIndex[solver.presolveBatchCount] = source
         }
         let constraint = Constraint(expression, op, strength: strength, name: name)
         do {

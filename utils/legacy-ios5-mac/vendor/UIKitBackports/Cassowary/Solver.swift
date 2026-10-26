@@ -150,10 +150,16 @@ public final class Solver {
     public private(set) var presolveFallbackCount = 0
     public private(set) var presolvedVariableCount = 0
 
-    /// Required rows from the last batch that the solver could not satisfy and
-    /// relaxed at the "broken" strength; the engine maps these back to the
-    /// caller's constraints for `brokenConstraints` reporting.
-    public private(set) var batchRejectedRequired: [Constraint] = []
+    /// Batch indices of required rows the solver could not satisfy and relaxed at
+    /// the "broken" strength; the engine maps them back to the caller's
+    /// constraints for `brokenConstraints` reporting.
+    public private(set) var batchRejectedIndices: [Int] = []
+
+    /// Number of constraints buffered so far in the current presolve batch.
+    public var presolveBatchCount: Int { presolveBatch?.count ?? 0 }
+
+    /// Whether a presolve batch is currently being collected.
+    public var isCollectingPresolveBatch: Bool { presolveBatch != nil }
 
     /// Process-wide presolve counters for the differential tests.
     public private(set) static var totalPresolveApplied = 0
@@ -561,7 +567,7 @@ public final class Solver {
     /// the batch, then calls `endPresolveBatch()`.
     public func beginPresolveBatch() {
         presolveBatch = []
-        batchRejectedRequired.removeAll()
+        batchRejectedIndices.removeAll()
     }
 
     /// Runs the guarded presolve over the buffered constraints and installs the
@@ -585,6 +591,7 @@ public final class Solver {
         var strengths: [Strength] = batch.map { $0.strength }
         var names: [String?] = batch.map { $0.name }
         var values: [Int: Double] = [:]
+        var rejectedDuringElimination: [Int] = []
         var guardOK = true
         var progress = true
         var passes = 0
@@ -610,6 +617,16 @@ public final class Solver {
                 }
                 if simplifiedExpression.terms.isEmpty {
                     if required && !holds(simplifiedExpression.constant, op) {
+                        if op == .equal {
+                            // The first row defined the variable, this later
+                            // required equality conflicts with it: the ordinary
+                            // install path marks it broken and relaxes it. Record
+                            // it and keep eliminating the rest of the system.
+                            rejectedDuringElimination.append(index)
+                            pending[index] = nil
+                            progress = true
+                            continue
+                        }
                         guardOK = false
                         break
                     }
@@ -630,9 +647,10 @@ public final class Solver {
             installBatch(batch)
             return
         }
+        batchRejectedIndices.append(contentsOf: rejectedDuringElimination)
 
         // Collect the remaining rows, eliminating exact duplicate required rows.
-        var remaining: [Constraint] = []
+        var remaining: [(index: Int, constraint: Constraint)] = []
         var seen: Set<PresolvedRowKey> = []
         for index in pending.indices {
             guard let uncertain = pending[index] else { continue }
@@ -653,7 +671,7 @@ public final class Solver {
                !seen.insert(PresolvedRowKey(constraint)).inserted {
                 continue
             }
-            remaining.append(constraint)
+            remaining.append((index: index, constraint: constraint))
         }
 
         presolvedValues = values
@@ -661,7 +679,8 @@ public final class Solver {
         presolveAppliedCount += 1
         Solver.totalPresolveApplied += 1
         presolveActive = true
-        for constraint in remaining {
+        for entry in remaining {
+            let constraint = entry.constraint
             do {
                 try addConstraintInternalNoSnapshot(constraint)
                 constraints.append(constraint)
@@ -669,7 +688,7 @@ public final class Solver {
                 if constraint.strength == .required {
                     // Match the ordinary path: a required row the solver cannot
                     // satisfy is retried at the "broken" strength.
-                    batchRejectedRequired.append(constraint)
+                    batchRejectedIndices.append(entry.index)
                     let relaxed = Constraint(constraint.expression.plus(Expression(constant: 0)),
                                              constraint.op,
                                              strength: Strength.clip(Strength.required.value - 1),
@@ -684,13 +703,13 @@ public final class Solver {
 
     /// Installs a buffered batch through the ordinary per-constraint path.
     private func installBatch(_ batch: [Constraint]) {
-        for constraint in batch {
+        for (index, constraint) in batch.enumerated() {
             do {
                 try addConstraintInternalNoSnapshot(constraint)
                 constraints.append(constraint)
             } catch {
                 if constraint.strength == .required {
-                    batchRejectedRequired.append(constraint)
+                    batchRejectedIndices.append(index)
                     let relaxed = Constraint(constraint.expression.plus(Expression(constant: 0)),
                                              constraint.op,
                                              strength: Strength.clip(Strength.required.value - 1),
