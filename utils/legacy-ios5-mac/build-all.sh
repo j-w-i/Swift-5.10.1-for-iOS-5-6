@@ -162,5 +162,5 @@ if [ -n "${LEGACY_ENVIRONMENT_ROOT:-}" ]; then
   echo "      iOS 5 qualified in $LEGACY_ENVIRONMENT_ROOT (profile published by the qualify-ios5 stage)"
 else
   echo "      iOS 5 qualification evidence: $ROOT/out/ios5-qualification; publish with:"
-  echo "        LEGACY_BUILD_ROOT=$ROOT $HERE/qualify-ios5.sh --environment-root "<env>""
+  echo "        LEGACY_BUILD_ROOT=$ROOT $HERE/qualify-ios5.sh --environment-root \"<env>\""
 fi
