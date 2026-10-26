@@ -26,7 +26,14 @@ rm -rf "$OUT"
 mkdir -p "$OUT/usr/bin" "$OUT/usr/lib/clang"
 
 # Host Swift resources produced by the host build (host dylibs, migrator data, ABI baseline...).
-cp -R "$S/lib/swift" "$OUT/usr/lib/swift"
+# The build tree represents some of these as symlinks into the source checkout; a redistributable
+# toolchain must be relocatable (the kit refuses absolute/escaping links), so copy the link targets.
+if [ -x /usr/bin/rsync ]; then
+  /usr/bin/rsync -a --copy-links "$S/lib/swift/" "$OUT/usr/lib/swift/"
+else
+  mkdir -p "$OUT/usr/lib/swift"
+  cp -RL "$S/lib/swift/." "$OUT/usr/lib/swift/"
+fi
 rm -rf "$OUT/usr/lib/swift/iphoneos"
 
 # The iOS standard library and the resource-tree scaffolding built from source.
@@ -65,6 +72,10 @@ cat > "$OUT/Info.plist" <<'PL'
   <key>Version</key><string>5.10.1</string>
 </dict></plist>
 PL
+
+# Any remaining absolute symlink would break relocation on the user's machine.
+ABSOLUTE_LINKS="$(find "$OUT" -type l -exec sh -c 'case "$(readlink "$1")" in /*) echo "$1";; esac' _ {} \; | head -5)"
+[ -z "$ABSOLUTE_LINKS" ] || { echo "refusing a toolchain with absolute symlinks:" >&2; printf '%s\n' "$ABSOLUTE_LINKS" >&2; exit 1; }
 
 echo "composed $OUT ($(du -sh "$OUT" | cut -f1))"
 echo "default resources: $(ls "$OUT/usr/lib/swift/iphoneos"/*.dylib 2>/dev/null | wc -l | tr -d ' ') fat dylibs, $(ls -d "$OUT/usr/lib/swift/iphoneos"/*.swiftmodule 2>/dev/null | wc -l | tr -d ' ') modules"
