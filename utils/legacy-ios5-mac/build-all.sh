@@ -117,6 +117,7 @@ runtime515package() { # runtime-only 5.1.5 .xctoolchain for the iOS 6 guide rout
   bash "$HERE/package-runtime-515.sh"
 }
 qualify515() { # run the five iOS 5 qualification checks; publish the profile when the environment is known
+  rm -rf "$ROOT/out/ios5-qualification"
   if [ -n "${LEGACY_ENVIRONMENT_ROOT:-}" ]; then
     LEGACY_BUILD_ROOT="$ROOT" bash "$HERE/qualify-ios5.sh" --environment-root "$LEGACY_ENVIRONMENT_ROOT"
   else
@@ -137,6 +138,9 @@ overlays() { # prepare + build + link the rewritten overlays
     "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
 }
 assemble() {
+  # assemble-510-toolchain.sh refuses to reuse an output directory; a re-run rebuilds the derived
+  # toolchain from the current stage inputs.
+  rm -rf "$ROOT/out/swift-5.10.1-ios5.xctoolchain"
   H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"; export LEGACY_515_ROOT="$ROOT/b515"
   LINK_OUTPUT_NAME=linked510-legacy bash "$HERE/assemble-510-toolchain.sh" "$H" "$ROOT/build/swift/bin/swift-frontend" \
     "$S/swift-driver/.build/x86_64-apple-macosx/debug/swift-driver" "$ROOT/bootstrap" "$LEGACY_515_ROOT/build/runtime-ios5" \
