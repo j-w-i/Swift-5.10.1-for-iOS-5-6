@@ -80,7 +80,7 @@ for ARCH in $ARCHS; do
     -DCMAKE_C_FLAGS="-isysroot $SDK -miphoneos-version-min=7.0" \
     -DCMAKE_ASM_FLAGS="-isysroot $SDK -miphoneos-version-min=7.0" \
     -DLLVM_CONFIG_PATH="$L/bin/llvm-config"
-  /usr/bin/arch -x86_64 "$NINJA" -C "$CRT" -j"$JOBS" "libclang_rt.builtins_${ARCH}_ios"
+  /usr/bin/arch -x86_64 "$NINJA" -C "$CRT" -j"$JOBS" "libclang_rt.builtins_${ARCH}_ios.a"
 done
 
 # 2. the standard library itself, one build directory per arch.
