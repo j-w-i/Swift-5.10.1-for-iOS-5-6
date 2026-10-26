@@ -37,6 +37,28 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # relocations, so Thumb code in these dylibs produces pointers that enter
   # Thumb instructions in ARM mode. Build every legacy overlay in ARM mode.
   if [ "$MODE" = --legacy-marking ]; then CC_FLAGS+=(-Xcc -marm); fi
+  # Backported UIKit API that is Swift-only (anchors, activate/deactivate,
+  # layout-guide conveniences) belongs to the UIKit overlay module, so client
+  # code sees it from `import UIKit` alone. The backport builder stages those
+  # sources and, when its Objective-C facades need a build-only module, a
+  # module map; both are optional so older stages keep building.
+  SOURCES_FILE="$STAGE/probes/${lower}510-sources.txt"
+  if [ "$NAME" = UIKit ] && [ -s "$STAGE/probes/backports-runtime/swift-sources.txt" ]; then
+    # Appending must be idempotent: a re-run restores the prepared base list so
+    # backport sources are never listed twice.
+    if [ -s "$STAGE/probes/${lower}510-sources.base.txt" ]; then
+      cp "$STAGE/probes/${lower}510-sources.base.txt" "$SOURCES_FILE"
+    else
+      awk '!seen[$0]++' "$SOURCES_FILE" > "$STAGE/probes/${lower}510-sources.base.txt"
+    fi
+    { cat "$STAGE/probes/${lower}510-sources.base.txt"; cat "$STAGE/probes/backports-runtime/swift-sources.txt"; } \
+      | awk '!seen[$0]++' > "$SOURCES_FILE"
+    CC_FLAGS+=(-I "$STAGE/probes/backports-runtime/Swift")
+    if [ -f "$STAGE/probes/backports-runtime/include/module.modulemap" ]; then
+      CC_FLAGS+=(-Xcc -fmodule-map-file="$STAGE/probes/backports-runtime/include/module.modulemap"
+                 -Xcc -I"$STAGE/probes/backports-runtime/include")
+    fi
+  fi
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" ${JOB_FLAGS[@]+"${JOB_FLAGS[@]}"} \
     -parse-as-library -module-name "$NAME" -autolink-force-load \
     -target "armv7-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
@@ -45,7 +67,7 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
     -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510.o" \
     -emit-module -emit-module-path "$R/iphoneos/$NAME.swiftmodule/armv7.swiftmodule" \
     -module-link-name "swift$NAME" -swift-version 5 \
-    ${EXTRA[@]+"${EXTRA[@]}"} ${CC_FLAGS[@]+"${CC_FLAGS[@]}"} @"$STAGE/probes/${lower}510-sources.txt" \
+    ${EXTRA[@]+"${EXTRA[@]}"} ${CC_FLAGS[@]+"${CC_FLAGS[@]}"} @"$SOURCES_FILE" \
     > "$STAGE/logs/${NAME}.log" 2>&1 || { tail -40 "$STAGE/logs/${NAME}.log" >&2; exit 1; }
   echo "$NAME module/object built (not runtime-qualified)"
 done

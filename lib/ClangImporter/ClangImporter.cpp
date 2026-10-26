@@ -889,10 +889,21 @@ importer::addCommonInvocationArguments(
       invocationArgStrs.push_back("-marm");
   }
 
+  // The legacy UIKit Swift overlay imports a build-only C module that backs the
+  // backported Objective-C facades. Ship its headers inside the iOS 5 resource
+  // tree and add them here so client compilations need no extra flags.
+  if (usesLegacyCollectionDeclarations(ctx) &&
+      !ctx.SearchPathOpts.RuntimeResourcePath.empty()) {
+    llvm::SmallString<256> backports(ctx.SearchPathOpts.RuntimeResourcePath);
+    llvm::sys::path::append(backports, "legacy-backports", "include");
+    if (llvm::sys::fs::is_directory(backports))
+      invocationArgStrs.push_back(("-I" + backports).str());
+  }
+
   // Discriminate these PCMs from native UIKit and earlier importer mappings.
   // Bump this value if the declaration/linkage transformation changes.
   if (usesLegacyCollectionDeclarations(ctx))
-    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=1");
+    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=3");
 
   for (auto extraArg : importerOpts.ExtraArgs) {
     invocationArgStrs.push_back(extraArg);

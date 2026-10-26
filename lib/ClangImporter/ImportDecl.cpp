@@ -97,6 +97,121 @@ static bool isInSystemModule(const DeclContext *D) {
   return cast<ClangModuleUnit>(D->getModuleScopeContext())->isSystemModule();
 }
 
+/// Highest native iOS introduction implemented by each legacy UIKit family.
+/// This is a capability table, not a blanket removal of availability. In
+/// particular, effects, fonts, buttons and all later additions remain native.
+static unsigned legacyUIKitFamilyCeiling(StringRef name) {
+  return llvm::StringSwitch<unsigned>(name)
+      // Original collection and Auto Layout surfaces (iOS 6). Constraint
+      // activate/deactivate/isActive (iOS 8) remain owned by the Swift overlay.
+      .Cases("UICollectionView", "UICollectionViewCell", "UICollectionReusableView", 6)
+      .Cases("UICollectionViewLayout", "UICollectionViewFlowLayout", 6)
+      .Cases("UICollectionViewLayoutAttributes", "UICollectionViewController", 6)
+      .Cases("UICollectionViewUpdateItem", "UICollectionViewDataSource", 6)
+      .Cases("UICollectionViewDelegate", "UICollectionViewDelegateFlowLayout", 6)
+      .Cases("UICollectionViewScrollPosition", "UICollectionViewScrollDirection", 6)
+      .Cases("UICollectionUpdateAction", "UICollectionElementCategory", 6)
+      .Cases("UICollectionElementKindSectionHeader", "UICollectionElementKindSectionFooter", 6)
+      .Cases("NSLayoutConstraint", "NSLayoutRelation", "NSLayoutAttribute", 6)
+      .Cases("NSLayoutFormatOptions", "UILayoutConstraintAxis", "UILayoutPriority", 6)
+      .Case("UIRefreshControl", 6)
+      // UILayoutGuide and the NSLayoutAnchor class family are NOT lowered: the
+      // runtime has no UILayoutGuide class, and the anchor surface is provided by
+      // the Swift shim as `Anchor`, so exposing the native classes would let a
+      // program compile against types with no implementation.
+      .Cases("UIStackView", "UIStackViewDistribution", "UIStackViewAlignment", 9)
+      // Compositional layout implements the iOS 13 contract, not later list,
+      // content-insets-reference, uniform-dimension or repeated-subitem APIs.
+      .Cases("UICollectionViewCompositionalLayout", "UICollectionViewCompositionalLayoutConfiguration", 13)
+      .Cases("NSCollectionLayoutSection", "NSCollectionLayoutItem", "NSCollectionLayoutGroup", 13)
+      .Cases("NSCollectionLayoutSize", "NSCollectionLayoutDimension", "NSCollectionLayoutSpacing", 13)
+      .Cases("NSCollectionLayoutEdgeSpacing", "NSCollectionLayoutAnchor", 13)
+      .Cases("NSCollectionLayoutBoundarySupplementaryItem", "NSCollectionLayoutDecorationItem", 13)
+      .Cases("NSCollectionLayoutSupplementaryItem", "NSCollectionLayoutGroupCustomItem", 13)
+      .Cases("NSCollectionLayoutContainer", "NSCollectionLayoutEnvironment", "NSCollectionLayoutVisibleItem", 13)
+      .Cases("UICollectionLayoutSectionOrthogonalScrollingBehavior", "NSDirectionalEdgeInsets", 13)
+      .Cases("NSDirectionalRectEdge", "NSRectAlignment", 13)
+      .Case("NSDirectionalEdgeInsetsZero", 13)
+      .Cases("NSDirectionalEdgeInsetsMake", "NSDirectionalEdgeInsetsEqualToDirectionalEdgeInsets", 13)
+      .Default(0);
+}
+
+static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
+  StringRef owner, member;
+  if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))
+    member = method->getSelector().getNameForSlot(0);
+  else if (auto property = dyn_cast<clang::ObjCPropertyDecl>(decl))
+    member = property->getName();
+  if (!member.empty()) {
+    auto dc = decl->getDeclContext();
+    if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
+      owner = category->getClassInterface()->getName();
+    else if (auto named = dyn_cast<clang::NamedDecl>(dc))
+      if (named->getIdentifier()) owner = named->getName();
+    if (owner == "UIView")
+      // Constraint methods retain their separate unavailable/shim rule below.
+      // No readable/content/frame guides or baseline anchors: absent runtime.
+      return llvm::StringSwitch<unsigned>(member)
+          // Associated-storage intrinsic sizing and engine invalidation/strengths.
+          .Cases("intrinsicContentSize", "invalidateIntrinsicContentSize", 6)
+          .Cases("contentHuggingPriorityForAxis", "setContentHuggingPriority", 6)
+          .Cases("contentCompressionResistancePriorityForAxis", "setContentCompressionResistancePriority", 6)
+          // Native iOS 8 margins are implemented by the legacy engine as well.
+          .Cases("layoutMargins", "setLayoutMargins", "layoutMarginsDidChange", 8)
+          // Native iOS 9 guide/anchor accessors backed by engine proxy views.
+          .Cases("addLayoutGuide", "layoutMarginsGuide", 9)
+          .Cases("topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor", 9)
+          .Cases("leftAnchor", "rightAnchor", "widthAnchor", "heightAnchor", 9)
+          .Cases("centerXAnchor", "centerYAnchor", 9).Default(0);
+    if (owner == "UIScrollView")
+      // The backport API predates Apple's native iOS 10 property. Do not also
+      // expose iOS 11 contentLayoutGuide/frameLayoutGuide (unsupported geometry).
+      return member == "refreshControl" || member == "setRefreshControl" ? 10 : 0;
+    if (owner == "NSIndexPath")
+      return member == "item" || member == "indexPathForItem" ? 6 : 0;
+    return legacyUIKitFamilyCeiling(owner);
+  }
+  if (auto named = dyn_cast<clang::NamedDecl>(decl))
+    if (named->getIdentifier())
+      if (auto ceiling = legacyUIKitFamilyCeiling(named->getName()))
+        return ceiling;
+  // Enum cases inherit the family's ceiling, without lifting newer cases.
+  for (auto dc = decl->getDeclContext(); dc; dc = dc->getParent())
+    if (auto named = dyn_cast<clang::NamedDecl>(dc))
+      if (named->getIdentifier())
+        if (auto ceiling = legacyUIKitFamilyCeiling(named->getName()))
+          return ceiling;
+  return 0;
+}
+
+static bool isLegacyUIKitDeclaration(const ASTContext &ctx, const clang::Decl *decl) {
+  auto module = decl->getOwningModule();
+  return usesLegacyUIKitBackportDeclarations(ctx) && module &&
+      module->getTopLevelModule()->Name == "UIKit";
+}
+
+static bool isUnsupportedLegacyLayoutMember(const clang::Decl *decl) {
+  StringRef member;
+  if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))
+    member = method->getSelector().getNameForSlot(0);
+  else if (auto property = dyn_cast<clang::ObjCPropertyDecl>(decl))
+    member = property->getName();
+  if (member.empty()) return false;
+  auto dc = decl->getDeclContext();
+  if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
+    dc = category->getClassInterface();
+  auto owner = dyn_cast<clang::NamedDecl>(dc);
+  if (!owner || !owner->getIdentifier()) return false;
+  auto name = owner->getName();
+  // The SDK often inherits availability only from the enclosing type. These
+  // three operations must be explicitly unavailable after that type is lowered:
+  // no trait implementation, no callback delivery, and a stub description.
+  return (name == "NSCollectionLayoutEnvironment" && member == "traitCollection") ||
+      (name == "NSCollectionLayoutSection" &&
+       (member == "visibleItemsInvalidationHandler" || member == "setVisibleItemsInvalidationHandler")) ||
+      (name == "NSCollectionLayoutGroup" && member == "visualDescription");
+}
+
 static FuncDecl *
 createFuncOrAccessor(ClangImporter::Implementation &impl, SourceLoc funcLoc,
                      llvm::Optional<AccessorInfo> accessorInfo, DeclName name,
@@ -4872,8 +4987,8 @@ namespace {
 
             Impl.ImportedDecls[{decl->getCanonicalDecl(), getVersion()}] = result;
             result->setAddedImplicitInitializers(); // suppress all initializers
-            addObjCAttribute(result,
-                            Impl.importIdentifier(decl->getIdentifier()));
+            addObjCAttribute(result, Impl.SwiftContext.getIdentifier(
+                                        decl->getObjCRuntimeNameAsString()));
             result->setImplicit();
             auto attr = AvailableAttr::createPlatformAgnostic(
                 Impl.SwiftContext,
@@ -4910,7 +5025,11 @@ namespace {
           ArrayRef<PrimaryAssociatedTypeName>(), llvm::None,
           /*TrailingWhere=*/nullptr);
 
-      addObjCAttribute(result, Impl.importIdentifier(decl->getIdentifier()));
+      // Protocol IRGen uses the imported @objc name (unlike class references,
+      // which can consult their Clang interface). Preserve objc_runtime_name
+      // so conformances and casts use the actual runtime protocol identity.
+      addObjCAttribute(result, Impl.SwiftContext.getIdentifier(
+                                  decl->getObjCRuntimeNameAsString()));
 
       if (declaredNative)
         markMissingSwiftDecl(result);
@@ -7997,6 +8116,12 @@ void ClangImporter::Implementation::importAttributes(
   // Scan through Clang attributes and map them onto Swift
   // equivalents.
   bool AnyUnavailable = MappedDecl->getAttrs().isUnavailable(C);
+  bool legacyUIKitDecl = isLegacyUIKitDeclaration(C, ClangDecl);
+  if (legacyUIKitDecl && isUnsupportedLegacyLayoutMember(ClangDecl)) {
+    MappedDecl->getAttrs().add(AvailableAttr::createPlatformAgnostic(
+        C, "not implemented by the legacy iOS 5 compositional layout runtime"));
+    AnyUnavailable = true;
+  }
   for (clang::NamedDecl::attr_iterator AI = ClangDecl->attr_begin(),
        AE = ClangDecl->attr_end(); AI != AE; ++AI) {
     //
@@ -8124,11 +8249,11 @@ void ClangImporter::Implementation::importAttributes(
       llvm::VersionTuple obsoleted = avail->getObsoleted();
       llvm::VersionTuple introduced = avail->getIntroduced();
 
-      // Opt-in iOS 5 UIKit runtime backports preserve Apple's ObjC selectors.
-      // Do not relax unrelated APIs or any normal/iOS 6+ compilation.
-      if (C.LangOpts.LegacyIOS5ClassMarking &&
-          C.LangOpts.Target.isiOS() && C.LangOpts.Target.isOSVersionLT(6) &&
-          Platform == "ios" && introduced == llvm::VersionTuple(6, 0)) {
+      // Only native armv7-family iOS 5 UIKit declarations participate. Module,
+      // actual Clang target and explicit runtime mode are all mandatory.
+      bool legacyUIKit = legacyUIKitDecl && Platform == "ios";
+      // These constraint selectors intentionally remain owned by Swift shims.
+      if (legacyUIKit && introduced == llvm::VersionTuple(6, 0)) {
         const clang::ObjCInterfaceDecl *owner = nullptr;
         StringRef memberName;
         if (auto interface = dyn_cast<clang::ObjCInterfaceDecl>(ClangDecl))
@@ -8160,51 +8285,12 @@ void ClangImporter::Implementation::importAttributes(
         if (isUIViewMember) {
           PlatformAgnostic = PlatformAgnosticAvailabilityKind::Unavailable;
           AnyUnavailable = true;
-        } else if (owner && owner->getName() == "NSLayoutConstraint") {
-          introduced = llvm::VersionTuple(5, 0);
         }
       }
 
-      // The runtime implements the original iOS 6 collection surface. Preserve
-      // all later SDK availability, including newer members of these classes.
-      auto collectionModule = ClangDecl->getOwningModule();
-      if (usesLegacyCollectionDeclarations(C) && collectionModule &&
-          collectionModule->getTopLevelModule()->Name == "UIKit" &&
-          Platform == "ios" && introduced == llvm::VersionTuple(6, 0)) {
-        auto supportedName = [](StringRef name) {
-          return name == "UICollectionView" || name == "UICollectionViewCell" ||
-              name == "UICollectionReusableView" || name == "UICollectionViewLayout" ||
-              name == "UICollectionViewFlowLayout" ||
-              name == "UICollectionViewLayoutAttributes" ||
-              name == "UICollectionViewController" || name == "UICollectionViewUpdateItem" ||
-              name == "UICollectionViewDataSource" || name == "UICollectionViewDelegate" ||
-              name == "UICollectionViewDelegateFlowLayout" ||
-              name == "UICollectionViewScrollPosition" ||
-              name == "UICollectionViewScrollDirection" ||
-              name == "UICollectionUpdateAction" || name == "UICollectionElementCategory" ||
-              name == "UICollectionElementKindSectionHeader" ||
-              name == "UICollectionElementKindSectionFooter";
-        };
-        auto supportedDecl = [&](const clang::NamedDecl *decl) {
-          return decl->getIdentifier() && supportedName(decl->getName());
-        };
-        bool supported = false;
-        if (auto named = dyn_cast<clang::NamedDecl>(ClangDecl))
-          supported = supportedDecl(named);
-        for (auto dc = ClangDecl->getDeclContext(); !supported && dc;
-             dc = dc->getParent()) {
-          if (auto category = dyn_cast<clang::ObjCCategoryDecl>(dc))
-            supported = supportedName(category->getClassInterface()->getName());
-          else if (auto named = dyn_cast<clang::NamedDecl>(dc))
-            supported = supportedDecl(named);
-        }
-        if (auto method = dyn_cast<clang::ObjCMethodDecl>(ClangDecl)) {
-          auto owner = method->getClassInterface();
-          auto name = method->getSelector().getNameForSlot(0);
-          supported |= owner && owner->getName() == "NSIndexPath" &&
-              (name == "indexPathForItem" || name == "item");
-        }
-        if (supported)
+      if (legacyUIKit && introduced > llvm::VersionTuple(5, 0)) {
+        unsigned ceiling = legacyUIKitDeclarationCeiling(ClangDecl);
+        if (ceiling && introduced <= llvm::VersionTuple(ceiling, 0))
           introduced = llvm::VersionTuple(5, 0);
       }
 

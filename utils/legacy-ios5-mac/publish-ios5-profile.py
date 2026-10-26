@@ -74,7 +74,8 @@ FLAG = "-enable-legacy-ios5-runtime"
 HOST_BINARIES = ("swift-frontend", "swift-driver", "swiftc", "swift")
 RESOURCE_PREFIX = "usr/lib/swift_ios5/iphoneos/"
 COLLECTION_RESOURCES = tuple("usr/lib/swift_ios5/legacy-collection/" + name for name in
-                             ("Headers/UIKitLegacyCollection.h", "LICENSE", "SNAPSHOT.json"))
+                             ("Headers/UIKitLegacyCollection.h", "LICENSE", "SNAPSHOT.json")) + (
+    "usr/lib/swift_ios5/legacy-backports/INVENTORY.json",)
 FIXED_RESOURCES = ("Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib") + COLLECTION_RESOURCES + tuple(
     RESOURCE_PREFIX + name for name in
     ("crt1.3.1.o", "libswiftLegacyIOS5Backports.a") + tuple(

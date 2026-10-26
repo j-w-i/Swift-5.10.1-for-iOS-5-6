@@ -43,6 +43,9 @@
 // LEGACY-IR-DAG: OBJC_CLASS_$_PSTCollectionView
 // LEGACY-IR-DAG: OBJC_METACLASS_$_PSTCollectionView
 // LEGACY-IR-DAG: _PSTCollectionElementKindSectionHeader
+// LEGACY-IR-DAG: c"PSTCollectionViewDelegate\00"
+// LEGACY-IR-DAG: c"PSTCollectionViewDataSource\00"
+// LEGACY-IR-DAG: c"PSTCollectionViewDelegateFlowLayout\00"
 // NATIVE-IR: OBJC_CLASS_$_UICollectionView
 // NATIVE-IR-NOT: PSTCollectionView
 //
@@ -70,6 +73,11 @@ import UIKit
 func original(_ value: UIKit.SDKUnchanged) {}
 #if LEGACY
 class UserCollection : UIKit.UICollectionView {}
+// Actual conformances emit Objective-C protocol objects; thin .Protocol
+// metatype expressions alone do not exercise runtime identity generation.
+class DelegateIdentity : UIKit.SDKUnchanged, UIKit.UICollectionViewDelegate {}
+class DataSourceIdentity : UIKit.SDKUnchanged, UIKit.UICollectionViewDataSource {}
+class FlowDelegateIdentity : UIKit.SDKUnchanged, UIKit.UICollectionViewDelegateFlowLayout {}
 func collection(_ value: UIKit.UICollectionView) {}
 func cell(_ value: UIKit.UICollectionViewCell) {}
 func upcast(_ value: UIKit.UICollectionViewCell) -> UIKit.UICollectionReusableView { value }
@@ -115,6 +123,10 @@ __attribute__((availability(ios,introduced=6.0)))
 @interface UICollectionViewCell : UICollectionReusableView @end
 __attribute__((availability(ios,introduced=6.0)))
 @protocol UICollectionViewDelegate @end
+__attribute__((availability(ios,introduced=6.0)))
+@protocol UICollectionViewDataSource @end
+__attribute__((availability(ios,introduced=6.0)))
+@protocol UICollectionViewDelegateFlowLayout @end
 @interface UICollectionViewLayoutInvalidationContext : SDKUnchanged @end
 @interface NativeCollectionSentinel : SDKUnchanged @end
 extern SDKUnchanged * _Nonnull const UICollectionElementKindSectionHeader __attribute__((availability(ios,introduced=6.0)));
@@ -141,7 +153,12 @@ __attribute__((objc_runtime_name("PSTCollectionReusableView")))
 @interface UICollectionReusableView : SDKUnchanged @end
 __attribute__((objc_runtime_name("PSTCollectionViewCell")))
 @interface UICollectionViewCell : UICollectionReusableView @end
+__attribute__((objc_runtime_name("PSTCollectionViewDelegate")))
 @protocol UICollectionViewDelegate @end
+__attribute__((objc_runtime_name("PSTCollectionViewDataSource")))
+@protocol UICollectionViewDataSource @end
+__attribute__((objc_runtime_name("PSTCollectionViewDelegateFlowLayout")))
+@protocol UICollectionViewDelegateFlowLayout @end
 typedef enum UICollectionViewScrollDirection {
   UICollectionViewScrollDirectionVertical,
   UICollectionViewScrollDirectionHorizontal

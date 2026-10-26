@@ -1,0 +1,626 @@
+diff -ruN a/IBPNSCollectionLayoutAnchor.m b/IBPNSCollectionLayoutAnchor.m
+--- a/IBPNSCollectionLayoutAnchor.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutAnchor.m	2026-10-26 19:52:44
+@@ -22,19 +22,11 @@
+ }
+ 
+ + (instancetype)layoutAnchorWithEdges:(IBPNSDirectionalRectEdge)edges absoluteOffset:(CGPoint)absoluteOffset {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutAnchor") layoutAnchorWithEdges:edges absoluteOffset:absoluteOffset];
+-    } else {
+-        return [[self alloc] initWithEdges:edges offset:absoluteOffset anchorPoint:AnchorPointFromEdges(edges) offsetIsUnitOffset:NO];
+-    }
++    return [[self alloc] initWithEdges:edges offset:absoluteOffset anchorPoint:AnchorPointFromEdges(edges) offsetIsUnitOffset:NO];
+ }
+ 
+ + (instancetype)layoutAnchorWithEdges:(IBPNSDirectionalRectEdge)edges fractionalOffset:(CGPoint)fractionalOffset {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutAnchor") layoutAnchorWithEdges:edges fractionalOffset:fractionalOffset];
+-    } else {
+-        return [[self alloc] initWithEdges:edges offset:fractionalOffset anchorPoint:AnchorPointFromEdges(edges) offsetIsUnitOffset:YES];
+-    }
++    return [[self alloc] initWithEdges:edges offset:fractionalOffset anchorPoint:AnchorPointFromEdges(edges) offsetIsUnitOffset:YES];
+ }
+ 
+ + (instancetype)layoutAnchorWithAnchorPoint:(CGPoint)anchorPoint {
+@@ -42,19 +34,11 @@
+ }
+ 
+ + (instancetype)layoutAnchorWithAnchorPoint:(CGPoint)anchorPoint offset:(CGPoint)offset {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutAnchor") layoutAnchorWithAnchorPoint:anchorPoint offset:offset];
+-    } else {
+-        return [[self alloc] initWithEdges:EdgesFromAnchorPoint(anchorPoint) offset:offset anchorPoint:anchorPoint offsetIsUnitOffset:NO];
+-    }
++    return [[self alloc] initWithEdges:EdgesFromAnchorPoint(anchorPoint) offset:offset anchorPoint:anchorPoint offsetIsUnitOffset:NO];
+ }
+ 
+ + (instancetype)layoutAnchorWithAnchorPoint:(CGPoint)anchorPoint unitOffset:(CGPoint)unitOffset {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutAnchor") layoutAnchorWithAnchorPoint:anchorPoint unitOffset:unitOffset];
+-    } else {
+-        return [[self alloc] initWithEdges:EdgesFromAnchorPoint(anchorPoint) offset:unitOffset anchorPoint:anchorPoint offsetIsUnitOffset:YES];
+-    }
++    return [[self alloc] initWithEdges:EdgesFromAnchorPoint(anchorPoint) offset:unitOffset anchorPoint:anchorPoint offsetIsUnitOffset:YES];
+ }
+ 
+ - (instancetype)initWithEdges:(IBPNSDirectionalRectEdge)edges offset:(CGPoint)offset anchorPoint:(CGPoint)anchorPoint offsetIsUnitOffset:(BOOL)offsetIsUnitOffset {
+diff -ruN a/IBPNSCollectionLayoutBoundarySupplementaryItem.m b/IBPNSCollectionLayoutBoundarySupplementaryItem.m
+--- a/IBPNSCollectionLayoutBoundarySupplementaryItem.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutBoundarySupplementaryItem.m	2026-10-26 19:52:44
+@@ -26,34 +26,20 @@
+ + (instancetype)boundarySupplementaryItemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                             elementKind:(NSString *)elementKind
+                                               alignment:(IBPNSRectAlignment)alignment {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutBoundarySupplementaryItem") boundarySupplementaryItemWithLayoutSize:layoutSize
+-                                                                                                              elementKind:elementKind
+-                                                                                                                alignment:alignment
+-                                                                                                           absoluteOffset:CGPointZero];
+-    } else {
+-        return [self boundarySupplementaryItemWithLayoutSize:layoutSize
+-                                                 elementKind:elementKind
+-                                                   alignment:alignment
+-                                              absoluteOffset:CGPointZero];
+-    }
++    return [self boundarySupplementaryItemWithLayoutSize:layoutSize
++                                             elementKind:elementKind
++                                               alignment:alignment
++                                          absoluteOffset:CGPointZero];
+ }
+ 
+ + (instancetype)boundarySupplementaryItemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                             elementKind:(NSString *)elementKind
+                                               alignment:(IBPNSRectAlignment)alignment
+                                          absoluteOffset:(CGPoint)absoluteOffset {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutBoundarySupplementaryItem") boundarySupplementaryItemWithLayoutSize:layoutSize
+-                                                                                                              elementKind:elementKind
+-                                                                                                                alignment:alignment
+-                                                                                                           absoluteOffset:absoluteOffset];
+-    } else {
+-        return [[self alloc] initWithLayoutSize:layoutSize
+-                                    elementKind:elementKind
+-                                      alignment:alignment
+-                                 absoluteOffset:absoluteOffset];
+-    }
++    return [[self alloc] initWithLayoutSize:layoutSize
++                                elementKind:elementKind
++                                  alignment:alignment
++                             absoluteOffset:absoluteOffset];
+ }
+ 
+ - (instancetype)initWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+diff -ruN a/IBPNSCollectionLayoutDecorationItem.m b/IBPNSCollectionLayoutDecorationItem.m
+--- a/IBPNSCollectionLayoutDecorationItem.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutDecorationItem.m	2026-10-26 19:52:44
+@@ -1,4 +1,7 @@
+ #import "IBPNSCollectionLayoutDecorationItem.h"
++#import "IBPNSCollectionLayoutItem_Private.h"
++#import "IBPNSCollectionLayoutDimension.h"
++#import "IBPNSCollectionLayoutSize.h"
+ 
+ @interface IBPNSCollectionLayoutDecorationItem()
+ 
+@@ -9,15 +12,16 @@
+ @implementation IBPNSCollectionLayoutDecorationItem
+ 
+ + (instancetype)backgroundDecorationItemWithElementKind:(NSString *)elementKind {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutDecorationItem") backgroundDecorationItemWithElementKind:elementKind];
+-    } else {
+-        return [[self alloc] initWithElementKind:elementKind];
+-    }
++    return [[self alloc] initWithElementKind:elementKind];
+ }
+ 
+ - (instancetype)initWithElementKind:(NSString *)elementKind {
+-    self = [super init];
++    // Required by the public superclass: decoration items are layout items in
++    // UIKit 13+. The size is inert; the layout solver derives the decoration
++    // geometry from the section and only reads elementKind/contentInsets/zIndex.
++    IBPNSCollectionLayoutSize *size = [IBPNSCollectionLayoutSize sizeWithWidthDimension:[IBPNSCollectionLayoutDimension fractionalWidthDimension:1.0]
++                                                                       heightDimension:[IBPNSCollectionLayoutDimension fractionalHeightDimension:1.0]];
++    self = [super initWithLayoutSize:size supplementaryItems:@[]];
+     if (self) {
+         self.elementKind = elementKind;
+     }
+diff -ruN a/IBPNSCollectionLayoutDimension.m b/IBPNSCollectionLayoutDimension.m
+--- a/IBPNSCollectionLayoutDimension.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutDimension.m	2026-10-26 19:52:44
+@@ -17,35 +17,19 @@
+ @implementation IBPNSCollectionLayoutDimension
+ 
+ + (instancetype)fractionalWidthDimension:(CGFloat)fractionalWidth {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutDimension") fractionalWidthDimension:fractionalWidth];
+-    } else {
+-        return [self dimensionWithDimension:fractionalWidth semantic:IBPNSCollectionLayoutDimensionSemanticFractionalWidth];
+-    }
++    return [self dimensionWithDimension:fractionalWidth semantic:IBPNSCollectionLayoutDimensionSemanticFractionalWidth];
+ }
+ 
+ + (instancetype)fractionalHeightDimension:(CGFloat)fractionalHeight {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutDimension") fractionalHeightDimension:fractionalHeight];
+-    } else {
+-        return [self dimensionWithDimension:fractionalHeight semantic:IBPNSCollectionLayoutDimensionSemanticFractionalHeight];
+-    }
++    return [self dimensionWithDimension:fractionalHeight semantic:IBPNSCollectionLayoutDimensionSemanticFractionalHeight];
+ }
+ 
+ + (instancetype)absoluteDimension:(CGFloat)absoluteDimension {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutDimension") absoluteDimension:absoluteDimension];
+-    } else {
+-        return [self dimensionWithDimension:absoluteDimension semantic:IBPNSCollectionLayoutDimensionSemanticAbsolute];
+-    }
++    return [self dimensionWithDimension:absoluteDimension semantic:IBPNSCollectionLayoutDimensionSemanticAbsolute];
+ }
+ 
+ + (instancetype)estimatedDimension:(CGFloat)estimatedDimension {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutDimension") estimatedDimension:estimatedDimension];
+-    } else {
+-        return [self dimensionWithDimension:estimatedDimension semantic:IBPNSCollectionLayoutDimensionSemanticEstimated];
+-    }
++    return [self dimensionWithDimension:estimatedDimension semantic:IBPNSCollectionLayoutDimensionSemanticEstimated];
+ }
+ 
+ + (instancetype)dimensionWithDimension:(CGFloat)dimension semantic:(IBPNSCollectionLayoutDimensionSemantic)semantic {
+diff -ruN a/IBPNSCollectionLayoutEdgeSpacing.m b/IBPNSCollectionLayoutEdgeSpacing.m
+--- a/IBPNSCollectionLayoutEdgeSpacing.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutEdgeSpacing.m	2026-10-26 19:52:44
+@@ -18,14 +18,7 @@
+                               top:(IBPNSCollectionLayoutSpacing *)top
+                          trailing:(IBPNSCollectionLayoutSpacing *)trailing
+                            bottom:(IBPNSCollectionLayoutSpacing *)bottom {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutEdgeSpacing") spacingForLeading:leading
+-                                                                                  top:top
+-                                                                             trailing:trailing
+-                                                                               bottom:bottom];
+-    } else {
+-        return [[self alloc] initForLeading:leading top:top trailing:trailing bottom:bottom];
+-    }
++    return [[self alloc] initForLeading:leading top:top trailing:trailing bottom:bottom];
+ }
+ 
+ + (instancetype)flexibleSpacing:(CGFloat)spacing {
+diff -ruN a/IBPNSCollectionLayoutGroup.m b/IBPNSCollectionLayoutGroup.m
+--- a/IBPNSCollectionLayoutGroup.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutGroup.m	2026-10-26 19:52:44
+@@ -13,95 +13,75 @@
+ 
+ + (instancetype)horizontalGroupWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                      subitems:(NSArray<IBPNSCollectionLayoutItem *> *)subitems {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroup") horizontalGroupWithLayoutSize:layoutSize subitems:subitems];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize
+-                                 subitems:subitems
+-                                    count:0
+-                         interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
+-                          layoutDirection:IBPGroupLayoutDirectionHorizontal
+-                       supplementaryItems:@[]
+-                  customGroupItemProvider:nil
+-                                     name:nil
+-                               identifier:[NSUUID UUID]];
+-    }
++    return [[self alloc] initWithSize:layoutSize
++                             subitems:subitems
++                                count:0
++                     interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
++                      layoutDirection:IBPGroupLayoutDirectionHorizontal
++                   supplementaryItems:@[]
++              customGroupItemProvider:nil
++                                 name:nil
++                           identifier:[NSUUID UUID]];
+ }
+ 
+ + (instancetype)horizontalGroupWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                       subitem:(IBPNSCollectionLayoutItem *)subitem
+                                         count:(NSInteger)count {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroup") horizontalGroupWithLayoutSize:layoutSize subitem:subitem count:count];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize
+-                                 subitems:@[subitem]
+-                                    count:count
+-                         interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
+-                          layoutDirection:IBPGroupLayoutDirectionHorizontal
+-                       supplementaryItems:@[]
+-                  customGroupItemProvider:nil
+-                                     name:nil
+-                               identifier:[NSUUID UUID]];
+-    }
++    return [[self alloc] initWithSize:layoutSize
++                             subitems:@[subitem]
++                                count:count
++                     interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
++                      layoutDirection:IBPGroupLayoutDirectionHorizontal
++                   supplementaryItems:@[]
++              customGroupItemProvider:nil
++                                 name:nil
++                           identifier:[NSUUID UUID]];
+ }
+ 
+ + (instancetype)verticalGroupWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                    subitems:(NSArray<IBPNSCollectionLayoutItem *> *)subitems {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroup") verticalGroupWithLayoutSize:layoutSize subitems:subitems];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize subitems:subitems
+-                                    count:0
+-                         interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
+-                          layoutDirection:IBPGroupLayoutDirectionVertical
+-                       supplementaryItems:@[]
+-                  customGroupItemProvider:nil
+-                                     name:nil
+-                               identifier:[NSUUID UUID]];
+-    }
++    return [[self alloc] initWithSize:layoutSize subitems:subitems
++                                count:0
++                     interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
++                      layoutDirection:IBPGroupLayoutDirectionVertical
++                   supplementaryItems:@[]
++              customGroupItemProvider:nil
++                                 name:nil
++                           identifier:[NSUUID UUID]];
+ }
+ 
+ + (instancetype)verticalGroupWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                     subitem:(IBPNSCollectionLayoutItem *)subitem
+                                       count:(NSInteger)count {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroup") verticalGroupWithLayoutSize:layoutSize subitem:subitem count:count];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize subitems:@[subitem]
+-                                    count:count
+-                         interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
+-                          layoutDirection:IBPGroupLayoutDirectionVertical
+-                       supplementaryItems:@[]
+-                  customGroupItemProvider:nil
+-                                     name:nil
+-                               identifier:[NSUUID UUID]];
+-    }
++    return [[self alloc] initWithSize:layoutSize subitems:@[subitem]
++                                count:count
++                     interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
++                      layoutDirection:IBPGroupLayoutDirectionVertical
++                   supplementaryItems:@[]
++              customGroupItemProvider:nil
++                                 name:nil
++                           identifier:[NSUUID UUID]];
+ }
+ 
+ + (instancetype)customGroupWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize itemProvider:(IBPNSCollectionLayoutGroupCustomItemProvider)itemProvider {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroup") customGroupWithLayoutSize:layoutSize itemProvider:itemProvider];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize subitems:@[]
+-                                    count:0
+-                         interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
+-                          layoutDirection:IBPGroupLayoutDirectionCustom
+-                       supplementaryItems:@[]
+-                  customGroupItemProvider:itemProvider
+-                                     name:nil
+-                               identifier:[NSUUID UUID]];
+-    }
++    return [[self alloc] initWithSize:layoutSize subitems:@[]
++                                count:0
++                     interItemSpacing:[IBPNSCollectionLayoutSpacing defaultSpacing]
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          edgeSpacing:[IBPNSCollectionLayoutEdgeSpacing defaultSpacing]
++                      layoutDirection:IBPGroupLayoutDirectionCustom
++                   supplementaryItems:@[]
++              customGroupItemProvider:itemProvider
++                                 name:nil
++                           identifier:[NSUUID UUID]];
+ }
+ 
+ - (instancetype)initWithSize:(IBPNSCollectionLayoutSize *)size
+diff -ruN a/IBPNSCollectionLayoutGroupCustomItem.m b/IBPNSCollectionLayoutGroupCustomItem.m
+--- a/IBPNSCollectionLayoutGroupCustomItem.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutGroupCustomItem.m	2026-10-26 19:52:44
+@@ -10,19 +10,11 @@
+ @implementation IBPNSCollectionLayoutGroupCustomItem
+ 
+ + (instancetype)customItemWithFrame:(CGRect)frame {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroupCustomItem") customItemWithFrame:frame];
+-    } else {
+-        return [self customItemWithFrame:frame zIndex:0];
+-    }
++    return [self customItemWithFrame:frame zIndex:0];
+ }
+ 
+ + (instancetype)customItemWithFrame:(CGRect)frame zIndex:(NSInteger)zIndex {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutGroupCustomItem") customItemWithFrame:frame zIndex:zIndex];
+-    } else {
+-        return [[self alloc] initWithFrame:frame zIndex:zIndex];
+-    }
++    return [[self alloc] initWithFrame:frame zIndex:zIndex];
+ }
+ 
+ - (instancetype)initWithFrame:(CGRect)frame zIndex:(NSInteger)zIndex {
+diff -ruN a/IBPNSCollectionLayoutItem.m b/IBPNSCollectionLayoutItem.m
+--- a/IBPNSCollectionLayoutItem.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutItem.m	2026-10-26 19:52:44
+@@ -8,20 +8,12 @@
+ @implementation IBPNSCollectionLayoutItem
+ 
+ + (instancetype)itemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutItem") itemWithLayoutSize:layoutSize];
+-    } else {
+-        return [self itemWithLayoutSize:layoutSize supplementaryItems:@[]];
+-    }
++    return [self itemWithLayoutSize:layoutSize supplementaryItems:@[]];
+ }
+ 
+ + (instancetype)itemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                 supplementaryItems:(NSArray<IBPNSCollectionLayoutSupplementaryItem *> *)supplementaryItems {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutItem") itemWithLayoutSize:layoutSize supplementaryItems:supplementaryItems];
+-    } else {
+-        return [[self alloc] initWithLayoutSize:layoutSize supplementaryItems:supplementaryItems];
+-    }
++    return [[self alloc] initWithLayoutSize:layoutSize supplementaryItems:supplementaryItems];
+ }
+ 
+ - (instancetype)initWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize supplementaryItems:(NSArray<IBPNSCollectionLayoutSupplementaryItem *> *)supplementaryItems {
+diff -ruN a/IBPNSCollectionLayoutSection.m b/IBPNSCollectionLayoutSection.m
+--- a/IBPNSCollectionLayoutSection.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutSection.m	2026-10-26 19:52:44
+@@ -5,11 +5,7 @@
+ @implementation IBPNSCollectionLayoutSection
+ 
+ + (instancetype)sectionWithGroup:(IBPNSCollectionLayoutGroup *)group {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSection") sectionWithGroup:group];
+-    } else {
+-        return [[self alloc] initWithGroup:group];
+-    }
++    return [[self alloc] initWithGroup:group];
+ }
+ 
+ - (instancetype)initWithGroup:(IBPNSCollectionLayoutGroup *)group {
+diff -ruN a/IBPNSCollectionLayoutSize.m b/IBPNSCollectionLayoutSize.m
+--- a/IBPNSCollectionLayoutSize.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutSize.m	2026-10-26 19:52:44
+@@ -13,11 +13,7 @@
+ 
+ + (instancetype)sizeWithWidthDimension:(IBPNSCollectionLayoutDimension *)width
+                        heightDimension:(IBPNSCollectionLayoutDimension *)height {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSize") sizeWithWidthDimension:width heightDimension:height];
+-    } else {
+-        return [[self alloc] initWithWidthDimension:width heightDimension:height];
+-    }
++    return [[self alloc] initWithWidthDimension:width heightDimension:height];
+ }
+ 
+ - (instancetype)initWithWidthDimension:(IBPNSCollectionLayoutDimension *)width
+diff -ruN a/IBPNSCollectionLayoutSpacing.m b/IBPNSCollectionLayoutSpacing.m
+--- a/IBPNSCollectionLayoutSpacing.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutSpacing.m	2026-10-26 19:52:44
+@@ -11,19 +11,11 @@
+ @implementation IBPNSCollectionLayoutSpacing
+ 
+ + (instancetype)flexibleSpacing:(CGFloat)flexibleSpacing {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSpacing") flexibleSpacing:flexibleSpacing];
+-    } else {
+-        return [[self alloc] initWithSpacing:flexibleSpacing isFlexible:YES];
+-    }
++    return [[self alloc] initWithSpacing:flexibleSpacing isFlexible:YES];
+ }
+ 
+ + (instancetype)fixedSpacing:(CGFloat)fixedSpacing {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSpacing") fixedSpacing:fixedSpacing];
+-    } else {
+-        return [[self alloc] initWithSpacing:fixedSpacing isFlexible:NO];
+-    }
++    return [[self alloc] initWithSpacing:fixedSpacing isFlexible:NO];
+ }
+ 
+ + (instancetype)defaultSpacing {
+diff -ruN a/IBPNSCollectionLayoutSupplementaryItem.m b/IBPNSCollectionLayoutSupplementaryItem.m
+--- a/IBPNSCollectionLayoutSupplementaryItem.m	2026-10-26 19:52:44
++++ b/IBPNSCollectionLayoutSupplementaryItem.m	2026-10-26 19:52:44
+@@ -6,37 +6,24 @@
+ + (instancetype)supplementaryItemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                     elementKind:(NSString *)elementKind
+                                 containerAnchor:(IBPNSCollectionLayoutAnchor *)containerAnchor {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSupplementaryItem") supplementaryItemWithLayoutSize:layoutSize
+-                                                                                              elementKind:elementKind
+-                                                                                          containerAnchor:containerAnchor];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              elementKind:elementKind
+-                          containerAnchor:containerAnchor
+-                               itemAnchor:nil
+-                                   zIndex:1];
+-    }
++    return [[self alloc] initWithSize:layoutSize
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          elementKind:elementKind
++                      containerAnchor:containerAnchor
++                           itemAnchor:nil
++                               zIndex:1];
+ }
+ 
+ + (instancetype)supplementaryItemWithLayoutSize:(IBPNSCollectionLayoutSize *)layoutSize
+                                     elementKind:(NSString *)elementKind
+                                 containerAnchor:(IBPNSCollectionLayoutAnchor *)containerAnchor
+                                      itemAnchor:(IBPNSCollectionLayoutAnchor *)itemAnchor {
+-    if (@available(iOS 13, *)) {
+-        return [NSClassFromString(@"NSCollectionLayoutSupplementaryItem") supplementaryItemWithLayoutSize:layoutSize
+-                                                                                              elementKind:elementKind
+-                                                                                          containerAnchor:containerAnchor
+-                                                                                               itemAnchor:itemAnchor];
+-    } else {
+-        return [[self alloc] initWithSize:layoutSize
+-                            contentInsets:IBPNSDirectionalEdgeInsetsZero
+-                              elementKind:elementKind
+-                          containerAnchor:containerAnchor
+-                               itemAnchor:itemAnchor
+-                                   zIndex:1];
+-    }
++    return [[self alloc] initWithSize:layoutSize
++                        contentInsets:IBPNSDirectionalEdgeInsetsZero
++                          elementKind:elementKind
++                      containerAnchor:containerAnchor
++                           itemAnchor:itemAnchor
++                               zIndex:1];
+ }
+ 
+ - (instancetype)initWithSize:(IBPNSCollectionLayoutSize *)size
+diff -ruN a/IBPUICollectionViewCompositionalLayout.m b/IBPUICollectionViewCompositionalLayout.m
+--- a/IBPUICollectionViewCompositionalLayout.m	2026-10-26 19:52:44
++++ b/IBPUICollectionViewCompositionalLayout.m	2026-10-26 19:52:44
+@@ -46,39 +46,23 @@
+ @implementation IBPUICollectionViewCompositionalLayout
+ 
+ - (instancetype)initWithSection:(IBPNSCollectionLayoutSection *)section {
+-    if (@available(iOS 13, *)) {
+-        return [[NSClassFromString(@"UICollectionViewCompositionalLayout") alloc] initWithSection:section];
+-    } else {
+-        IBPUICollectionViewCompositionalLayoutConfiguration *configuration = [IBPUICollectionViewCompositionalLayoutConfiguration defaultConfiguration];
+-        return [self initWithSection:section configuration:configuration];
+-    }
++    IBPUICollectionViewCompositionalLayoutConfiguration *configuration = [IBPUICollectionViewCompositionalLayoutConfiguration defaultConfiguration];
++    return [self initWithSection:section configuration:configuration];
+ }
+ 
+ - (instancetype)initWithSection:(IBPNSCollectionLayoutSection *)section
+                   configuration:(IBPUICollectionViewCompositionalLayoutConfiguration *)configuration {
+-    if (@available(iOS 13, *)) {
+-        return [[NSClassFromString(@"UICollectionViewCompositionalLayout") alloc] initWithSection:section configuration:configuration];
+-    } else {
+-        return [self initWithSection:section sectionProvider:nil configuration:configuration];
+-    }
++    return [self initWithSection:section sectionProvider:nil configuration:configuration];
+ }
+ 
+ - (instancetype)initWithSectionProvider:(IBPUICollectionViewCompositionalLayoutSectionProvider)sectionProvider {
+-    if (@available(iOS 13, *)) {
+-        return [[NSClassFromString(@"UICollectionViewCompositionalLayout") alloc] initWithSectionProvider:sectionProvider];
+-    } else {
+-        IBPUICollectionViewCompositionalLayoutConfiguration *configuration = [IBPUICollectionViewCompositionalLayoutConfiguration defaultConfiguration];
+-        return [self initWithSectionProvider:sectionProvider configuration:configuration];
+-    }
++    IBPUICollectionViewCompositionalLayoutConfiguration *configuration = [IBPUICollectionViewCompositionalLayoutConfiguration defaultConfiguration];
++    return [self initWithSectionProvider:sectionProvider configuration:configuration];
+ }
+ 
+ - (instancetype)initWithSectionProvider:(IBPUICollectionViewCompositionalLayoutSectionProvider)sectionProvider
+                           configuration:(IBPUICollectionViewCompositionalLayoutConfiguration *)configuration {
+-    if (@available(iOS 13, *)) {
+-        return [[NSClassFromString(@"UICollectionViewCompositionalLayout") alloc] initWithSectionProvider:sectionProvider configuration:configuration];
+-    } else {
+-        return [self initWithSection:nil sectionProvider:sectionProvider configuration:configuration];
+-    }
++    return [self initWithSection:nil sectionProvider:sectionProvider configuration:configuration];
+ }
+ 
+ - (instancetype)initWithSection:(IBPNSCollectionLayoutSection *)section
+@@ -162,8 +146,14 @@
+ 
+     IBPNSCollectionLayoutEnvironment *environment = [[IBPNSCollectionLayoutEnvironment alloc] init];
+     environment.container = collectionContainer;
+-    environment.traitCollection = collectionView.traitCollection;
++    // The legacy toolchain has no UITraitCollection (iOS 8); UIView/UIViewController
++    // only gain -traitCollection through the omitted DDTraitCollection component.
++    // Keep the native object on iOS 8+ and leave it nil on iOS 5-7.
++    if (@available(iOS 8.0, *)) {
++        environment.traitCollection = (DDTraitCollection *)collectionView.traitCollection;
++    }
+ 
++
+     contentFrame = CGRectZero;
+     contentFrame.origin.x = collectionContainer.effectiveContentInsets.leading;
+     contentFrame.origin.y = collectionContainer.effectiveContentInsets.top;
+@@ -615,7 +605,16 @@
+                 [cell setNeedsLayout];
+                 [cell layoutIfNeeded];
+ 
+-                CGSize fitSize = [cell systemLayoutSizeFittingSize:UILayoutFittingCompressedSize];
++                // systemLayoutSizeFittingSize: and UILayoutFittingCompressedSize are
++                // iOS 8. Use the self-sizing fitting API where it exists and fall
++                // back to -sizeThatFits: (iOS 2+) on the legacy target.
++                CGSize fitSize;
++                if (@available(iOS 8.0, *)) {
++                    fitSize = [cell systemLayoutSizeFittingSize:UILayoutFittingCompressedSize];
++                } else {
++                    fitSize = [cell sizeThatFits:containerSize];
++                }
++
+                 if (!layoutSize.widthDimension.isEstimated) {
+                     fitSize.width = containerWidth;
+                 }
+diff -ruN a/IBPUICollectionViewCompositionalLayoutConfiguration.m b/IBPUICollectionViewCompositionalLayoutConfiguration.m
+--- a/IBPUICollectionViewCompositionalLayoutConfiguration.m	2026-10-26 19:52:44
++++ b/IBPUICollectionViewCompositionalLayoutConfiguration.m	2026-10-26 19:52:44
+@@ -17,17 +17,13 @@
+ }
+ 
+ - (instancetype)init {
+-    if (@available(iOS 13, *)) {
+-        return [[NSClassFromString(@"UICollectionViewCompositionalLayoutConfiguration") alloc] init];
+-    } else {
+-        self = [super init];
+-        if (self) {
+-            self.scrollDirection = UICollectionViewScrollDirectionVertical;
+-            self.interSectionSpacing = 0;
+-            self.boundarySupplementaryItems = @[];
+-        }
+-        return self;
++    self = [super init];
++    if (self) {
++        self.scrollDirection = UICollectionViewScrollDirectionVertical;
++        self.interSectionSpacing = 0;
++        self.boundarySupplementaryItems = @[];
+     }
++    return self;
+ }
+ 
+ - (nonnull id)copyWithZone:(nullable NSZone *)zone {
+diff -ruN a/include/IBPNSCollectionLayoutDecorationItem.h b/include/IBPNSCollectionLayoutDecorationItem.h
+--- a/include/IBPNSCollectionLayoutDecorationItem.h	2026-10-26 19:52:44
++++ b/include/IBPNSCollectionLayoutDecorationItem.h	2026-10-26 19:52:44
+@@ -1,9 +1,10 @@
+ #import <UIKit/UIKit.h>
+ #import "IBPNSDirectionalEdgeInsets.h"
++#import "IBPNSCollectionLayoutItem.h"
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
+-@interface IBPNSCollectionLayoutDecorationItem : NSObject<NSCopying>
++@interface IBPNSCollectionLayoutDecorationItem : IBPNSCollectionLayoutItem<NSCopying>
+ 
+ // Useful for setting a background decoration view behind a section's content area.
+ //

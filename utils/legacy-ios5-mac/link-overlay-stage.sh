@@ -125,8 +125,14 @@ run() {
 DEPLOYMENT=${IOS_DEPLOYMENT_TARGET:-7.0}
 case "$DEPLOYMENT" in 5.0|5.1|5.1.1|7.0) ;; *) fail 'Unsupported IOS_DEPLOYMENT_TARGET; use 5.0/5.1/5.1.1 or probe7.0.' ;; esac
 COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionView.a"
+BACKPORTS_ARCHIVE="$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a"
+COMPOSITIONAL_ARCHIVE="$STAGE/probes/compositional-layout-runtime/libswiftLegacyCompositionalLayout.a"
 case "$DEPLOYMENT" in
-  5.*) [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE" ;;
+  5.*)
+    [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE"
+    [ -s "$BACKPORTS_ARCHIVE" ] || fail "Missing source-built UIKit backport runtime: $BACKPORTS_ARCHIVE"
+    [ -s "$COMPOSITIONAL_ARCHIVE" ] || fail "Missing source-built compositional layout runtime: $COMPOSITIONAL_ARCHIVE"
+    ;;
 esac
 COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 # Legacy iOS 5 linking loses ARM/Thumb interworking bits on local relocations.
@@ -186,7 +192,10 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
             5.*)
               # Force-load internally, not in client projects: retain ObjC classes,
               # categories and constructors even without direct overlay references.
-              EXTRA+=(-Xlinker -force_load -Xlinker "$COLLECTION_ARCHIVE" -framework QuartzCore) ;;
+              EXTRA+=(-Xlinker -force_load -Xlinker "$COLLECTION_ARCHIVE"
+                      -Xlinker -force_load -Xlinker "$BACKPORTS_ARCHIVE"
+                      -Xlinker -force_load -Xlinker "$COMPOSITIONAL_ARCHIVE"
+                      -framework QuartzCore) ;;
           esac ;;
       esac ;;
   esac

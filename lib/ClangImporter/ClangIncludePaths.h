@@ -20,6 +20,10 @@ namespace swift {
 /// Whether this invocation uses the legacy collection runtime declarations.
 bool usesLegacyCollectionDeclarations(const ASTContext &ctx);
 
+/// Require both Swift deployment and actual Clang target to select native
+/// legacy iOS 5, with an armv7-family Clang target, for additional UIKit APIs.
+bool usesLegacyUIKitBackportDeclarations(const ASTContext &ctx);
+
 llvm::Optional<SmallString<128>>
 getCxxShimModuleMapPath(SearchPathOptions &opts, const llvm::Triple &triple);
 

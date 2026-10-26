@@ -137,6 +137,12 @@ overlays() { # prepare + build + link the rewritten overlays
   bash "$HERE/build-collection-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/collection-runtime"
   cp -R "$ROOT/bootstrap/probes/collection-runtime/legacy-collection" "$ROOT/bootstrap/probes/modules510/legacy-collection"
+  # Backported UIKit APIs are part of the SDK, not a package: their Objective-C
+  # and Swift implementations are built here and linked into libswiftUIKit.
+  bash "$HERE/build-backports-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/backports-runtime"
+  bash "$HERE/build-compositional-layout.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/compositional-layout-runtime"
   bash "$HERE/build-overlay-stage.sh" "$ROOT/bootstrap" "$ROOT/build/swift/bin/swift-frontend" "$SDK" --legacy-marking
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \

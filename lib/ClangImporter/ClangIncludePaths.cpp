@@ -20,6 +20,7 @@
 #include "clang/Driver/ToolChain.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Lexer.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/WindowsDriver/MSVCPaths.h"
 
 using namespace swift;
@@ -35,10 +36,22 @@ bool swift::usesLegacyCollectionDeclarations(const ASTContext &ctx) {
          triple.isOSVersionLT(6);
 }
 
+bool swift::usesLegacyUIKitBackportDeclarations(const ASTContext &ctx) {
+  const auto &deployment = ctx.LangOpts.Target;
+  const auto &target = ctx.LangOpts.ClangTarget
+      ? *ctx.LangOpts.ClangTarget : deployment;
+  return usesLegacyCollectionDeclarations(ctx) && deployment.isiOS() &&
+      !deployment.isTvOS() && !deployment.isSimulatorEnvironment() &&
+      !deployment.isMacCatalystEnvironment() && !deployment.isOSVersionLT(5) &&
+      deployment.isOSVersionLT(6) &&
+      (target.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
+       target.getSubArch() == llvm::Triple::ARMSubArch_v7s);
+}
+
 /// Modify only declaration linkage, never SDK signatures or availability.
 /// Raw lexing skips comments/strings and distinguishes definitions from forward
 /// declarations and categories. Apply edits backwards to retain token offsets.
-static std::string legacyCollectionHeader(StringRef text) {
+static std::string legacyCollectionHeader(StringRef text, bool backportFacades) {
   struct Edit { size_t offset; std::string text; };
   SmallVector<Edit, 16> edits;
   clang::LangOptions opts;
@@ -76,9 +89,45 @@ static std::string legacyCollectionHeader(StringRef text) {
         std::string runtime = "PST" + name.drop_front(2).str();
         edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
             "__attribute__((objc_runtime_name(\"" + runtime + "\"))) "});
+      } else if (backportFacades) {
+        // Static facade symbols shipped by UIKitBackports. NSLayoutConstraint
+        // deliberately retains its existing runtime registration contract.
+        StringRef runtime = llvm::StringSwitch<StringRef>(name)
+            .Case("UILayoutGuide", "UICLayoutGuide")
+            .Case("NSLayoutAnchor", "UICLayoutAnchor")
+            .Case("NSLayoutXAxisAnchor", "UICXAxisAnchor")
+            .Case("NSLayoutYAxisAnchor", "UICYAxisAnchor")
+            .Case("NSLayoutDimension", "UICLayoutDimension")
+            .Case("UIRefreshControl", "UICRefreshControl")
+            .Case("UIStackView", "UICStackView")
+            .Default("");
+        std::string runtimeName = interface ? runtime.str() : std::string();
+        // Verified IBP capability contract: fourteen public interfaces and
+        // three protocol identities. Never bind the internal classes that
+        // happen to have the Container/Environment protocol names.
+        bool compositional = interface
+            ? llvm::StringSwitch<bool>(name)
+                .Cases("UICollectionViewCompositionalLayout", "UICollectionViewCompositionalLayoutConfiguration", true)
+                .Cases("NSCollectionLayoutSection", "NSCollectionLayoutItem", "NSCollectionLayoutGroup", true)
+                .Cases("NSCollectionLayoutGroupCustomItem", "NSCollectionLayoutDimension", true)
+                .Cases("NSCollectionLayoutSize", "NSCollectionLayoutSpacing", "NSCollectionLayoutEdgeSpacing", true)
+                .Cases("NSCollectionLayoutSupplementaryItem", "NSCollectionLayoutBoundarySupplementaryItem", true)
+                .Cases("NSCollectionLayoutDecorationItem", "NSCollectionLayoutAnchor", true)
+                .Default(false)
+            : (name == "NSCollectionLayoutContainer" ||
+               name == "NSCollectionLayoutEnvironment" ||
+               name == "NSCollectionLayoutVisibleItem");
+        if (compositional) runtimeName = "IBP" + name.str();
+        if (!runtimeName.empty())
+          edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
+              "__attribute__((objc_runtime_name(\"" + runtimeName + "\"))) "});
       }
     }
     auto name = spelling(tokens[i]);
+    if (backportFacades && name == "NSDirectionalEdgeInsetsZero" && i &&
+        spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_IBPNSDirectionalEdgeInsetsZero\")"});
     if ((name == "UICollectionElementKindSectionHeader" ||
          name == "UICollectionElementKindSectionFooter") && i &&
         spelling(tokens[i - 1]) == "const") {
@@ -618,16 +667,20 @@ static void getLegacyCollectionFileMapping(
   Path nativeCollection(headers);
   llvm::sys::path::append(nativeCollection, "UICollectionView.h");
   if (vfs->exists(nativeCollection)) {
+    bool backportFacades = usesLegacyUIKitBackportDeclarations(ctx);
     // Keep native signatures, modern declarations, and API-notes associations.
     // Change only supported Objective-C/C linkage, inside the real UIKit module.
     for (StringRef file : {"UICollectionView.h", "UICollectionViewCell.h",
                           "UICollectionViewLayout.h", "UICollectionViewFlowLayout.h",
-                          "UICollectionViewController.h", "UICollectionViewUpdateItem.h"}) {
+                          "UICollectionViewController.h", "UICollectionViewUpdateItem.h",
+                          "UILayoutGuide.h", "NSLayoutAnchor.h", "UIRefreshControl.h",
+                          "UIStackView.h", "UICollectionViewCompositionalLayout.h",
+                          "UIGeometry.h"}) {
       Path path(headers);
       llvm::sys::path::append(path, file);
       if (auto source = vfs->getBufferForFile(path))
         result.overridenFiles.emplace_back(path.str().str(),
-            legacyCollectionHeader(source.get()->getBuffer()));
+            legacyCollectionHeader(source.get()->getBuffer(), backportFacades));
     }
     // Fail closed on incomplete toolchain packaging, without including duplicate
     // fallback declarations into a contemporary SDK.

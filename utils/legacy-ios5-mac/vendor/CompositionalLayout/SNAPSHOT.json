@@ -1,0 +1,111 @@
+{
+  "authored": {
+    "protocolExports": {
+      "IBPCompositionalLayoutProtocolExports.m": "fa9a3c803f1acc8a2aa7eff93c2eb8cb97528f153b542df7a847bbf168360c5d"
+    },
+    "shims": {
+      "DDTraitCollection.h": "b4e313a4dc9bb994dab071d459c3ef6cdf6378da13b201e26b82e449d6069638",
+      "UIView+DDTraitCollection.h": "c14e3a920223c364209d78a5ac55d801568c9a6276c71e566cf7608c944bfcb5",
+      "UIViewController+DDTraitCollection.h": "407d2adcd039e57bf4b5a868c09c51698b0b3506794e4ef3e12a1e9e365a1f84"
+    }
+  },
+  "buildDependencies": {
+    "PSTCollectionView": "utils/legacy-ios5-mac/vendor/PSTCollectionView (MIT, Peter Steinberger); not part of this snapshot and not redistributed by this package."
+  },
+  "omittedComponents": [
+    {
+      "component": "DDTraitCollection",
+      "consequence": "NSCollectionLayoutEnvironment.traitCollection is unavailable/ nil.",
+      "files": [
+        "DDTraitCollection.h",
+        "DDTraitCollection.m",
+        "DDTraitCollectionObserver.h",
+        "DDTraitCollectionObserver.m",
+        "UIView+DDTraitCollection.h",
+        "UIView+DDTraitCollection.m",
+        "UIViewController+DDTraitCollection.h",
+        "UIViewController+DDTraitCollection.m"
+      ],
+      "reason": "Files carry \"Copyright (c) 2015 Delta Dog. All rights reserved.\"; no licence grant in the files, the upstream MIT LICENSE (Kishikawa Katsumi) or README. Licence could not be established, so the component is not redistributed.",
+      "replacement": "shims/ contains three reconstructed opaque forward declarations that are authored for this toolchain, not Delta Dog text."
+    }
+  ],
+  "patches": {
+    "0001-legacy-ios5-runtime.patch": "08134bf3bbc8a5c39e5228818dbb9bae6ea3d1bb51da6b0174c6277629c01ec3"
+  },
+  "records": {
+    "LICENSE": "badf881e1857558371089efb391e97b92ce324710e3b4b9570dedf1a6eae1a3a",
+    "STATUS.md": "780351dc0d4522d4b03e5a6a2d0a7b412e71850f254667a4e6ec80394c386788",
+    "THIRD-PARTY-NOTICES.md": "45b628c968823ca310a612b2f37b8a52aab32f8baab851d84de25f7ef6d5149b"
+  },
+  "upstream": {
+    "commit": "9e5348623ec2119e9dbe845a0f7d8f5fb0672729",
+    "commitDate": "2026-10-26T17:05:29+11:00",
+    "commitSubject": "Do not crash during +load below iOS 6",
+    "forkOf": "https://github.com/kishikawakatsumi/IBPCollectionViewCompositionalLayout",
+    "license": "MIT, Copyright (c) 2019 Kishikawa Katsumi (LICENSE, verbatim)",
+    "repository": "https://github.com/j-w-i/IBPCollectionViewCompositionalLayout",
+    "sourceSubdirectory": "Sources/IBPCollectionViewCompositionalLayout"
+  },
+  "verbatimUpstream": {
+    "IBPCollectionCompositionalLayoutSolver.h": "0d2bb1aa2bf2d63e271601819815bdd10903347542d0864a7d3a9e92d48e670c",
+    "IBPCollectionCompositionalLayoutSolver.m": "bf0094aac68d7843262f0d269c15c80c0af980c7c839465258ae130be74a545f",
+    "IBPCollectionCompositionalLayoutSolverResult.h": "b16aaca7cd60307e92572e2151eeed2a5b58b2b265e821ffeeda7fb42f71a293",
+    "IBPCollectionCompositionalLayoutSolverResult.m": "27f3cf10ba69c6e2ba1387651fd4180da666a3944690222bbec0ec6125b66f55",
+    "IBPCollectionViewOrthogonalScrollerEmbeddedScrollView.h": "47bf9b88a82de33ed543cae4107f29a61e0dfe7b802139fbccb1d6bdefd045de",
+    "IBPCollectionViewOrthogonalScrollerEmbeddedScrollView.m": "0d76ac4b1f4e3165217944fec2550da939e6edb348b9e562f7c8aab5db4adad1",
+    "IBPCollectionViewOrthogonalScrollerSectionController.h": "8f1c12e052faf675432a2f31d31226e29c054b9e0b4a7eb1b8e355f3bbe1d005",
+    "IBPCollectionViewOrthogonalScrollerSectionController.m": "66632da70e8f88ae4dc3747c0f83627929bc9c84a39a05b0e83ad2301509e4f5",
+    "IBPNSCollectionLayoutAnchor.m": "29092457ac42476c3cfba73b13703def16c3155a83f409306ffe20a3e28963b6",
+    "IBPNSCollectionLayoutAnchor_Private.h": "818dea1e4a7dd065717d600c1d100793e6d10e74b74cd2114bef9c0e90304c1f",
+    "IBPNSCollectionLayoutBoundarySupplementaryItem.m": "a2db7421209a7991e049d4179351084a456af06e25ec579974cc2a32d9026187",
+    "IBPNSCollectionLayoutContainer.h": "eb758bedf33347393366a05d293fb5cda396991f91382b4afcd49a9e19e17e8c",
+    "IBPNSCollectionLayoutContainer.m": "1a8e7617db28e6c0ff17d94af6b67262e4bb6f083171124335bec1f0e70ceffd",
+    "IBPNSCollectionLayoutDecorationItem.m": "c1eeef6f9e0c6f2b25842c15d646f8583e641562d5bcf8634af13319c6f08d0f",
+    "IBPNSCollectionLayoutDimension.m": "a3d6da7679b0fcda37d423ae28081016db869f72fc2ad04e0d46971ad0c459d8",
+    "IBPNSCollectionLayoutEdgeSpacing.m": "17365fc95a87f910af162c631428eb5ae617879929d56478f996efda374512d8",
+    "IBPNSCollectionLayoutEdgeSpacing_Private.h": "6e229d7f6d6cfffc01ae001f9ca07c41bd9e2c71e2c97903ff333734e5d6dcc3",
+    "IBPNSCollectionLayoutEnvironment.h": "37a53d567070fa7b43ac4b2943a0e33dfb8cd7c0abea05c073d95371323557ea",
+    "IBPNSCollectionLayoutEnvironment.m": "133a62c875af451f690085f38d368430fb257c41a305d58264a972209abc8e3e",
+    "IBPNSCollectionLayoutGroup.m": "0a29790f54b32dd5aea92f6eec1e092e1b93d8f48b87eb823b13f8947859bb35",
+    "IBPNSCollectionLayoutGroupCustomItem.m": "dc5643690bc4c6066d8977bb486b34374ad98d83992a4bbc0fab9f168888f187",
+    "IBPNSCollectionLayoutGroup_Private.h": "d2e00acc297bdea7bdd9f6e73eca3f87ae392d01f3f80bc3cacf3a11590ae819",
+    "IBPNSCollectionLayoutItem.m": "26c160887d7bc1765d25a0a66e9c8a7234a41d02c88e2bedca475f74d798f39e",
+    "IBPNSCollectionLayoutItem_Private.h": "f9cc7980b34552b590f9a5df729643973b59fcef0c121a88c3643d43390beaa3",
+    "IBPNSCollectionLayoutSection.m": "b900d5ab05f45dd41c30803588192217828e3044550c3d60a2af0e2bce6c802d",
+    "IBPNSCollectionLayoutSection_Private.h": "a50c3e73ddde077e65a4ef279493dba6aff0887486c699583100433d4d0ed953",
+    "IBPNSCollectionLayoutSize.m": "cf94a9a7059ab210c72b860044cb6a86e9daece95d697584d7db20d0c15c542d",
+    "IBPNSCollectionLayoutSize_Private.h": "667393cb3b845d246d1284d6e0d442646fba719ee008b31c43daa69f01ba1b54",
+    "IBPNSCollectionLayoutSpacing.m": "69bf3335b7a76395f12bd1fe76bf86e28363bdaf8ce5b39a413e720b3898344d",
+    "IBPNSCollectionLayoutSpacing_Private.h": "81b917ed910c6168d743ff20b8825f848227d1749f95616f96014d3ab702295e",
+    "IBPNSCollectionLayoutSupplementaryItem.m": "91558ab4b7a60ed167e95292db3cea82d3af62323961766e3fdb525a2730e995",
+    "IBPNSCollectionLayoutSupplementaryItem_Private.h": "5cac71d096f48eb193563ffac10af4426095a8a73e487ae3dba676c8feb9949b",
+    "IBPNSDirectionalEdgeInsets.m": "19d31f35704e4b0c777782f403badb00723bceb5c6ece8c7a8a7e280b6ac8dac",
+    "IBPUICollectionViewCompositionalLayout.m": "1cea4f867319bbc0d395f94f563e269a18861442d09174071ad5c3b021dc949d",
+    "IBPUICollectionViewCompositionalLayoutConfiguration.m": "e2a9d78e88f0f952723cd2574c3d81b28907088e94af576bb64f361ec101e63e",
+    "IBPUICollectionViewCompositionalLayoutConfiguration_Private.h": "56abe45556e0547c9f278700b891a5fd20faa4219618079a072dbacf7fe38200",
+    "include/IBPCollectionViewCompositionalLayout.h": "4acb8497d41136d5cda71a70ac1f01f6a89571dc7041597d8d0ae3607037ec6b",
+    "include/IBPNSCollectionLayoutAnchor.h": "745f54fcce4a0447901e69e676fa965fd458d5d772ca03c3eda9bddeb15f5e4f",
+    "include/IBPNSCollectionLayoutBoundarySupplementaryItem.h": "a70ecbf204daa6f7556157d1c0070f964e2577bbc68d6c3936a6ff491b63bca8",
+    "include/IBPNSCollectionLayoutContainer_Protocol.h": "864d2de086ee767a3bb3569ce4c001871fe4cfc41b4e47e907c7f26ff42240cd",
+    "include/IBPNSCollectionLayoutDecorationItem.h": "9f0c97db52df63cbdc1b475d59548d67f65c926327c8d7db0c6a232ca3810f37",
+    "include/IBPNSCollectionLayoutDimension.h": "861544ed11574e8a833f1426d61817a9fb9a63711243ab57bbed6f567d53eaf2",
+    "include/IBPNSCollectionLayoutEdgeSpacing.h": "37e75e70130a4fa3682cc570d07d5f7da0ee86adb83621b5a572c69564fc4f94",
+    "include/IBPNSCollectionLayoutEnvironment_Protocol.h": "43277692318e9b9c133db8491ba71298818e827eb0b47a3576c99bc4c4b02e6c",
+    "include/IBPNSCollectionLayoutForwardCompatibility.h": "6d49c0f7943ca3b236fcfe19673de742a264181198dd5518c0d553814c0e651b",
+    "include/IBPNSCollectionLayoutGroup.h": "3c83f43a672d3f32f19650914ae694c7ba122826a605cec8d1c4617894ba3ed1",
+    "include/IBPNSCollectionLayoutGroupCustomItem.h": "108d6102034a8683f02f1f47d67f64123f78fa50ba1a5a506daf49708aa3c134",
+    "include/IBPNSCollectionLayoutItem.h": "0d7d736ca2dc98e008940c0e2bbc065859e8fd996fde6a5f5b728c98a0718289",
+    "include/IBPNSCollectionLayoutSection.h": "bb291715656ac123781c6b1b059766e5f42adf4f8716e242677af24ab23a2002",
+    "include/IBPNSCollectionLayoutSize.h": "8d9da60b04236c308597b4b1b66af3979db6307438cbbfdb894eb2fe02d8e9bf",
+    "include/IBPNSCollectionLayoutSpacing.h": "85f830df3d41ba0c6526dbebb139a36b18b2f4651adb03edcf0c8b399c4f519c",
+    "include/IBPNSCollectionLayoutSupplementaryItem.h": "4d00cb77d25913e5d57a33a31ba9b9d5d54b690052ad4e6a2a09271fcc94ee64",
+    "include/IBPNSCollectionLayoutVisibleItem.h": "1207ec0f233e6d47ebf3efab9407baaeda6e68c6a5c260615de24964cea535f8",
+    "include/IBPNSDirectionalEdgeInsets.h": "a4cb0aecbf0d499b0c52b631818b5b1a67f7cebc736cbbf708eeb060b1f7f858",
+    "include/IBPNSDirectionalRectEdge.h": "0e64268d24055f6d108dbbdf6dcea6fc16ad3d28e7111cc4e22c19e979c7d266",
+    "include/IBPNSRectAlignment.h": "d1c281afcfcedd0c686c84c9477b973d2f569a2e79d8fcc0083e01e02830b4ed",
+    "include/IBPUICollectionLayoutSectionOrthogonalScrollingBehavior.h": "9364605143a686d0084fb5da220374329f69902cb981e6de4882ef6b73449474",
+    "include/IBPUICollectionViewCompositionalLayout.h": "b99d24648cf73404ee1e140c9540cc18fdf2a146880b4beacd3c543e785a858b",
+    "include/IBPUICollectionViewCompositionalLayoutConfiguration.h": "2d5543a0fa8cb3e4197b21ff647e0c2775f6b198045226a946085fb411f0fab8"
+  }
+}

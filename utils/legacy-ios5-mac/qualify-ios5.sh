@@ -190,6 +190,12 @@ bash "$HERE/check-collection-api.sh" "$TC" "$SDK" "$OUTPUT/collection-api" \
   > "$OUTPUT/logs/collection-api.log" 2>&1 \
   || { tail -30 "$OUTPUT/logs/collection-api.log" >&2; die "compiler-native collection API check failed"; }
 
+# Backported UIKit APIs must be SDK surfaces at an iOS 5 target and correctly
+# version-gated for later targets and for members the backports do not implement.
+bash "$HERE/check-backports-api.sh" "$TC" "$SDK" "$OUTPUT/backports-api" \
+  > "$OUTPUT/logs/backports-api.log" 2>&1 \
+  || { tail -40 "$OUTPUT/logs/backports-api.log" >&2; die "UIKit backport API check failed"; }
+
 echo "== 4/5 default resource tree still builds iOS 7.0 (LC_MAIN)"
 mkdir -p "$OUTPUT/default-ios6-app"
 printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n' > "$OUTPUT/default-ios6-app/main.swift"
@@ -261,6 +267,7 @@ fixed = ["Info.plist", "usr/lib/swift/iphoneos/libswiftCore.dylib"] + [
          "Foundation", "Metal", "QuartzCore", "CoreImage", "UIKit"))]
 fixed += ["usr/lib/swift_ios5/legacy-collection/" + name for name in
           ("Headers/UIKitLegacyCollection.h", "LICENSE", "SNAPSHOT.json")]
+fixed += ["usr/lib/swift_ios5/legacy-backports/INVENTORY.json"]
 groups = []
 for module in ("Swift", "Darwin", "Dispatch", "CoreGraphics", "Foundation", "Metal",
                "QuartzCore", "CoreImage", "UIKit"):

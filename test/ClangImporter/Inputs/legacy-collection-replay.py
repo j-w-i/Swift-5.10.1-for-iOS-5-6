@@ -15,7 +15,7 @@ for module in graph["modules"]:
         command = details["commandLine"]
         for required in ("-enable-legacy-ios5-class-marking", "-sdk", "-resource-dir", "-target"):
             assert required in command, (required, command)
-        assert any("__SWIFT_LEGACY_UIKIT_COLLECTIONS=1" in arg for arg in command), command
+        assert any("__SWIFT_LEGACY_UIKIT_COLLECTIONS=3" in arg for arg in command), command
         subprocess.check_call(compiler + command)
         break
 else:

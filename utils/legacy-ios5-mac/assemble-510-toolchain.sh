@@ -259,6 +259,39 @@ try:
                  'PSTCollectionViewController', 'PSTCollectionViewUpdateItem'):
         if '_OBJC_CLASS_$_' + name not in collection_symbols:
             fail('UIKit overlay lacks integrated collection class: ' + name)
+    for name in ('UICLayoutGuide', 'UICLayoutAnchor', 'UICXAxisAnchor',
+                 'UICYAxisAnchor', 'UICLayoutDimension', 'UICRefreshControl',
+                 'UICStackView', 'IBPUICollectionViewCompositionalLayout',
+                 'IBPNSCollectionLayoutSection', 'IBPNSCollectionLayoutItem'):
+        if '_OBJC_CLASS_$_' + name not in collection_symbols:
+            fail('UIKit overlay lacks integrated backport class: ' + name)
+    # Redistribution notices for the vendored backports travel with the runtime,
+    # and a self-describing inventory hash-binds them into qualification.
+    notices = slot / 'legacy-backports'
+    notices.mkdir()
+    inventory = {}
+    for source_name, packaged_name, keep_headers in (
+            ('collection-runtime/legacy-collection', 'collection', False),
+            ('backports-runtime/legacy-backports', 'backports', False),
+            ('backports-runtime/include', 'include', True),
+            ('compositional-layout-runtime/legacy-compositional-layout', 'compositional', False)):
+        source = stage / 'probes' / source_name
+        if not source.is_dir():
+            fail('Missing backport packaging directory: ' + str(source))
+        for item in sorted(source.rglob('*')):
+            if not item.is_file() or (item.suffix == '.h' and not keep_headers):
+                continue
+            relative = Path(packaged_name) / item.relative_to(source)
+            destination = notices / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(item, destination)
+            inventory[str(relative)] = hashlib.sha256(
+                destination.read_bytes()).hexdigest()
+    if not inventory:
+        fail('No backport notices were packaged.')
+    with (notices / 'INVENTORY.json').open('x') as stream:
+        json.dump(inventory, stream, indent=2, sort_keys=True)
+        stream.write('\n')
     ios = slot / 'iphoneos'
     # Modules always come from the rebuilt tree, never from OLD_RUNTIME_DIR.
     for source in sorted(oldlib.glob('*.dylib')):
