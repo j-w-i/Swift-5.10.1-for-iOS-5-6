@@ -20,6 +20,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # location explicitly for the dylib version normalization step.
 export LEGACY_NORMALIZE_DYLIB_VERSIONS="$HERE/normalize-dylib-versions.py"
 export LEGACY_CHECK_MACHO_INITIALIZERS="$HERE/check-macho-initializers.py"
+export LEGACY_CHECK_THUMB_POINTERS="$HERE/check-thumb-pointers.py"
 [ -f "$LEGACY_NORMALIZE_DYLIB_VERSIONS" ] || { printf '%s\n' 'missing normalize-dylib-versions.py beside this script' >&2; exit 1; }
 exec python3 - "$@" <<'PY'
 
@@ -274,6 +275,11 @@ try:
     # iOS 5 dyld needs the pointer's instruction-state bit to match its code.
     run(sys.executable, os.environ['LEGACY_CHECK_MACHO_INITIALIZERS'],
         str(ios / 'libswiftUIKit.dylib'))
+    # Every dylib this pipeline links for iOS 5 must be free of data pointers
+    # that enter Thumb code without the interworking bit (iOS 5 dyld trap).
+    for name in OVERLAYS:
+        run(sys.executable, os.environ['LEGACY_CHECK_THUMB_POINTERS'],
+            str(ios / ('libswift' + name + '.dylib')))
 
     replace_copy(crt1, ios / 'crt1.3.1.o')
     info['CFBundleIdentifier'] = ID

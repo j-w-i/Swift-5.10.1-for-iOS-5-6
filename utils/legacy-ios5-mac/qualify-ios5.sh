@@ -136,6 +136,11 @@ echo "   $(head -1 "$OUTPUT/logs/static-build.txt")"
 /usr/bin/python3 "$HERE/check-macho-initializers.py" "$RES/iphoneos/libswiftUIKit.dylib" \
   > "$OUTPUT/logs/arm-initializers.log" 2>&1 \
   || { tail -30 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb runtime initializer"; }
+for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
+  /usr/bin/python3 "$HERE/check-thumb-pointers.py" "$RES/iphoneos/libswift$name.dylib" \
+    >> "$OUTPUT/logs/arm-initializers.log" 2>&1 \
+    || { tail -20 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb pointer in libswift$name"; }
+done
 
 echo "== 2/5 ABI class marking"
 bash "$HERE/check-class-marking.sh" "$TC/usr/bin/swiftc" "$OUTPUT/class-marking" "$TC/usr/lib/swift" \

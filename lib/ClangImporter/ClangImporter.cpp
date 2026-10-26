@@ -879,6 +879,14 @@ importer::addCommonInvocationArguments(
       !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
       !triple.isMacCatalystEnvironment() && triple.isOSVersionLT(6)) {
     invocationArgStrs.push_back("-DOS_OBJECT_SWIFT3=0");
+    // IRGen obtains its target features from this Clang invocation. Use ARM
+    // instructions for the legacy 32-bit runtime: old device link/load paths
+    // do not reliably preserve Thumb's mode bit in indirect function pointers
+    // (including resilient protocol witnesses). This must affect Swift code,
+    // not just the separately compiled Objective-C compatibility sources.
+    // Keep ExtraArgs last so an explicit -Xcc mode selection can override it.
+    if (triple.isARM() || triple.isThumb())
+      invocationArgStrs.push_back("-marm");
   }
 
   // Discriminate these PCMs from native UIKit and earlier importer mappings.

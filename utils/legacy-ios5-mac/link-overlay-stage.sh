@@ -129,7 +129,10 @@ case "$DEPLOYMENT" in
   5.*) [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE" ;;
 esac
 COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
-NATIVE=(-O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
+# Legacy iOS 5 linking loses ARM/Thumb interworking bits on local relocations.
+# Native ObjC method lists and block helper pointers therefore must be ARM code,
+# like the Swift overlays and collection runtime compiled by the other stages.
+NATIVE=(-marm -O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
   -DSWIFT_RUNTIME -DSWIFT_STDLIB_BUILDING_OVERLAY -DOS_OBJECT_USE_OBJC=0 -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
   -I "$OUT/include" -I "$SWIFT51_SOURCE/include"
   -I "$LLVM_CONFIG_INCLUDE_DIR" -I "$LLVM_INCLUDE_DIR"

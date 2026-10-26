@@ -53,10 +53,23 @@ iOS 6 references remain native. `qualify-ios5.sh` runs this check automatically.
 An iOS 5 device run of the first integrated build crashed in
 `PSTInstallIndexPathAdditions`: its constructor pointer had no Thumb bit even
 though its symbol/code was Thumb. Both PST constructor entries were affected.
-The source runtime builder now compiles the complete Objective-C runtime with
-`-marm`, including callback and method implementations. No binary pointers are
-patched. Assembly and qualification audit the linked initializer entries against
-the Mach-O symbol instruction-state flags and reject the broken build.
+A second device run then trapped entering a Foundation protocol witness: the
+data table held an even pointer to Thumb code. The root cause is in LLVM's ARM
+Mach-O writer, which emits the Thumb bit into `.word`/`MOVW`/`MOVT` addends only
+for external symbols; local Thumb functions lose it, and the older linker cannot
+recover it. Every trap is therefore an *address-taken* local Thumb function.
+
+The pipeline now compiles all code it builds for legacy iOS 5 in ARM mode:
+the collection runtime, the seven Swift overlays, their native Objective-C
+sources, and application/package code (the compiler requests ARM mode from the
+Clang invocation that supplies IRGen's target features). Native iOS 6+ builds
+remain Thumb and unchanged. No binary pointers are patched.
+
+Assembly and qualification audit the linked images: `check-macho-initializers.py`
+verifies constructor entries, and `check-thumb-pointers.py` rejects any absolute
+data pointer that reaches a Thumb function without the interworking bit. The
+audits are targeted detectors for this linker defect, not exhaustive proofs;
+ARM mode is the primary guarantee.
 
 Static compilation and linkage are not device-execution proof. Test on a real
 iOS 5 device and on iOS 6 before claiming runtime qualification; the profile's

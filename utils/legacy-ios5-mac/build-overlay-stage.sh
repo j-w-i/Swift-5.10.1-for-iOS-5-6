@@ -33,6 +33,10 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # dispatch/os_object modules built under different macro state.
   CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache")
   if [ "$NAME" = Dispatch ]; then CC_FLAGS+=(-Xcc -DSWIFT_LEGACY_IOS5_CDISPATCH=1); fi
+  # The legacy iOS 5 linker drops ARM/Thumb interworking bits from local
+  # relocations, so Thumb code in these dylibs produces pointers that enter
+  # Thumb instructions in ARM mode. Build every legacy overlay in ARM mode.
+  if [ "$MODE" = --legacy-marking ]; then CC_FLAGS+=(-Xcc -marm); fi
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" ${JOB_FLAGS[@]+"${JOB_FLAGS[@]}"} \
     -parse-as-library -module-name "$NAME" -autolink-force-load \
     -target "armv7-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
