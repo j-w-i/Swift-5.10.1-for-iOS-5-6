@@ -124,6 +124,9 @@ qualify515() { # run the five iOS 5 qualification checks; publish the profile wh
   fi
 }
 overlays() { # prepare + build + link the rewritten overlays
+  # The overlay stages refuse to reuse an output directory (their outputs are evidence of one run),
+  # so a re-run of this stage starts from a clean derived directory.
+  rm -rf "$ROOT/bootstrap"
   export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
   bash "$HERE/prepare-legacy-resources.sh" --swift510-resource "$H/usr/lib/swift" --swift51-source "$LEGACY_515_ROOT/src/swift" --output "$ROOT/bootstrap"
