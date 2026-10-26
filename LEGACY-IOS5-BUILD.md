@@ -25,7 +25,10 @@ cd utils/legacy-ios5-mac
 # 4. swift-driver:  swift build -c debug  inside $LEGACY_BUILD_ROOT/src/swift-driver
 # 5. prepare-legacy-resources.sh -> build-overlay-stage.sh -> build-atomic-backport.sh
 #    -> link-overlay-stage.sh -> assemble-510-toolchain.sh  (see BOOTSTRAP.md for arguments)
-# 6. check-class-marking.sh / check-driver-routing.sh, then qualify-ios5.sh (runs every iOS 5
+# 6. build-ios-stdlib510.sh: Swift 5.10.1 iOS stdlib (armv7/armv7s/arm64) + armv7 compiler-rt
+#    builtins compiled from source (no prebuilt iOS stdlib package)
+# 7. stage-510-baseline.sh: compose the complete toolchain layout from the build products
+# 8. check-class-marking.sh / check-driver-routing.sh, then qualify-ios5.sh (runs every iOS 5
 #    qualification check, writes evidence and publishes the environment profile; the kit does this
 #    automatically at Install Environment too)
 ```
@@ -35,7 +38,12 @@ runtime for the iOS 6 guide route, refusing any runtime whose dylibs still impor
 kit environment and the final stage publishes the iOS 5 profile into it; otherwise it leaves the evidence in
 `out/ios5-qualification` and the same one command publishes later:
 `LEGACY_BUILD_ROOT=<root> utils/legacy-ios5-mac/qualify-ios5.sh --environment-root "<env>"`.
-Inputs for step 5 that are NOT in git: `crt1.3.1.o` from an iPhoneOS 9.3 SDK (theos/sdks).
+Inputs that are NOT source: the swift.org 5.10.1 bootstrap compiler (Swift is self-hosted), Xcode 13.4.1
+(the SDKs, host clang and the `python3` the build uses), the pinned theos iPhoneOS13.7 SDK (the armv7-capable
+platform SDK; only its libc++ headers are borrowed from Xcode), and `crt1.3.1.o` from an iPhoneOS 9.3 SDK
+(theos/sdks). Every product the toolchain ships - the Swift frontend and driver, clang, compiler-rt builtins,
+the iOS standard library and modules, the 5.1.5 runtime with its atomics, and the legacy overlays - is built
+from these repos. No prebuilt Swift iOS standard library package is downloaded.
 
 ## Honest status
 - Verified: `fetch-deps.sh` from an empty directory; both patches apply to fresh upstream tags; the already-built toolchain works with the app (combined iOS 5/6 builds).
@@ -54,7 +62,8 @@ runtime-515, overlays, assemble). With that toolchain:
   swift.org runtime (same check, reproduced: 3 imports reported).
 Device execution: PENDING (not observed).
 
-Known non-source inputs: the armv7/armv7s Swift 5.10.1 stdlib *modules* come from the author's pinned release pkg
-(`BASELINE_PKG_URL`, SHA-256 in build-all.sh); the official swift.org package only ships arm64 modules.
+Known non-source inputs: the swift.org 5.10.1 bootstrap compiler (required because Swift is self-hosted), Xcode
+13.4.1 and the pinned theos SDKs. The armv7/armv7s/arm64 Swift 5.10.1 standard library and modules are now built
+from source by `build-ios-stdlib510.sh`, so no prebuilt Swift iOS stdlib package is used.
 Paths containing spaces are rejected up front. An attached iOS device can make Xcode 13.4.1's xcodebuild hang
 on this macOS; unplug it while building.

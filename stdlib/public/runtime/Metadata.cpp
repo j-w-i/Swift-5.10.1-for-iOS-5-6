@@ -3164,6 +3164,15 @@ static void initGenericClassObjCName(ClassMetadata *theClass) {
   getROData(theMetaclass)->Name = name;
 }
 
+#if defined(SWIFT_STDLIB_LEGACY_SDK_OBJC_HOOK)
+// Pre-iOS-16 SDKs do not declare the lazy class-name hook, but the symbol only has to be
+// weak-imported: installLazyClassNameHook() falls back to eager names when it is absent.
+typedef const char *(*objc_hook_lazyClassNamer)(Class);
+extern "C" void objc_setHook_lazyClassNamer(objc_hook_lazyClassNamer newValue,
+                                            objc_hook_lazyClassNamer *oldValue)
+    __attribute__((weak_import));
+#endif
+
 static bool installLazyClassNameHook() {
   static objc_hook_lazyClassNamer oldHook;
   auto myHook = [](Class theClass) -> const char * {
