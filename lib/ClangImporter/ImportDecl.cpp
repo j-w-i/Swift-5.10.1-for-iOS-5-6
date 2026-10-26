@@ -8142,17 +8142,24 @@ void ClangImporter::Implementation::importAttributes(
             owner = category->getClassInterface();
           memberName = property->getName();
         }
-        if (owner &&
-            (owner->getName() == "NSLayoutConstraint" ||
-             (owner->getName() == "UIView" &&
-              (memberName == "translatesAutoresizingMaskIntoConstraints" ||
-               memberName == "setTranslatesAutoresizingMaskIntoConstraints" ||
-               memberName == "constraints" || memberName == "addConstraint" ||
-               memberName == "addConstraints" || memberName == "removeConstraint" ||
-               memberName == "removeConstraints" || memberName == "updateConstraints" ||
-               memberName == "updateConstraintsIfNeeded" ||
-               memberName == "setNeedsUpdateConstraints" ||
-               memberName == "needsUpdateConstraints")))) {
+        // UIView's constraint members cannot be backported at the ObjC level:
+        // the runtime cannot add Swift-implemented methods before first use.
+        // Mark them unavailable for iOS 5 so the package's Swift shims are the
+        // only candidates (no ambiguity), and leave the class itself available
+        // so its ObjC surface works through the package's runtime bridge.
+        bool isUIViewMember = owner && owner->getName() == "UIView" &&
+            (memberName == "translatesAutoresizingMaskIntoConstraints" ||
+             memberName == "setTranslatesAutoresizingMaskIntoConstraints" ||
+             memberName == "constraints" || memberName == "addConstraint" ||
+             memberName == "addConstraints" || memberName == "removeConstraint" ||
+             memberName == "removeConstraints" || memberName == "updateConstraints" ||
+             memberName == "updateConstraintsIfNeeded" ||
+             memberName == "setNeedsUpdateConstraints" ||
+             memberName == "needsUpdateConstraints");
+        if (isUIViewMember) {
+          PlatformAgnostic = PlatformAgnosticAvailabilityKind::Unavailable;
+          AnyUnavailable = true;
+        } else if (owner && owner->getName() == "NSLayoutConstraint") {
           introduced = llvm::VersionTuple(5, 0);
         }
       }
