@@ -32,7 +32,8 @@ From `utils/legacy-ios5-mac`, run:
 bash build-collection-runtime.sh /absolute/SDK /absolute/clang /absolute/ar /absolute/fresh-output
 ```
 
-Only these vendored sources are compiled, serially, for armv7 iOS 5.0 with ARC,
+Only these vendored sources are compiled, serially, for armv7 iOS 5.0 in ARM
+instruction mode (`-marm`) with ARC,
 blocks, no Clang modules, and availability errors enabled. Inputs are explicit;
 there is no network fetch, SDK discovery, package dependency, prebuilt archive,
 installed-toolchain write or whole-toolchain build. Outputs retain commands,

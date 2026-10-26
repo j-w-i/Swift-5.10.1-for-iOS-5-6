@@ -48,6 +48,16 @@ registration, dequeue, scroll-position options and scroll-direction enums. It
 checks that iOS 5 references are defined by the toolchain UIKit runtime and that
 iOS 6 references remain native. `qualify-ios5.sh` runs this check automatically.
 
+## ARM/Thumb startup validation
+
+An iOS 5 device run of the first integrated build crashed in
+`PSTInstallIndexPathAdditions`: its constructor pointer had no Thumb bit even
+though its symbol/code was Thumb. Both PST constructor entries were affected.
+The source runtime builder now compiles the complete Objective-C runtime with
+`-marm`, including callback and method implementations. No binary pointers are
+patched. Assembly and qualification audit the linked initializer entries against
+the Mach-O symbol instruction-state flags and reject the broken build.
+
 Static compilation and linkage are not device-execution proof. Test on a real
 iOS 5 device and on iOS 6 before claiming runtime qualification; the profile's
 `deviceExecution` remains `pending` until separately observed.

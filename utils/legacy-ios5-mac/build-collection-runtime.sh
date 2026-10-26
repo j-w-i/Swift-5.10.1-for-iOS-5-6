@@ -25,7 +25,10 @@ cp "$SRC/SNAPSHOT.json" "$OUT/legacy-collection/SNAPSHOT.json"
 OBJECTS=()
 for source in "$SRC"/*.m; do
   name=$(basename -- "$source" .m)
-  command=("$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -O2 -g0
+  # This LLVM/ld64 combination drops Thumb bits on local ctor relocations.
+  # iOS 5 dyld then executes Thumb code in ARM mode. Build every runtime method
+  # and callback in ARM mode; never repair pointers by patching the binary.
+  command=("$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" -O2 -g0
     -fobjc-arc -fblocks -fno-modules -fvisibility=default -DPST_TOOLCHAIN_RUNTIME=1
     "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac"
     -Werror=unguarded-availability -Werror=unguarded-availability-new
@@ -44,7 +47,7 @@ import hashlib, json, pathlib, subprocess, sys
 src, sdk, clang, ar, out = map(pathlib.Path, sys.argv[1:])
 hashfile = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 manifest = {
-    'target': 'armv7-apple-ios5.0', 'arc': True, 'blocks': True,
+    'target': 'armv7-apple-ios5.0', 'instructionSet': 'ARM', 'arc': True, 'blocks': True,
     'sdk': str(sdk.resolve()), 'clang': str(clang.resolve()), 'ar': str(ar.resolve()),
     'clangVersion': subprocess.check_output([str(clang), '--version'], text=True),
     'sourceSHA256': {p.name: hashfile(p) for p in sorted(src.iterdir()) if p.is_file()},

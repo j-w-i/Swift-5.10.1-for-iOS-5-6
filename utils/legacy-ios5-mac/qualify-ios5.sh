@@ -133,6 +133,9 @@ echo "== 1/5 static build products"
 "$TC/usr/bin/swift-frontend" --version > "$OUTPUT/logs/static-build.txt" 2>&1 || die "swift-frontend --version failed"
 if [ -n "$BUILDLOG" ]; then cp "$BUILDLOG" "$OUTPUT/logs/compiler-515.log"; else cp "$OUTPUT/logs/static-build.txt" "$OUTPUT/logs/compiler-515.log"; fi
 echo "   $(head -1 "$OUTPUT/logs/static-build.txt")"
+/usr/bin/python3 "$HERE/check-macho-initializers.py" "$RES/iphoneos/libswiftUIKit.dylib" \
+  > "$OUTPUT/logs/arm-initializers.log" 2>&1 \
+  || { tail -30 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb runtime initializer"; }
 
 echo "== 2/5 ABI class marking"
 bash "$HERE/check-class-marking.sh" "$TC/usr/bin/swiftc" "$OUTPUT/class-marking" "$TC/usr/lib/swift" \

@@ -78,6 +78,24 @@ for name in ('_OBJC_CLASS_$_PSTCollectionView', '_OBJC_CLASS_$_PSTCollectionView
 assert '_OBJC_CLASS_$_UICollectionView' not in symbols
 print('PASS: fallback UIKit spelling emits linkable PST class/metaclass and C constant references')
 PY
+# Inspect the *linked* image, not just nm's Thumb symbol annotations or .o
+# relocations. Old armv7 dyld calls raw __mod_init_func pointers and needs bit0
+# to agree with N_ARM_THUMB_DEF. A correct symbol alone does not prove this.
+"${PYTHON:-python3}" "$HERE/check-macho-initializers.py" --self-test > "$OUT/initializer-audit-self-test.log" 2>&1
+# Minimal source-runtime-only link reproduces the final relocation step without
+# rebuilding overlays or touching installed toolchains. No undefined suppression.
+"$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -dynamiclib \
+  -Xlinker -force_load -Xlinker "$OUT/one/libswiftLegacyCollectionView.a" \
+  -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics \
+  -lobjc -lSystem -Xlinker -install_name -Xlinker @rpath/libPSTInitializerProbe.dylib \
+  -o "$OUT/libPSTInitializerProbe.dylib" > "$OUT/initializer-link.log" 2>&1
+"${PYTHON:-python3}" "$HERE/check-macho-initializers.py" "$OUT/libPSTInitializerProbe.dylib" \
+  > "$OUT/initializer-audit.log" 2>&1 || { cat "$OUT/initializer-audit.log" >&2; exit 1; }
+if [ -n "${COLLECTION_LINKED_DYLIB:-}" ]; then
+  "${PYTHON:-python3}" "$HERE/check-macho-initializers.py" "$COLLECTION_LINKED_DYLIB" \
+    > "$OUT/integrated-initializer-audit.log" 2>&1 || { cat "$OUT/integrated-initializer-audit.log" >&2; exit 1; }
+fi
+echo 'PASS: linked runtime initializer pointer audit'
 # Reusing output must fail rather than silently accepting stale objects.
 if bash "$HERE/build-collection-runtime.sh" "$SDK" "$CLANG" "$AR" "$OUT/one" > "$OUT/reuse.log" 2>&1; then
   echo 'FAIL: runtime builder accepted stale output' >&2; exit 1

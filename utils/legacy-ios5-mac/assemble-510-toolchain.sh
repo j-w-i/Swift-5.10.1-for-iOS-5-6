@@ -19,6 +19,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # The python block is read from stdin, so it cannot use __file__; pass the helper
 # location explicitly for the dylib version normalization step.
 export LEGACY_NORMALIZE_DYLIB_VERSIONS="$HERE/normalize-dylib-versions.py"
+export LEGACY_CHECK_MACHO_INITIALIZERS="$HERE/check-macho-initializers.py"
 [ -f "$LEGACY_NORMALIZE_DYLIB_VERSIONS" ] || { printf '%s\n' 'missing normalize-dylib-versions.py beside this script' >&2; exit 1; }
 exec python3 - "$@" <<'PY'
 
@@ -269,6 +270,10 @@ try:
     # beside, so the LC_ID_DYLIB versions can be lower than what their consumers
     # require; iOS 5 dyld rejects that ("requires 1.0.0 ... provides 0.0.0").
     run(sys.executable, os.environ['LEGACY_NORMALIZE_DYLIB_VERSIONS'], str(ios))
+    # A linked constructor is not safe merely because its symbol resolves:
+    # iOS 5 dyld needs the pointer's instruction-state bit to match its code.
+    run(sys.executable, os.environ['LEGACY_CHECK_MACHO_INITIALIZERS'],
+        str(ios / 'libswiftUIKit.dylib'))
 
     replace_copy(crt1, ios / 'crt1.3.1.o')
     info['CFBundleIdentifier'] = ID
