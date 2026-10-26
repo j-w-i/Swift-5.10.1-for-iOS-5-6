@@ -122,6 +122,11 @@ BUILDLOG=""
 if [ -n "${LEGACY_BUILD_ROOT:-}" ] && [ -s "$LEGACY_BUILD_ROOT/logs/compiler-515.log" ]; then
   BUILDLOG="$LEGACY_BUILD_ROOT/logs/compiler-515.log"
 fi
+# The profile publisher requires every provenance log to be non-empty. Successful commands are often silent,
+# so record an explicit pass line when a log produced no diagnostics.
+ensure_log() { # file message
+  [ -s "$1" ] || printf '%s\n' "$2" > "$1"
+}
 
 mkdir -p "$OUTPUT/logs"
 echo "== 1/5 static build products"
@@ -132,6 +137,7 @@ echo "   $(head -1 "$OUTPUT/logs/static-build.txt")"
 echo "== 2/5 ABI class marking"
 bash "$HERE/check-class-marking.sh" "$TC/usr/bin/swiftc" "$OUTPUT/class-marking" "$TC/usr/lib/swift" \
   > "$OUTPUT/logs/class-marking.log" 2>&1 || { tail -20 "$OUTPUT/logs/class-marking.log" >&2; die "class-marking check failed"; }
+ensure_log "$OUTPUT/logs/class-marking.log" "PASS: class-marking check completed without diagnostics"
 
 echo "== 3/5 iOS 5 armv7 link (LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN)"
 mkdir -p "$OUTPUT/ios5-app"
@@ -149,12 +155,14 @@ SDKROOT_ARGS=(-sdk "$SDK")
   -Xfrontend -disable-autolink-library -Xfrontend swiftFileProvider \
   -o "$OUTPUT/ios5-app/main.o" > "$OUTPUT/logs/ios5-compile.log" 2>&1 \
   || { tail -20 "$OUTPUT/logs/ios5-compile.log" >&2; die "iOS 5 compile failed"; }
+ensure_log "$OUTPUT/logs/ios5-compile.log" "PASS: iOS 5 compile completed without diagnostics"
 "$HOST_CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -nostartfiles -Wl,-no_new_main \
   -L "$RES/iphoneos" "$OUTPUT/ios5-app/main.o" \
   "$RES/iphoneos/crt1.3.1.o" "$RES/iphoneos/libswiftLegacyIOS5Backports.a" \
   -lobjc -lSystem -Wl,-rpath,@executable_path/Frameworks -o "$OUTPUT/ios5-app/App" \
   > "$OUTPUT/logs/ios5-link.log" 2>&1 \
   || { tail -20 "$OUTPUT/logs/ios5-link.log" >&2; die "iOS 5 link failed"; }
+ensure_log "$OUTPUT/logs/ios5-link.log" "PASS: iOS 5 link completed without linker diagnostics"
 OTOOL="$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin/otool"; [ -x "$OTOOL" ] || OTOOL=/usr/bin/otool
 "$OTOOL" -l "$OUTPUT/ios5-app/App" > "$OUTPUT/ios5-app/load-commands.txt"
 grep -q "cmd LC_UNIXTHREAD" "$OUTPUT/ios5-app/load-commands.txt" || die "iOS 5 executable has no LC_UNIXTHREAD"
@@ -169,10 +177,12 @@ printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n
 "$TC/usr/bin/swiftc" -c "$OUTPUT/default-ios6-app/main.swift" -target armv7-apple-ios7.0 "${SDKROOT_ARGS[@]}" \
   -resource-dir "$TC/usr/lib/swift" -o "$OUTPUT/default-ios6-app/main.o" > "$OUTPUT/logs/default-ios6-compile.log" 2>&1 \
   || { tail -20 "$OUTPUT/logs/default-ios6-compile.log" >&2; die "default-route compile failed"; }
+ensure_log "$OUTPUT/logs/default-ios6-compile.log" "PASS: default-route compile completed without diagnostics"
 "$HOST_CLANG" -target armv7-apple-ios7.0 -isysroot "$SDK" -L "$TC/usr/lib/swift/iphoneos" \
   "$OUTPUT/default-ios6-app/main.o" -lobjc -lSystem -o "$OUTPUT/default-ios6-app/App" \
   > "$OUTPUT/logs/default-ios6-link.log" 2>&1 \
   || { tail -20 "$OUTPUT/logs/default-ios6-link.log" >&2; die "default-route link failed"; }
+ensure_log "$OUTPUT/logs/default-ios6-link.log" "PASS: default-route link completed without linker diagnostics"
 "$OTOOL" -l "$OUTPUT/default-ios6-app/App" > "$OUTPUT/default-ios6-app/load-commands.txt"
 grep -q "cmd LC_MAIN" "$OUTPUT/default-ios6-app/load-commands.txt" || die "default-route executable has no LC_MAIN"
 grep -q "cmd LC_UNIXTHREAD" "$OUTPUT/default-ios6-app/load-commands.txt" && die "default-route executable wrongly uses LC_UNIXTHREAD"
