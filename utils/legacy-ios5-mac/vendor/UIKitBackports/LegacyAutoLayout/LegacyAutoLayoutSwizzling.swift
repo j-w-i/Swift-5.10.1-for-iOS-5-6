@@ -75,7 +75,10 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// RRAutoLayout `rr_r_layoutSubviews`: run the legacy layout pass, then the original UIKit pass.
     @objc dynamic func rr_r_layoutSubviews() {
         let view = bridgedView(self)
-        if LegacyAutoLayout.isActive {
+        // Only run the engine when this view's constraint graph or layout is actually dirty.
+        // Unconditionally solving here means a full subtree Cassowary pass for every view whose
+        // -layoutSubviews UIKit calls, which is what made scrolling and cell reuse slow.
+        if LegacyAutoLayout.isActive && (view.legacyConstraintsAreDirty || view.legacyNeedsLayoutPass) {
             view.legacyLayoutIfNeeded()
         }
         LegacyAutoLayoutInstaller.callOriginalVoid(

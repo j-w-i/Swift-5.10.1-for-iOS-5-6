@@ -507,6 +507,14 @@ extension UIView {
         ) as? [RRLayoutConstraint]) ?? []
     }
 
+    /// Whether the backported layout pass is pending for this view.
+    ///
+    /// Used to skip solving the constraint system when nothing in this view changed: the swizzled
+    /// `-layoutSubviews` hook otherwise runs a complete solver pass for every view in the hierarchy.
+    internal var legacyNeedsLayoutPass: Bool {
+        (objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.needsLayout) as? NSNumber)?.boolValue ?? false
+    }
+
     /// Whether this view's backported `constraintsAreClean` flag is clear (internal, for tests).
     internal var legacyConstraintsAreDirty: Bool {
         let constraintsAreClean = (objc_getAssociatedObject(
