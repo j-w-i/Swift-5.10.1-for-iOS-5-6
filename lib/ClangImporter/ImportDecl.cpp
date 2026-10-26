@@ -5084,7 +5084,15 @@ namespace {
 
       if (declaredNative)
         markMissingSwiftDecl(result);
-      if (decl->getAttr<clang::ObjCRuntimeVisibleAttr>()) {
+      if (decl->getAttr<clang::ObjCRuntimeVisibleAttr>() ||
+          (Impl.SwiftContext.LangOpts.LegacyIOS5ClassMarking &&
+           Impl.SwiftContext.LangOpts.Target.isiOS() &&
+           Impl.SwiftContext.LangOpts.Target.isOSVersionLT(6) &&
+           name.str() == "NSLayoutConstraint" &&
+           result->getParentModule()->getName().str() == "UIKit")) {
+        // The iOS 5 Auto Layout runtime supplies this missing ObjC class before
+        // first use. Resolve it by name rather than emitting an unavailable
+        // OBJC_CLASS_$_NSLayoutConstraint reference into an iOS 5 executable.
         result->setForeignClassKind(ClassDecl::ForeignKind::RuntimeOnly);
       }
 
@@ -8114,6 +8122,40 @@ void ClangImporter::Implementation::importAttributes(
 
       llvm::VersionTuple obsoleted = avail->getObsoleted();
       llvm::VersionTuple introduced = avail->getIntroduced();
+
+      // Opt-in iOS 5 UIKit runtime backports preserve Apple's ObjC selectors.
+      // Do not relax unrelated APIs or any normal/iOS 6+ compilation.
+      if (C.LangOpts.LegacyIOS5ClassMarking &&
+          C.LangOpts.Target.isiOS() && C.LangOpts.Target.isOSVersionLT(6) &&
+          Platform == "ios" && introduced == llvm::VersionTuple(6, 0)) {
+        const clang::ObjCInterfaceDecl *owner = nullptr;
+        StringRef memberName;
+        if (auto interface = dyn_cast<clang::ObjCInterfaceDecl>(ClangDecl))
+          owner = interface;
+        else if (auto method = dyn_cast<clang::ObjCMethodDecl>(ClangDecl)) {
+          owner = method->getClassInterface();
+          memberName = method->getSelector().getNameForSlot(0);
+        } else if (auto property = dyn_cast<clang::ObjCPropertyDecl>(ClangDecl)) {
+          if (auto interface = dyn_cast<clang::ObjCInterfaceDecl>(property->getDeclContext()))
+            owner = interface;
+          else if (auto category = dyn_cast<clang::ObjCCategoryDecl>(property->getDeclContext()))
+            owner = category->getClassInterface();
+          memberName = property->getName();
+        }
+        if (owner &&
+            (owner->getName() == "NSLayoutConstraint" ||
+             (owner->getName() == "UIView" &&
+              (memberName == "translatesAutoresizingMaskIntoConstraints" ||
+               memberName == "setTranslatesAutoresizingMaskIntoConstraints" ||
+               memberName == "constraints" || memberName == "addConstraint" ||
+               memberName == "addConstraints" || memberName == "removeConstraint" ||
+               memberName == "removeConstraints" || memberName == "updateConstraints" ||
+               memberName == "updateConstraintsIfNeeded" ||
+               memberName == "setNeedsUpdateConstraints" ||
+               memberName == "needsUpdateConstraints")))) {
+          introduced = llvm::VersionTuple(5, 0);
+        }
+      }
 
       const auto &replacement = avail->getReplacement();
 
