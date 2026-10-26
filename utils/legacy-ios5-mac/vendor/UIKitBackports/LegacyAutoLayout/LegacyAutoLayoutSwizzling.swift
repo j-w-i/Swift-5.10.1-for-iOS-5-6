@@ -66,8 +66,12 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
 
     /// Re-types the Objective-C `self` of a hook (statically this class) as the `UIView` it really is,
     /// without changing ARC ownership.
-    private func bridgedView(_ object: AnyObject) -> UIView {
+    private static func bridgedView(_ object: AnyObject) -> UIView {
         Unmanaged<UIView>.fromOpaque(Unmanaged.passUnretained(object).toOpaque()).takeUnretainedValue()
+    }
+
+    private func bridgedView(_ object: AnyObject) -> UIView {
+        Self.bridgedView(object)
     }
 
     // MARK: Exchanged UIView methods
@@ -260,17 +264,32 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
 
     /// `-[UIView addConstraint:]` replacement.
     @objc dynamic func rr_a_addConstraint(_ constraint: AnyObject) {
-        let view = bridgedView(self)
-        if let model = legacyModel(for: constraint) {
-            view.legacyAddConstraint(model)
-            var owned = (objc_getAssociatedObject(view, &nativeConstraintOwnersKey) as? [AnyObject]) ?? []
-            if !owned.contains(where: { $0 === constraint }) { owned.append(constraint) }
-            objc_setAssociatedObject(view, &nativeConstraintOwnersKey, owned, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
+        Self.hookAddConstraint(self, constraint)
     }
 
     @objc dynamic func rr_a_removeConstraint(_ constraint: AnyObject) {
-        let view = bridgedView(self)
+        Self.hookRemoveConstraint(self, constraint)
+    }
+
+    /// Shared body for `addConstraint:` and `addConstraints:`.
+    ///
+    /// Static dispatch is deliberate: these hooks are installed as IMPs on
+    /// `UIView`, so `self` is the receiving *view* (e.g. an `OALayoutGuide`), and
+    /// calling another `@objc dynamic` hook method on `self` would send a
+    /// selector the view does not implement (`doesNotRecognizeSelector:` —
+    /// the iOS 5 UIStackView crash). Hooks must only call non-`@objc` helpers.
+    private static func hookAddConstraint(_ receiver: AnyObject, _ constraint: AnyObject) {
+        let view = bridgedView(receiver)
+        guard let model = legacyModel(for: constraint) else { return }
+        view.legacyAddConstraint(model)
+        var owned = (objc_getAssociatedObject(view, &nativeConstraintOwnersKey) as? [AnyObject]) ?? []
+        if !owned.contains(where: { $0 === constraint }) { owned.append(constraint) }
+        objc_setAssociatedObject(view, &nativeConstraintOwnersKey, owned, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    /// Shared body for `removeConstraint:` and `removeConstraints:`.
+    private static func hookRemoveConstraint(_ receiver: AnyObject, _ constraint: AnyObject) {
+        let view = bridgedView(receiver)
         if let model = legacyModel(for: constraint) { view.legacyRemoveConstraint(model) }
         var owned = (objc_getAssociatedObject(view, &nativeConstraintOwnersKey) as? [AnyObject]) ?? []
         owned.removeAll { $0 === constraint }
@@ -287,11 +306,11 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
 
     /// `-[UIView addConstraints:]` replacement.
     @objc dynamic func rr_a_addConstraints(_ constraints: [AnyObject]) {
-        for constraint in constraints { rr_a_addConstraint(constraint) }
+        for constraint in constraints { Self.hookAddConstraint(self, constraint) }
     }
 
     @objc dynamic func rr_a_removeConstraints(_ constraints: [AnyObject]) {
-        for constraint in constraints { rr_a_removeConstraint(constraint) }
+        for constraint in constraints { Self.hookRemoveConstraint(self, constraint) }
     }
 
     /// `-[UIView updateConstraints]` replacement: RRAutoLayout's content-size + autoresizing hooks.
@@ -331,7 +350,15 @@ internal enum LegacyAutoLayoutInstaller {
     private static var installed = false
     private static var exchanges: [(original: Selector, replacement: Selector)] = []
     private static var originalImplementations: [Selector: IMP] = [:]
-    private static var addedSelectors: [Selector] = []
+    private static var hookImplementations: [Selector: IMP] = [:]
+    private static var addedSelectors: [(selector: Selector, hook: Selector)] = []
+    private static var forceInstall = false
+
+    /// Problems found by `auditInstalledSurface()` when the bridge was installed.
+    /// Empty means every injected selector is present with the expected hook and
+    /// every forward has a stored original IMP. Device/simulator smoke fixtures
+    /// can read this through `LegacyAutoLayoutSelfCheck`.
+    internal private(set) static var auditIssues: [String] = []
 
     internal static var isInstalled: Bool {
         installed
@@ -340,13 +367,24 @@ internal enum LegacyAutoLayoutInstaller {
     // MARK: Public (module-internal) entry points
 
     internal static func install() {
+        install(force: false)
+    }
+
+    /// Installs the bridge. `force` is only used by the legacy-name install path
+    /// (`LegacyAutoLayout.installForLegacyNames()`): a binary compiled against the
+    /// iOS 5 name shims must run the backport engine even on a modern OS, exactly
+    /// like the simulator stress test does. Ordinary installs keep the runtime
+    /// gate and force is never set from `installIfNeeded()`.
+    internal static func install(force: Bool) {
         guard !installed else { return }
-        guard LegacyAutoLayout.isRequired else { return }
+        forceInstall = force
+        defer { forceInstall = false }
+        guard force || LegacyAutoLayout.isRequired else { return }
         // Belt and braces on top of the availability gate: if UIKit already answers the constraint-
         // based-layout questions, the system machinery is authoritative and the backport must not
         // install anything (RRAutoLayout's check, expressed as "does the system have Auto Layout?").
         // There is intentionally no force-install path on iOS 6+.
-        guard !systemHasConstraintBasedLayout() else { return }
+        guard force || !systemHasConstraintBasedLayout() else { return }
 
         // 1. Exchange the lifecycle that drives the legacy pass.
         exchangeIfPresent(
@@ -419,43 +457,59 @@ internal enum LegacyAutoLayoutInstaller {
         addMethodIfAbsent(selector: NSSelectorFromString("contentCompressionResistancePriorityForAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentCompressionResistancePriorityForAxis(_:)))
         addMethodIfAbsent(selector: NSSelectorFromString("setContentCompressionResistancePriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentCompressionResistancePriority(_:forAxis:)))
         installed = true
+        auditIssues = auditInstalledSurface()
+        if !auditIssues.isEmpty {
+            // A broken bridge surface must never crash the app: record the issues
+            // and keep the already-installed hooks (they are individually guarded).
+            if ProcessInfo.processInfo.environment["LEGACY_AUTOLAYOUT_AUDIT"] == "1" {
+                for issue in auditIssues {
+                    FileHandle.standardError.write(Data("legacy-autolayout audit: \(issue)\n".utf8))
+                }
+            }
+        }
     }
 
     // MARK: Original IMP forwarding
 
     internal static func callOriginalVoid(selector: Selector, receiver: AnyObject) {
-        guard let implementation = originalImplementations[selector] else { return }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return }
         typealias Function = @convention(c) (AnyObject, Selector) -> Void
         unsafeBitCast(implementation, to: Function.self)(receiver, selector)
     }
 
     internal static func callOriginalVoidObject(selector: Selector, receiver: AnyObject, argument: AnyObject) {
-        guard let implementation = originalImplementations[selector] else { return }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return }
         typealias Function = @convention(c) (AnyObject, Selector, AnyObject) -> Void
         unsafeBitCast(implementation, to: Function.self)(receiver, selector, argument)
     }
 
     internal static func callOriginalVoidRect(selector: Selector, receiver: AnyObject, argument: CGRect) {
-        guard let implementation = originalImplementations[selector] else { return }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return }
         typealias Function = @convention(c) (AnyObject, Selector, CGRect) -> Void
         unsafeBitCast(implementation, to: Function.self)(receiver, selector, argument)
     }
 
     internal static func callOriginalVoidPoint(selector: Selector, receiver: AnyObject, argument: CGPoint) {
-        guard let implementation = originalImplementations[selector] else { return }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return }
         typealias Function = @convention(c) (AnyObject, Selector, CGPoint) -> Void
         unsafeBitCast(implementation, to: Function.self)(receiver, selector, argument)
     }
 
     internal static func callOriginalVoidTransform(selector: Selector, receiver: AnyObject, argument: CGAffineTransform) {
-        guard let implementation = originalImplementations[selector] else { return }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return }
         typealias Function = @convention(c) (AnyObject, Selector, CGAffineTransform) -> Void
         unsafeBitCast(implementation, to: Function.self)(receiver, selector, argument)
     }
 
     internal static func callOriginalInitWithCoder(receiver: AnyObject, coder: NSCoder) -> AnyObject {
         let selector = NSSelectorFromString("initWithCoder:")
-        guard let implementation = originalImplementations[selector] else { return receiver }
+        guard let implementation = originalImplementations[selector],
+              receiver.responds(to: selector) else { return receiver }
         typealias Function = @convention(c) (AnyObject, Selector, NSCoder) -> AnyObject
         return unsafeBitCast(implementation, to: Function.self)(receiver, selector, coder)
     }
@@ -475,9 +529,12 @@ internal enum LegacyAutoLayoutInstaller {
         }
         exchanges.removeAll()
         originalImplementations.removeAll()
+        hookImplementations.removeAll()
         // Methods injected with class_addMethod cannot be removed safely; they are inert unless the
         // bridge is active, and `installed == false` makes every entry point a no-op.
         addedSelectors.removeAll()
+        auditIssues.removeAll()
+        forceInstall = false
         installed = false
         return true
     }
@@ -502,18 +559,103 @@ internal enum LegacyAutoLayoutInstaller {
             return
         }
         originalImplementations[original] = method_getImplementation(originalMethod)
+        hookImplementations[original] = method_getImplementation(replacementMethod)
         method_exchangeImplementations(originalMethod, replacementMethod)
         exchanges.append((original: original, replacement: replacement))
     }
 
     private static func addMethodIfAbsent(selector: Selector, implementation: Selector) {
-        guard class_getInstanceMethod(UIView.self, selector) == nil,
-              let hookMethod = class_getInstanceMethod(LegacyUIViewRuntimeHooks.self, implementation) else {
+        guard let hookMethod = class_getInstanceMethod(LegacyUIViewRuntimeHooks.self, implementation) else {
+            auditIssues.append("hook method missing: \(implementation)")
+            return
+        }
+        if class_getInstanceMethod(UIView.self, selector) != nil && !forceInstall {
+            // Native API stays authoritative in a normal install.
             return
         }
         let typeEncoding = method_getTypeEncoding(hookMethod)
-        if class_addMethod(UIView.self, selector, method_getImplementation(hookMethod), typeEncoding) {
-            addedSelectors.append(selector)
+        guard let typeEncoding, strlen(typeEncoding) > 0 else {
+            auditIssues.append("hook has no type encoding: \(implementation)")
+            return
         }
+        if class_addMethod(UIView.self, selector, method_getImplementation(hookMethod), typeEncoding) {
+            addedSelectors.append((selector: selector, hook: implementation))
+        } else if forceInstall, let viewMethod = class_getInstanceMethod(UIView.self, selector) {
+            // Force-install (legacy-name binaries on a modern OS / simulator): the
+            // class already implements the selector, so exchange it and keep the
+            // original IMP for the forwarding helpers.
+            originalImplementations[selector] = method_getImplementation(viewMethod)
+            hookImplementations[selector] = method_getImplementation(hookMethod)
+            method_exchangeImplementations(viewMethod, hookMethod)
+            exchanges.append((original: selector, replacement: implementation))
+        } else {
+            auditIssues.append("could not inject selector: \(selector)")
+        }
+    }
+
+    // MARK: Installed-surface audit
+
+    /// Verifies the bridge surface at runtime: every injected selector is present
+    /// on `UIView` with the expected hook IMP, every exchanged method keeps its
+    /// original IMP for forwarding, and every hook selector used by the installer
+    /// exists on the hook class.
+    ///
+    /// This is the defensive audit for the class of crash where a hook forwards to
+    /// a selector that does not exist on the receiving view (or a sibling
+    /// dynamically-dispatched hook selector that was never injected).
+    internal static func auditInstalledSurface() -> [String] {
+        var issues: [String] = []
+        guard installed else { return ["bridge is not installed"] }
+
+        let hookClass: AnyClass = LegacyUIViewRuntimeHooks.self
+        for entry in addedSelectors {
+            guard let installedMethod = class_getInstanceMethod(UIView.self, entry.selector) else {
+                issues.append("injected selector missing on UIView: \(entry.selector)")
+                continue
+            }
+            guard let hookMethod = class_getInstanceMethod(hookClass, entry.hook) else {
+                issues.append("hook method missing: \(entry.hook)")
+                continue
+            }
+            if method_getImplementation(installedMethod) != method_getImplementation(hookMethod) {
+                issues.append("injected selector does not point at its hook: \(entry.selector)")
+            }
+        }
+
+        for (original, replacement) in exchanges {
+            guard let storedOriginal = originalImplementations[original] else {
+                issues.append("exchange without stored original IMP: \(original)")
+                continue
+            }
+            guard let viewMethod = class_getInstanceMethod(UIView.self, original) else {
+                issues.append("exchanged selector missing on UIView: \(original)")
+                continue
+            }
+            guard let hookMethod = class_getInstanceMethod(hookClass, replacement) else {
+                issues.append("exchange hook method missing: \(replacement)")
+                continue
+            }
+            _ = hookMethod
+            if let expectedHook = hookImplementations[original],
+               method_getImplementation(viewMethod) != expectedHook {
+                issues.append("exchanged selector does not point at its hook: \(original)")
+            }
+            if method_getImplementation(viewMethod) == storedOriginal {
+                issues.append("exchanged selector still points at the original IMP: \(original)")
+            }
+        }
+
+        // The plural hooks are only safe when the singular hook helpers are
+        // present (they are static helpers now, but the singular selectors must
+        // still exist so callers can use either entry point).
+        for pair in [("addConstraints:", "addConstraint:"), ("removeConstraints:", "removeConstraint:")] {
+            let plural = NSSelectorFromString(pair.0)
+            let singular = NSSelectorFromString(pair.1)
+            let pluralInstalled = addedSelectors.contains { $0.selector == plural }
+            if pluralInstalled && class_getInstanceMethod(UIView.self, singular) == nil {
+                issues.append("plural hook installed without singular selector: \(pair.0)")
+            }
+        }
+        return issues
     }
 }

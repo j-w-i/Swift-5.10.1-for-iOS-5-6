@@ -104,6 +104,15 @@ enum LegacyAutoLayout {
         }
     }
 
+    /// Re-runs the installed-surface audit and returns the problems found.
+    ///
+    /// A non-empty result means an injected selector, forwarded IMP or hook method
+    /// is inconsistent. Safe to call at any time: it performs no swizzling and
+    /// sends no messages to views.
+    nonisolated static func auditInstalledBridge() -> [String] {
+        LegacyAutoLayoutInstaller.auditInstalledSurface()
+    }
+
     /// Installs the bridge for binaries that were compiled against the iOS 5 name shims.
     ///
     /// The shims are only available when the deployment target is below iOS 6, so reaching this
@@ -111,7 +120,20 @@ enum LegacyAutoLayout {
     /// even on an iOS 6+ device (name binding is decided at compile time, not at runtime). The
     /// public `installIfNeeded()` keeps its runtime gate for the explicit path.
     internal nonisolated static func installForLegacyNames() {
-        ensureInstalled()
+        guard !LegacyAutoLayoutInstaller.isInstalled else { return }
+        // Force-install: this entry point only exists for binaries compiled against
+        // the iOS 5 name shims. Reaching it means the backport types are bound, so
+        // the backport engine must run even when the OS has Auto Layout (that is
+        // what makes the simulator stress test execute the iOS 5 path).
+        let installBlock = {
+            registerNativeAutoLayoutAPI()
+            LegacyAutoLayoutInstaller.install(force: true)
+        }
+        if Thread.isMainThread {
+            installBlock()
+        } else {
+            DispatchQueue.main.sync(execute: installBlock)
+        }
     }
 
     /// Reverts the runtime installation, for tests of the installer itself.

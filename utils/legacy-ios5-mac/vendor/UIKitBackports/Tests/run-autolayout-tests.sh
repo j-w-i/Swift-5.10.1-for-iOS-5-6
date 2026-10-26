@@ -74,6 +74,19 @@ SWIFT
 ENGINE_PATHS=()
 for rel in "${ENGINE_SOURCES[@]}"; do ENGINE_PATHS+=("$VENDOR/$rel"); done
 
+echo "=== 0. hook dispatch audit (injected UIView hooks must not call sibling @objc hooks)"
+"$PY" "$VENDOR/Tests/audit-hook-dispatch.py" "$VENDOR/LegacyAutoLayout/LegacyAutoLayoutSwizzling.swift"
+# Regression check for the audit itself: the pre-fix reference must be rejected.
+mkdir -p "$OUT/build/hook-audit"
+git -C "$REPO" show "$GOLDEN_REF:utils/legacy-ios5-mac/vendor/UIKitBackports/LegacyAutoLayout/LegacyAutoLayoutSwizzling.swift" \
+  > "$OUT/build/hook-audit/swizzling-reference.swift"
+if "$PY" "$VENDOR/Tests/audit-hook-dispatch.py" "$OUT/build/hook-audit/swizzling-reference.swift" \
+     > "$OUT/build/hook-audit/reference.log" 2>&1; then
+  echo 'FAIL: hook dispatch audit did not detect the pre-fix sibling dispatch pattern' >&2
+  exit 1
+fi
+echo 'PASS: hook dispatch audit detects the pre-fix crash pattern and accepts the current file'
+
 CASS="$OUT/build/cassowary"
 echo "=== building Cassowary + engine (current tree)"
 /usr/bin/xcrun swiftc -emit-module -emit-library -module-name Cassowary -O \

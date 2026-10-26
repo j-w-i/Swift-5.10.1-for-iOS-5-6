@@ -63,3 +63,55 @@ newer engine commits land.
 constraints installed/removed, tableau variables and µs per pass. Set
 `LEGACY_AUTOLAYOUT_STATS=1` to print a line per pass to stderr; behaviour is
 unchanged otherwise.
+
+## Hook dispatch audit (injected UIView hooks)
+
+The iOS 5 bridge installs its hooks as IMPs on `UIView`, so inside a hook `self`
+is the receiving view (e.g. `OALayoutGuide`), not the hook class. A hook that
+calls a sibling `@objc dynamic` hook on `self` sends a selector the view does not
+implement and crashes with `doesNotRecognizeSelector:` — this was the iOS 5
+UIStackView crash in `rr_a_addConstraints`. Hooks must call non-`@objc` helpers.
+
+`Tests/audit-hook-dispatch.py` enforces this statically and is part of the harness
+(step 0): it fails if any hook body calls a sibling hook selector or if a
+`#selector` has no hook method, and it is regression-checked against the pre-fix
+`f27d2e0b` file. `LegacyAutoLayout.auditInstalledBridge()` performs the runtime
+counterpart after installation (injected selectors/IMPs, forwarded originals,
+hook methods).
+
+## Device/simulator fixtures
+
+`Tests/LegacyStackViewSmoke.swift` is a runtime fixture (same pattern as
+`utils/legacy-ios5-mac/GenericRuntimeSmoke.swift`: no XCTest, no entry point).
+Compile it into the legacy-names app/backport module and call
+`runLegacyStackViewSmoke()` after launch. It force-installs the bridge through
+`LegacyAutoLayout.installForLegacyNames()`, builds a `UIStackView`, adds arranged
+subviews, toggles hidden, inserts and removes, checks frames are finite, and
+prints the installed-bridge audit. Only an actual iOS 5 device (or a legacy-name
+simulator target built with the iOS 5 overlay) validates iOS 5.
+
+## Simulator hook regression test (iOS 5 injected UIView hooks)
+
+`Tests/run-simulator-hook-test.sh [DEVICE]` builds the staged
+Cassowary/LegacyAutoLayout sources for the current Xcode's iPhoneSimulator SDK,
+force-installs the legacy bridge (`LegacyAutoLayout.installForLegacyNames()`) and
+drives the injected `addConstraints:`/`removeConstraints:` hooks with an
+`OALayoutGuide`-shaped `UIView` subclass, then toggles hidden and inserts/removes
+arranged subviews. It also asserts that a **normal** (non-forced) run is
+unaffected: `installIfNeeded()` refuses to install and native constraints work.
+
+The same test catches the pre-fix crash: stage a file whose plural hooks call the
+sibling `@objc` `rr_a_addConstraint:` selector and the process terminates with
+`-[UIView rr_a_addConstraint:]: unrecognized selector` (the device crash):
+
+```sh
+cp LegacyAutoLayout/LegacyAutoLayoutSwizzling.swift /tmp/regressed.swift
+# reintroduce `rr_a_addConstraint(constraint)` in the addConstraints: loop,
+# then:
+SWIZZLING_OVERRIDE=/tmp/regressed.swift Tests/run-simulator-hook-test.sh
+```
+
+It runs on a modern simulator using the system toolchain because the legacy
+device toolchain ships no simulator Swift stdlib; the fixture
+`Tests/LegacyStackViewSmoke.swift` is the device counterpart for a legacy-name
+app build.

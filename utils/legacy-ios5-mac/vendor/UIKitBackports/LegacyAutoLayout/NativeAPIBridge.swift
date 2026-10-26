@@ -83,6 +83,9 @@ func legacyConstraint(item: Any?, attribute: RRLayoutAttribute,
 /// bridge's methods (firstItem, constant, isActive, ...) report it.
 func legacyAttach(model: RRLayoutConstraint) -> NSLayoutConstraint? {
     guard let cls = NSClassFromString("NSLayoutConstraint") as? NSObject.Type else { return nil }
+    // Never touch a runtime class that does not implement the initializer we are
+    // about to send: the class may exist as a stub on an OS without Auto Layout.
+    guard class_getInstanceMethod(cls as AnyClass, NSSelectorFromString("init")) != nil else { return nil }
     let object = cls.init()
     objc_setAssociatedObject(object, &nativeConstraintModelKey, model, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     return object as? NSLayoutConstraint
