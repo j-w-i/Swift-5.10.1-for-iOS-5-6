@@ -90,12 +90,17 @@
     if (!CGRectEqualToRect(_validLayoutRect, rect)) {
         _validLayoutRect = rect;
         // we only want cell layoutAttributes & supplementaryView layoutAttributes
-        self.cachedLayoutAttributes = [[self.layout layoutAttributesForElementsInRect:rect] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(PSTCollectionViewLayoutAttributes *evaluatedObject, NSDictionary *bindings) {
-            return ([evaluatedObject isKindOfClass:PSTCollectionViewLayoutAttributes.class] &&
-                    ([evaluatedObject isCell] ||
-                            [evaluatedObject isSupplementaryView] ||
-                            [evaluatedObject isDecorationView]));
-        }]];
+        // Filter with a loop: this runs on every layout-rect change (scroll, resize), and
+        // allocating an NSPredicate plus a filtered copy each time is measurable on iOS 5 hardware.
+        NSArray *allAttributes = [self.layout layoutAttributesForElementsInRect:rect];
+        NSMutableArray *filtered = [NSMutableArray arrayWithCapacity:allAttributes.count];
+        for (PSTCollectionViewLayoutAttributes *attributes in allAttributes) {
+            if ([attributes isKindOfClass:PSTCollectionViewLayoutAttributes.class] &&
+                ([attributes isCell] || [attributes isSupplementaryView] || [attributes isDecorationView])) {
+                [filtered addObject:attributes];
+            }
+        }
+        self.cachedLayoutAttributes = filtered;
     }
 }
 

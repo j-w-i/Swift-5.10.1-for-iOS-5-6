@@ -91,7 +91,18 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// let UIKit do its layer layout.
     @objc dynamic func rr_r_layoutSublayersOfLayer(_ layer: CALayer) {
         let view = bridgedView(self)
-        view.legacyUpdateConstraintsIfNeeded()
+        // Walk the constraint-update flags once per invalidation burst, from the
+        // hierarchy root, instead of recursively walking the subtree for every
+        // view on every CoreAnimation commit (which was O(n^2) per commit).
+        if LegacyAutoLayout.isActive {
+            let invalidation = LegacyAutoLayoutRuntime.containerLayoutInvalidationCount
+            if invalidation != view.legacyHandledLayoutInvalidation {
+                view.legacyHandledLayoutInvalidation = invalidation
+                if view.superview == nil {
+                    view.legacyUpdateConstraintsIfNeeded()
+                }
+            }
+        }
         LegacyAutoLayoutInstaller.callOriginalVoidObject(
             selector: NSSelectorFromString("layoutSublayersOfLayer:"),
             receiver: view,
@@ -127,7 +138,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             receiver: view,
             argument: bounds
         )
-        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames {
+        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
             view.legacySetNeedsUpdateConstraints()
         }
     }
@@ -140,7 +151,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             receiver: view,
             argument: center
         )
-        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames {
+        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
             view.legacySetNeedsUpdateConstraints()
         }
     }
@@ -153,7 +164,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             receiver: view,
             argument: transform
         )
-        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames {
+        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
             view.legacySetNeedsUpdateConstraints()
         }
     }

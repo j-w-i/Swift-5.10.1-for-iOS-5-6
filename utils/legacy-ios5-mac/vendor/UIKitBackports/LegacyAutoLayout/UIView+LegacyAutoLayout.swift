@@ -49,6 +49,7 @@ private enum LegacyAutoLayoutKeys {
     static var lastBaselineOffsetFromBottom: UInt8 = 0
     static var constraintsAreClean: UInt8 = 0
     static var needsLayout: UInt8 = 0
+    static var handledInvalidation: UInt8 = 0
     static var translatedAutoresizingConstraints: UInt8 = 0
     static var autoresizingReference: UInt8 = 0
 }
@@ -505,6 +506,34 @@ extension UIView {
             self,
             &LegacyAutoLayoutKeys.translatedAutoresizingConstraints
         ) as? [RRLayoutConstraint]) ?? []
+    }
+
+    /// Whether a geometry change on this view can affect the legacy constraint graph.
+    ///
+    /// Views that do not participate in Auto Layout (default `translatesAutoresizingMaskIntoConstraints`,
+    /// no legacy constraints, no intrinsic size) are positioned by frames alone. Dirtying the
+    /// constraint graph for every frame assignment made non-Auto-Layout containers (collection-view
+    /// cells, overlay views) re-solve and re-invalidate on each layout pass.
+    internal var legacyGeometryAffectsConstraints: Bool {
+        if let storage = objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.constraints) as? NSMutableArray,
+           storage.count > 0 {
+            return true
+        }
+        if !legacyTranslatesAutoresizingMaskIntoConstraints { return true }
+        let intrinsic = legacyIntrinsicContentSize
+        return intrinsic.width != LegacyLayoutMetrics.noIntrinsicMetric
+            || intrinsic.height != LegacyLayoutMetrics.noIntrinsicMetric
+    }
+
+    /// Last global invalidation counter value consumed by this view's constraint walk.
+    internal var legacyHandledLayoutInvalidation: Int {
+        get {
+            (objc_getAssociatedObject(self, &LegacyAutoLayoutKeys.handledInvalidation) as? NSNumber)?.intValue ?? -1
+        }
+        set {
+            objc_setAssociatedObject(self, &LegacyAutoLayoutKeys.handledInvalidation,
+                                     NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
     }
 
     /// Whether the backported layout pass is pending for this view.
