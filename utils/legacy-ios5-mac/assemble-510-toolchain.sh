@@ -238,6 +238,11 @@ try:
         source = linked / ('libswift' + name + '.dylib')
         replace_copy(source, ios / source.name)
     replace_copy(backports, ios / 'libswiftLegacyIOS5Backports.a')
+    # The overlays are linked by a different toolchain than the runtime they sit
+    # beside, so the LC_ID_DYLIB versions can be lower than what their consumers
+    # require; iOS 5 dyld rejects that ("requires 1.0.0 ... provides 0.0.0").
+    run(tool('python3'), str(Path(__file__).with_name('normalize-dylib-versions.py')), str(ios))
+
     replace_copy(crt1, ios / 'crt1.3.1.o')
     info['CFBundleIdentifier'] = ID
     info['DisplayName'] = 'Swift 5.10.1 — iOS 5 Experimental'

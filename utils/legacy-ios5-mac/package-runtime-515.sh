@@ -69,6 +69,13 @@ cat > "$OUT/Info.plist" <<'PL'
 </dict></plist>
 PL
 
+# 2b. Version stamps. The runtime libraries are linked by different tools, so their
+# LC_ID_DYLIB versions can disagree with what their consumers require (iOS 5/6 dyld
+# refuses the image: "libswiftos.dylib requires version 1.0.0 ... but
+# libswiftDispatch.dylib provides version 0.0.0"). Raise them to the highest
+# compatibility version any packaged library requires.
+/usr/bin/python3 "$(dirname "$0")/normalize-dylib-versions.py" "$OUT/usr/lib/swift/iphoneos"
+
 # 3. Release-importable archive (the SDK imports a single .xctoolchain from an archive).
 (cd "$(dirname "$OUT")" && /usr/bin/tar -czf "$(basename "$OUT").tar.gz" "$(basename "$OUT")")
 echo "packaged $(ls "$OUT/usr/lib/swift/iphoneos"/*.dylib | wc -l | tr -d ' ') dylibs into $OUT"
