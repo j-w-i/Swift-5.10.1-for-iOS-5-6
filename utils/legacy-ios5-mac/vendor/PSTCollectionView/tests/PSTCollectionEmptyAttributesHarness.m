@@ -5,6 +5,7 @@
 
 @interface EmptyMetrics : NSObject
 @property NSUInteger created, requested, ended, prepared;
+@property (nonatomic, strong) NSMutableArray *endEvents;
 @end
 @implementation EmptyMetrics
 @end
@@ -115,6 +116,111 @@ static NSArray *Run##PREFIX(void) { \
 RUN_ENGINE(NativeEmpty, UICollectionView)
 RUN_ENGINE(PSTEmpty, PSTCollectionView)
 
+// Reusable-view coverage uses the same layout contract on both engines. There
+// is no separately named public decoration visibility/end-display API; native
+// may route decoration end-display through the supplementary callback. PST has no
+// visibleSupplementaryViewsOfKind:. Observe effective hierarchy visibility for
+// those categories, not private cache membership. Keep the original cell test.
+static EmptyMetrics *supplementaryMetrics, *decorationMetrics;
+static NSString *const SupplementaryKind = @"empty-regression-supplementary";
+static NSString *const DecorationKind = @"empty-regression-decoration";
+#define DEFINE_REUSABLE(CLASS, BASE, METRICS, TAG) \
+@interface CLASS : BASE \
+@property (nonatomic, strong) EmptyMetrics *metrics; \
+@end \
+@implementation CLASS \
+- (instancetype)initWithFrame:(CGRect)frame { \
+    if ((self = [super initWithFrame:frame])) { \
+        self.metrics = METRICS; self.metrics.created++; self.tag = TAG; \
+    } return self; \
+} \
+- (void)prepareForReuse { [super prepareForReuse]; self.metrics.prepared++; } \
+@end
+DEFINE_REUSABLE(NativeSupplementary, UICollectionReusableView, supplementaryMetrics, 101)
+DEFINE_REUSABLE(PSTSupplementary, PSTCollectionReusableView, supplementaryMetrics, 101)
+DEFINE_REUSABLE(NativeDecoration, UICollectionReusableView, decorationMetrics, 201)
+DEFINE_REUSABLE(PSTDecoration, PSTCollectionReusableView, decorationMetrics, 201)
+
+#define DEFINE_MIXED(PREFIX, ORIGINAL, CV, ATTR, REUSABLE, SUPP, DECO) \
+@interface PREFIX##Layout : ORIGINAL##Layout @end \
+@implementation PREFIX##Layout \
+- (ATTR *)layoutAttributesForSupplementaryViewOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)path { \
+    if (self.empty) return nil; \
+    ATTR *a = [ATTR layoutAttributesForSupplementaryViewOfKind:kind withIndexPath:path]; \
+    a.frame = CGRectMake(120, 10, 100, 50); return a; \
+} \
+- (ATTR *)layoutAttributesForDecorationViewOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)path { \
+    if (self.empty) return nil; \
+    ATTR *a = [ATTR layoutAttributesForDecorationViewOfKind:kind withIndexPath:path]; \
+    a.frame = CGRectMake(120, 80, 100, 50); return a; \
+} \
+- (NSArray *)layoutAttributesForElementsInRect:(CGRect)rect { \
+    NSMutableArray *attributes = [[super layoutAttributesForElementsInRect:rect] mutableCopy]; \
+    if (!self.empty) { \
+        NSIndexPath *path = [NSIndexPath indexPathForItem:0 inSection:0]; \
+        for (ATTR *a in @[[self layoutAttributesForSupplementaryViewOfKind:SupplementaryKind atIndexPath:path], \
+                         [self layoutAttributesForDecorationViewOfKind:DecorationKind atIndexPath:path]]) \
+            if (CGRectIntersectsRect(rect, a.frame)) [attributes addObject:a]; \
+    } return attributes; \
+} \
+@end \
+@interface PREFIX##Source : ORIGINAL##Source @end \
+@implementation PREFIX##Source \
+- (REUSABLE *)collectionView:(CV *)view viewForSupplementaryElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)path { \
+    supplementaryMetrics.requested++; \
+    return [view dequeueReusableSupplementaryViewOfKind:kind withReuseIdentifier:@"supplementary" forIndexPath:path]; \
+} \
+- (void)collectionView:(CV *)view didEndDisplayingSupplementaryView:(REUSABLE *)reusable forElementOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)path { \
+    EmptyMetrics *m = [kind isEqual:DecorationKind] ? decorationMetrics : supplementaryMetrics; \
+    m.ended++; \
+    if (!m.endEvents) m.endEvents = [NSMutableArray array]; \
+    [m.endEvents addObject:@{@"kind": kind ?: @"nil", @"class": NSStringFromClass(reusable.class), \
+        @"tag": @(reusable.tag), @"section": @(path.section), @"item": @(path.item), @"preparedAtEnd": @(m.prepared)}]; \
+} \
+@end
+DEFINE_MIXED(NativeMixed, NativeEmpty, UICollectionView, UICollectionViewLayoutAttributes, UICollectionReusableView, NativeSupplementary, NativeDecoration)
+DEFINE_MIXED(PSTMixed, PSTEmpty, PSTCollectionView, PSTCollectionViewLayoutAttributes, PSTCollectionReusableView, PSTSupplementary, PSTDecoration)
+
+static NSDictionary *ReusableSnapshot(UIView *view, Class cls, EmptyMetrics *m, BOOL decoration) {
+    NSMutableArray *details = [NSMutableArray array], *visible = [NSMutableArray array];
+    CollectCellSubviews(view, cls, NO, details);
+    for (NSDictionary *entry in details) if (![entry[@"effectivelyHidden"] boolValue]) [visible addObject:entry[@"tag"]];
+    [visible sortUsingSelector:@selector(compare:)];
+    return @{ @"visibleHierarchyTags": visible, @"displayedSubviews": @(visible.count),
+              @"attachedSubviews": @(details.count), @"subviewDetails": details,
+              @"created": @(m.created), @"prepared": @(m.prepared),
+              @"requested": decoration ? (id)NSNull.null : @(m.requested),
+              @"ended": @(m.ended),
+              @"endEvents": [m.endEvents copy] ?: @[] };
+}
+#define RUN_MIXED(PREFIX, ORIGINAL, CV, SUPP, DECO) \
+static NSArray *Run##PREFIX(void) { \
+    EmptyMetrics *cells = [EmptyMetrics new]; currentMetrics = cells; \
+    supplementaryMetrics = [EmptyMetrics new]; decorationMetrics = [EmptyMetrics new]; \
+    PREFIX##Layout *layout = [PREFIX##Layout new]; \
+    [layout registerClass:DECO.class forDecorationViewOfKind:DecorationKind]; \
+    PREFIX##Source *source = [PREFIX##Source new]; source.metrics = cells; \
+    CV *view = [[CV alloc] initWithFrame:CGRectMake(0, 0, 240, 240) collectionViewLayout:layout]; \
+    view.dataSource = source; view.delegate = source; \
+    [view registerClass:ORIGINAL##Cell.class forCellWithReuseIdentifier:@"cell"]; \
+    [view registerClass:SUPP.class forSupplementaryViewOfKind:SupplementaryKind withReuseIdentifier:@"supplementary"]; \
+    NSMutableArray *steps = [NSMutableArray array]; \
+    NSArray *names = @[@"initial", @"empty-invalidated", @"empty-repeat-1", @"empty-repeat-2", @"empty-repeat-3", \
+                       @"restored", @"restored-repeat", @"second-empty", @"second-empty-repeat", @"second-restored", @"second-restored-repeat"]; \
+    for (NSUInteger i = 0; i < names.count; i++) { \
+        if (i == 1 || i == 5 || i == 7 || i == 9) { layout.empty = (i == 1 || i == 7); [layout invalidateLayout]; } \
+        Layout(view); \
+        [steps addObject:@{@"step": names[i], \
+            @"cells": Snapshot(names[i], view, ORIGINAL##Cell.class, cells, layout.queries), \
+            @"supplementary": ReusableSnapshot(view, SUPP.class, supplementaryMetrics, NO), \
+            @"decoration": ReusableSnapshot(view, DECO.class, decorationMetrics, YES)}]; \
+    } \
+    view.delegate = nil; view.dataSource = nil; currentMetrics = nil; \
+    supplementaryMetrics = nil; decorationMetrics = nil; return steps; \
+}
+RUN_MIXED(NativeMixed, NativeEmpty, UICollectionView, NativeSupplementary, NativeDecoration)
+RUN_MIXED(PSTMixed, PSTEmpty, PSTCollectionView, PSTSupplementary, PSTDecoration)
+
 static void Check(BOOL condition, NSString *message, NSMutableArray *failures) {
     if (!condition) { [failures addObject:message]; fprintf(stderr, "FAIL: %s\n", message.UTF8String); }
 }
@@ -155,7 +261,40 @@ int main(int argc, char **argv) {
             Check([native[i][@"prepared"] isEqual:pst[i][@"prepared"]],
                   [NSString stringWithFormat:@"%@: reuse count native=%@ PST=%@", native[i][@"step"], native[i][@"prepared"], pst[i][@"prepared"]], failures);
         }
-        NSDictionary *payload = @{ @"format": @"pst-empty-attributes-v1", @"nativeSystemVersion": UIDevice.currentDevice.systemVersion,
+        NSArray *nativeMixed = RunNativeMixed(), *pstMixed = RunPSTMixed();
+        for (NSUInteger i = 0; i < nativeMixed.count; i++) {
+            BOOL empty = (i >= 1 && i <= 4) || i == 7 || i == 8;
+            NSUInteger cycles = i >= 7 ? 2 : (i >= 1 ? 1 : 0);
+            NSUInteger restores = i >= 9 ? 2 : (i >= 5 ? 1 : 0);
+            for (NSString *category in @[@"cells", @"supplementary", @"decoration"]) {
+                BOOL cell = [category isEqual:@"cells"], decoration = [category isEqual:@"decoration"];
+                NSDictionary *n = nativeMixed[i][category], *p = pstMixed[i][category];
+                NSArray *tags = empty ? @[] : (cell ? @[@1,@2,@3] : (decoration ? @[@201] : @[@101]));
+                NSString *visibility = cell ? @"visible" : @"visibleHierarchyTags";
+                NSString *displayed = cell ? @"displayedCellSubviews" : @"displayedSubviews";
+                NSUInteger count = cell ? 3 : 1;
+                NSString *context = [NSString stringWithFormat:@"mixed %@ %@", nativeMixed[i][@"step"], category];
+                Check([n[visibility] isEqual:tags], [context stringByAppendingString:@": native visible oracle"], failures);
+                Check([n[displayed] unsignedIntegerValue] == (empty ? 0 : count), [context stringByAppendingString:@": native displayed oracle"], failures);
+                Check([n[@"created"] unsignedIntegerValue] == count, [context stringByAppendingString:@": native reuses original allocation"], failures);
+                Check([n[@"prepared"] unsignedIntegerValue] == count * restores, [context stringByAppendingString:@": native prepares only upon restoration dequeue"], failures);
+                if (!decoration) {
+                    Check([n[@"requested"] unsignedIntegerValue] == count * (restores + 1), [context stringByAppendingString:@": native datasource requests"], failures);
+                }
+                // iOS 27 also reports decorations through the supplementary
+                // delegate callback. Attribute by kind, retain strict parity.
+                Check([n[@"ended"] unsignedIntegerValue] == count * cycles, [context stringByAppendingString:@": native end-display timing"], failures);
+                for (NSString *key in @[visibility, displayed, @"created", @"requested", @"ended", @"prepared"]) {
+                    Check([n[key] isEqual:p[key]], [NSString stringWithFormat:@"%@: %@ native=%@ PST=%@", context, key, n[key], p[key]], failures);
+                }
+            }
+            if (i == 1 || i == 5 || i == 7 || i == 9) {
+                for (NSArray *engine in @[nativeMixed, pstMixed])
+                    Check([engine[i][@"cells"][@"attributeQueries"] unsignedIntegerValue] > [engine[i-1][@"cells"][@"attributeQueries"] unsignedIntegerValue],
+                          [NSString stringWithFormat:@"mixed %@: invalidation re-queries layout", nativeMixed[i][@"step"]], failures);
+            }
+        }
+        NSDictionary *payload = @{ @"format": @"pst-empty-attributes-v2", @"nativeMixed": nativeMixed, @"pstMixed": pstMixed, @"nativeSystemVersion": UIDevice.currentDevice.systemVersion,
             @"nativeOSVersion": NSProcessInfo.processInfo.operatingSystemVersionString,
             @"simulatorUDID": NSProcessInfo.processInfo.environment[@"SIMULATOR_UDID"] ?: @"unknown",
             @"native": native, @"pst": pst, @"failures": failures, @"passed": @(failures.count == 0) };

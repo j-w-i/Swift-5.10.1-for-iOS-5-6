@@ -1635,6 +1635,11 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self reuseSupplementaryView:reusableView];
             }
             else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
+                // UIKit routes retiring decorations through the reusable-view
+                // end-display callback too; the kind identifies the decoration.
+                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
+                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
+                }
                 [self reuseDecorationView:reusableView];
             }
         }
