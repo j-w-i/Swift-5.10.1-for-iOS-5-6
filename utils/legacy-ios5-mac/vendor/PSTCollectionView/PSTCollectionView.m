@@ -530,6 +530,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     }
 
     if (cell) {
+        // Native UIKit prepares a queued view when it is requested again, not
+        // when it stops displaying. Keep delegate-observable state until then.
+        [cell prepareForReuse];
         [reusableCells removeObjectAtIndex:reusableCells.count - 1];
     }else {
         if ([_cellNibDict objectForKey:identifier]) {
@@ -571,6 +574,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     NSMutableArray *reusableViews = [_supplementaryViewReuseQueues objectForKey:kindAndIdentifier];
     PSTCollectionReusableView *view = [reusableViews lastObject];
     if (view) {
+        [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
     }else {
         if ([_supplementaryViewNibDict objectForKey:kindAndIdentifier]) {
@@ -623,6 +627,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     PSTCollectionViewLayoutAttributes *attributes = [collectionViewLayout layoutAttributesForDecorationViewOfKind:elementKind atIndexPath:indexPath];
 
     if (view) {
+        [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
     }else {
         NSDictionary *decorationViewNibDict = collectionViewLayout.decorationViewNibDict;
@@ -1533,12 +1538,11 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 } while (0)
     NSArray *layoutAttributesArray = [_collectionViewData layoutAttributesForElementsInRect:self.bounds];
 
-    if (layoutAttributesArray == nil || layoutAttributesArray.count == 0) {
-        // If our layout source isn't providing any layout information, we should just
-        // stop, otherwise we'll blow away all the currently existing cells.
-        PST_STATS_END_PASS();
-        return;
-    }
+    // An empty attribute set is a valid layout result, not an unavailable layout.
+    // Continue through the set difference below so previously visible views end
+    // displaying and enter reuse even when there are no replacement attributes.
+    // In particular, invalidating a custom layout must not leave stale cells on
+    // screen merely because its data-source item count and bounds stayed fixed.
 
     // Steady state: the data cache already produced this exact attribute set for
     // this exact bounds and the visible views are known to be in sync with it.
@@ -1689,7 +1693,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     NSParameterAssert(identifier.length > 0);
 
     [reusableView removeFromSuperview];
-    [reusableView prepareForReuse];
+    // Dequeue owns prepareForReuse; a view may remain queued indefinitely.
 
     // enqueue cell
     NSMutableArray *reuseableViews = [queue objectForKey:identifier];
