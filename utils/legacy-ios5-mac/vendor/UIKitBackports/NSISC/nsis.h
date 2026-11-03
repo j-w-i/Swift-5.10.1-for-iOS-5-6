@@ -35,6 +35,10 @@ typedef void (*NsisValueChangedFn)(void *ctx, NsisVar *v, NsisEngine *e);
 void nsis_var_set_value_changed(NsisVar *v, NsisValueChangedFn fn, void *ctx);
 const char *nsis_var_name(const NsisVar *v);
 void *nsis_var_marked_constraint(const NsisVar *v);
+/* variableMarkingConstraint: (setter half of the markedConstraint ivar): stamp the
+ * constraint object onto an existing variable. Apple's factory sets the same ivar at
+ * creation; callers that create a variable first (as the index facade does) mark it. */
+void nsis_var_mark(NsisVar *v, void *constraint);
 int nsis_var_restriction(const NsisVar *v);
 
 /* ---- linear expressions (NSISLinearExpression) ---- */

@@ -145,6 +145,8 @@ void nsis_var_set_integral(NsisVar *v, bool i) { v->integral = i; }
 void nsis_var_set_value_changed(NsisVar *v, NsisValueChangedFn fn, void *ctx) { v->cb = fn; v->cbctx = ctx; }
 const char *nsis_var_name(const NsisVar *v) { return v->name; }
 void *nsis_var_marked_constraint(const NsisVar *v) { return v->constraint; }
+/* variableMarkingConstraint: (setter half): the ivar the Apple factory assigns. */
+void nsis_var_mark(NsisVar *v, void *constraint) { v->constraint = constraint; }
 int nsis_var_restriction(const NsisVar *v) { return v->restriction; }
 
 /* ---------------- Foundation container stand-ins */

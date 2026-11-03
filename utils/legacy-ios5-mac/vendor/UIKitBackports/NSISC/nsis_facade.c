@@ -92,17 +92,30 @@ int NSISFacadeVarCreate(void *handle, int restriction, int minimized) {
     return f->count++;
 }
 
+/* Apple's model: a constraint marker IS the variable the constraint expression carries
+ * (variableMarkingConstraint:valueRestriction:shouldBeMinimized: marks the variable; the
+ * caller then adds that same variable as a term). So the marker for index i is exactly
+ * f->vars[i], not a second variable — that is what makes the engine's change/remove/break,
+ * which key on the marker, act on a variable that is actually in the row. */
+static NsisVar *NSISFacadeEnsureMarker(NSISFacadeEngine *f, int index) {
+    if (index < 0 || index >= f->count || !f->vars[index]) return NULL;
+    if (!f->markers[index]) {
+        NsisVar *v = f->vars[index];
+        nsis_var_mark(v, (void *)(intptr_t)(index + 1));  /* distinct markedConstraint per constraint */
+        f->markers[index] = v;
+    }
+    return f->markers[index];
+}
+
 /* terms: termCount*2 entries of (varIndex, coefficient). */
 int NSISFacadeAddConstraint(void *handle, int markerIndex, const int *termVars,
                             const float *termCoefficients, int termCount,
                             float constant, float priority) {
+    (void)priority;   /* the engine takes it only via the marker/integralization paths */
     NSISFacadeEngine *f = (NSISFacadeEngine *)handle;
     if (markerIndex < 0 || markerIndex >= f->count) return 0;
-    NsisVar *marker = f->markers[markerIndex];
-    if (!marker) {
-        marker = nsis_marker_new((void *)(intptr_t)1, NSIS_ZERO, false, priority >= 1000.0f ? 0.0f : -1.0f);
-        f->markers[markerIndex] = marker;
-    }
+    NsisVar *marker = NSISFacadeEnsureMarker(f, markerIndex);
+    if (!marker) return 0;
     NsisExpr *expr = nsis_expr_new();
     if (!expr) return 0;
     for (int i = 0; i < termCount; i++)
@@ -148,14 +161,11 @@ static uint32_t NSISFloatBits(float f) { uint32_t b; memcpy(&b, &f, sizeof b); r
 int NSISFacadeAddConstraintBits(void *handle, int markerIndex, const int *termVars,
                                 const uint32_t *coefficientBits, int termCount,
                                 uint32_t constantBits, uint32_t priorityBits) {
+    (void)priorityBits;   /* the engine takes it only via the marker/integralization paths */
     NSISFacadeEngine *f = (NSISFacadeEngine *)handle;
-    float priority = NSISFloatFromBits(priorityBits);
     if (markerIndex < 0 || markerIndex >= f->count) return 0;
-    NsisVar *marker = f->markers[markerIndex];
-    if (!marker) {
-        marker = nsis_marker_new((void *)(intptr_t)1, NSIS_ZERO, false, priority >= 1000.0f ? 0.0f : -1.0f);
-        f->markers[markerIndex] = marker;
-    }
+    NsisVar *marker = NSISFacadeEnsureMarker(f, markerIndex);
+    if (!marker) return 0;
     NsisExpr *expr = nsis_expr_new();
     if (!expr) return 0;
     for (int i = 0; i < termCount; i++)
@@ -190,24 +200,9 @@ float NSISFacadeArgsEcho(void *handle, int marker, const float *coefficients, in
  *   optional >=:         expr + marker - en == 0        (en >= 0 allows expr >= 0)
  * Optional error variables are internally created and registered for removal.
  */
-enum { NSIS_OP_EQUAL = 0, NSIS_OP_LE = 1, NSIS_OP_GE = 2 };
-
-typedef struct {
-    int markerIndex;
-    int errorPos;      /* -1 when unused */
-    int errorNeg;
-    NsisVar *marker;
-} NSISConstraintRecord;
-
-static void NSISFacadeEnsureRecordCapacity(NSISFacadeEngine *f, int needed) {
-    (void)f; (void)needed;
-}
-
 int NSISFacadeMarkerCreate(void *handle, int index) {
     NSISFacadeEngine *f = (NSISFacadeEngine *)handle;
-    if (index < 0 || index >= f->count || f->markers[index]) return 0;
-    f->markers[index] = nsis_marker_new((void *)(intptr_t)1, NSIS_ZERO, false, -1.0f);
-    return f->markers[index] ? 1 : 0;
+    return NSISFacadeEnsureMarker(f, index) != NULL ? 1 : 0;
 }
 
 int NSISFacadeRemoveConstraintByMarker(void *handle, int markerIndex) {
