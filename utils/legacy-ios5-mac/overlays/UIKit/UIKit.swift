@@ -519,6 +519,17 @@ public let UIPrintJobFailedError = 4
 // UIApplicationMain compatibility
 //===----------------------------------------------------------------------===//
 
+#if LEGACY_IOS5 && os(iOS)
+// UIKit's real @main entry point, introduced with Swift 5.3. The older overlay
+// predates this declaration, although UIApplicationMain itself exists on iOS 5.
+extension UIApplicationDelegate {
+  public static func main() {
+    _ = UIApplicationMain(CommandLine.argc, CommandLine.unsafeArgv, nil,
+                          NSStringFromClass(Self.self))
+  }
+}
+#endif
+
 #if !os(watchOS)
 
 @available(swift, deprecated: 4.2, message: "Use the overload of UIApplicationMain where the type of the second parameter is UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>, which is the same as the type of CommandLine.unsafeArgv.")

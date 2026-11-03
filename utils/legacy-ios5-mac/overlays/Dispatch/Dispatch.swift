@@ -52,44 +52,88 @@ public struct DispatchQoS : Equatable {
 	public let qosClass: QoSClass
 	public let relativePriority: Int
 
+	#if LEGACY_IOS5
+	@available(iOS 5.0, *)
+	#else
 	@available(macOS 10.10, iOS 8.0, *)
+	#endif
 	public static let background = DispatchQoS(qosClass: .background, relativePriority: 0)
 
+	#if LEGACY_IOS5
+	@available(iOS 5.0, *)
+	#else
 	@available(macOS 10.10, iOS 8.0, *)
+	#endif
 	public static let utility = DispatchQoS(qosClass: .utility, relativePriority: 0)
 
+	#if LEGACY_IOS5
+	@available(iOS 5.0, *)
+	#else
 	@available(macOS 10.10, iOS 8.0, *)
+	#endif
 	public static let `default` = DispatchQoS(qosClass: .default, relativePriority: 0)
 
+	#if LEGACY_IOS5
+	@available(iOS 5.0, *)
+	#else
 	@available(macOS 10.10, iOS 8.0, *)
+	#endif
 	public static let userInitiated = DispatchQoS(qosClass: .userInitiated, relativePriority: 0)
 
+	#if LEGACY_IOS5
+	@available(iOS 5.0, *)
+	#else
 	@available(macOS 10.10, iOS 8.0, *)
+	#endif
 	public static let userInteractive = DispatchQoS(qosClass: .userInteractive, relativePriority: 0)
 
 	public static let unspecified = DispatchQoS(qosClass: .unspecified, relativePriority: 0)
 
 	public enum QoSClass {
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		case background
 
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		case utility
 
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		case `default`
 
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		case userInitiated
 
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		case userInteractive
 
 		case unspecified
 
 		// _OSQoSClass is internal on Linux, so this initialiser has to 
 		// remain as an internal init.
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		internal init?(rawValue: _OSQoSClass) {
 			switch rawValue {
 			case .QOS_CLASS_BACKGROUND: self = .background
@@ -102,7 +146,11 @@ public struct DispatchQoS : Equatable {
 			}
 		}
 
+		#if LEGACY_IOS5
+		@available(iOS 5.0, *)
+		#else
 		@available(macOS 10.10, iOS 8.0, *)
+		#endif
 		internal var rawValue: _OSQoSClass {
 			switch self {
 			case .background: return .QOS_CLASS_BACKGROUND

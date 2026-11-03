@@ -95,16 +95,20 @@ extension UIView {
     /// as needing a constraint update/layout. Sorting by priority happens lazily on the next read,
     /// so adding n constraints is O(n) instead of O(n^2 log n).
     func legacyAddConstraint(_ constraint: RRLayoutConstraint) {
+        let start = LegacyBridgeStats.begin()
+        defer { if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.legacyAdd) } }
         LegacyAutoLayout.ensureInstalled()
+        let stateStart = LegacyBridgeStats.begin()
         let state = legacyMutableState(self)
+        if stateStart != 0 { LegacyBridgeStats.record(stateStart, &LegacyBridgeStats.legacyStorage) }
         if !state.constraints.contains(where: { $0 === constraint }) {
             state.constraints.append(constraint)
             state.constraintsSorted = false
-            LegacyLayoutMutation.bump()
+            LegacyLayoutMutation.bumpConstraints()
         }
         // Constraint changes can change the solved geometry; force a fresh autoresizing capture.
-        legacyClearAutoresizingReference(self)
-        legacySetNeedsUpdateConstraints()
+        state.autoresizingReference = nil
+        legacyMarkNeedsConstraintsUpdate(state)
     }
 
     /// Adds several constraints through `legacyAddConstraint(_:)`.
@@ -117,14 +121,16 @@ extension UIView {
 
     /// Removes `constraint` from this view's legacy storage (identity comparison, like UIKit).
     func legacyRemoveConstraint(_ constraint: RRLayoutConstraint) {
+        let start = LegacyBridgeStats.begin()
+        defer { if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.legacyRemove) } }
         guard let state = LegacyViewState.existing(of: self),
               let index = state.constraints.firstIndex(where: { $0 === constraint }) else {
             return
         }
         state.constraints.remove(at: index)
-        LegacyLayoutMutation.bump()
-        legacyClearAutoresizingReference(self)
-        legacySetNeedsUpdateConstraints()
+        LegacyLayoutMutation.bumpConstraints()
+        state.autoresizingReference = nil
+        legacyMarkNeedsConstraintsUpdate(state)
     }
 
     /// Removes several constraints through `legacyRemoveConstraint(_:)`.
@@ -147,26 +153,86 @@ extension UIView {
                 ?? LegacyAutoLayoutDefaults.translatesAutoresizingMaskIntoConstraints
         }
         set {
-            legacyMutableState(self).translatesAutoresizingMaskIntoConstraints = newValue
+            let state = legacyMutableState(self)
+            state.translatesAutoresizingMaskIntoConstraints = newValue
             LegacyLayoutMutation.bump()
             // A flag flip changes whether (and from which geometry) autoresizing constraints are
             // generated, so the captured reference is stale.
-            legacyClearAutoresizingReference(self)
-            legacySetNeedsUpdateConstraints()
+            state.autoresizingReference = nil
+            legacyMarkNeedsConstraintsUpdate(state)
         }
     }
 
     // MARK: Intrinsic content size
 
+    /// The value returned by a subclass's own `-intrinsicContentSize`, or nil when the view only has the backport's
+    /// forwarding method (or the system's).
+    @MainActor
+    private func legacyIntrinsicContentSizeOverride() -> CGSize? {
+        // A class whose image is the system's own UIKit (UIButton, UILabel, ...) has an -intrinsicContentSize that
+        // chains into the backport's method, which would recurse. Classes from the app or from the backport
+        // library (OAStackView / UIStackView) may supply a real override.
+        // Which implementation (if any) a class contributes is a property of the class, so it is resolved once per class
+        // instead of per view per layout pass (class_getImageName + string tests + a method lookup each time).
+        let selector = NSSelectorFromString("intrinsicContentSize")
+        let cls: AnyClass = type(of: self)
+        let key = ObjectIdentifier(cls)
+        let entry: LegacyIntrinsicOverride.ClassEntry
+        if let cached = LegacyIntrinsicOverride.classEntries[key] { entry = cached } else {
+            var resolved: IMP? = nil
+            if !legacyIsSystemUIKitClass(cls), let method = class_getInstanceMethod(cls, selector) {
+                let implementation = method_getImplementation(method)
+                if implementation != LegacyIntrinsicOverride.backportImplementation,
+                   implementation != LegacyIntrinsicOverride.uiViewImplementation { resolved = implementation }
+            }
+            entry = LegacyIntrinsicOverride.ClassEntry(implementation: resolved)
+            LegacyIntrinsicOverride.classEntries[key] = entry
+        }
+        guard let implementation = entry.implementation else { return nil }
+        typealias Getter = @convention(c) (AnyObject, Selector) -> CGSize
+        return unsafeBitCast(implementation, to: Getter.self)(self, selector)
+    }
+
     /// Backport of `intrinsicContentSize` (default `UIViewNoIntrinsicMetric`).
     var legacyIntrinsicContentSize: CGSize {
         get {
+            if let label = self as? UILabel {
+                let key = "\(label.text?.hashValue ?? 0):\(label.attributedText?.length ?? 0):"
+                    + "\(label.font?.fontName ?? ""):\(label.font?.pointSize ?? 0):"
+                    + "\(label.numberOfLines):\(label.lineBreakMode.rawValue)"
+                let state = legacyMutableState(label)
+                if state.intrinsicMeasurementKey != key {
+                    state.intrinsicMeasurementKey = key
+                    state.systemIntrinsicCache = nil
+                }
+            }
             if let value = LegacyViewState.existing(of: self)?.intrinsicContentSize {
                 return value
             }
-            if self is UILabel || self is UIButton || self is UIImageView {
-                return sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+            // A subclass that overrides -intrinsicContentSize (how every Auto Layout app supplies it) is the
+            // authority, exactly as in iOS 6, where the engine messages the view. The backport's own method
+            // forwards here, so it must be skipped to avoid recursion.
+            if let overridden = legacyIntrinsicContentSizeOverride() { return overridden }
+            if legacyUsesDirectStackLayout {
+                let fitted = sizeThatFits(CGSize(width: max(0, bounds.width), height: -1))
+                return CGSize(width: LegacyLayoutMetrics.noIntrinsicMetric, height: fitted.height)
             }
+            if legacyProvidesSystemIntrinsicSize { LegacyViewState.of(self).systemIntrinsicObserved = true }
+            // Real iOS 6+ UILabel measurement: a multiline label that would be
+            // wider than `preferredMaxLayoutWidth` reports that width and the
+            // height it needs at it. Zero keeps the automatic behaviour.
+            if let label = self as? UILabel, label.numberOfLines != 1,
+               let state = LegacyViewState.existing(of: self),
+               let preferred = (state.preferredMaxLayoutWidth ?? 0) > 0 ? state.preferredMaxLayoutWidth : state.measuredWrapWidth,
+               preferred > 0 {
+                let natural = sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+                if natural.width > preferred {
+                    let height = sizeThatFits(CGSize(width: preferred, height: CGFloat.greatestFiniteMagnitude)).height
+                    return CGSize(width: preferred, height: height)
+                }
+                return natural
+            }
+            if let size = legacySystemIntrinsicSize { return size }
             return LegacyAutoLayoutDefaults.intrinsicContentSize
         }
         set {
@@ -272,6 +338,10 @@ extension UIView {
     /// constraints; a clean pass is served from the cached solution.
     func legacyLayoutIfNeeded() {
         LegacyAutoLayout.ensureInstalled()
+        // Apps call layoutIfNeeded from completion handlers on background queues. The engine's caches and solvers are
+        // process-wide mutable state, so concurrent passes corrupt them (traps, spinning hash lookups). Serialize them.
+        LegacyLayoutLock.shared.lock()
+        defer { LegacyLayoutLock.shared.unlock() }
         legacyUpdateConstraintsIfNeeded()
 
         let engine = LegacyLayoutEngine(direction: LegacyAutoLayoutSemanticDirection.current)
@@ -281,11 +351,65 @@ extension UIView {
         let wasApplyingLayoutFrames = LegacyAutoLayoutRuntime.isApplyingLayoutFrames
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = true
         engine.layout(self)
+        // UIKit's second measuring step: multi-line labels the app gave no preferredMaxLayoutWidth are re-measured at the
+        // width layout just gave them, then layout runs again. Bounded: a label settles in one or two rounds.
+        var rounds = 0
+        while rounds < 3, LegacyIntrinsicOverride.remeasureEnabled, legacyRemeasureWrappingLabels() {
+            legacyUpdateConstraintsIfNeeded()
+            engine.layout(self)
+            rounds += 1
+        }
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = wasApplyingLayoutFrames
+
+        // UIKit delivers -layoutSubviews to every view whose bounds size changed during the pass,
+        // parents before children. The legacy engine only writes frames, so deliver it explicitly;
+        // the reentrancy guard above is already released and each view is cleared before the call.
+        legacyDeliverLayoutSubviews()
 
         let state = legacyMutableState(self)
         state.needsLayout = false
         state.containerInvalidated = false
+    }
+
+
+    /// Records the solved width of every multi-line label in this subtree that has no app-provided preferred width and
+    /// invalidates its intrinsic size when that width changed. Returns whether anything was invalidated.
+    @MainActor
+    private func legacyRemeasureWrappingLabels() -> Bool {
+        var changed = false
+        var stack: [UIView] = [self]
+        while let view = stack.popLast() {
+            stack.append(contentsOf: view.subviews)
+            guard let label = view as? UILabel, label.numberOfLines != 1,
+                  (LegacyViewState.existing(of: label)?.preferredMaxLayoutWidth ?? 0) <= 0 else { continue }
+            let width = label.bounds.width
+            guard width > 0 else { continue }
+            let state = legacyMutableState(label)
+            if let previous = state.measuredWrapWidth, abs(previous - width) < 0.5 { continue }
+            state.measuredWrapWidth = width
+            state.systemIntrinsicCache = nil
+            label.legacySetNeedsUpdateConstraints()
+            LegacyLayoutMutation.bump()
+            changed = true
+        }
+        return changed
+    }
+
+    /// Delivers -layoutSubviews in Apple's order (depth-first, parent before children) for views
+    /// whose settled bounds size changed in this pass. Apple's engine marks exactly those views dirty
+    /// and UIKit lays them out; the legacy engine has to do it itself because it writes frames directly.
+    @MainActor
+    private func legacyDeliverLayoutSubviews() {
+        func deliver(_ view: UIView) {
+            if let state = LegacyViewState.existing(of: view), state.pendingLayoutSubviews {
+                state.pendingLayoutSubviews = false
+                if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames {
+                    view.layoutSubviews()
+                }
+            }
+            for child in view.subviews { deliver(child) }
+        }
+        for child in subviews { deliver(child) }
     }
 
     /// Marks this view as needing a layout pass (backport of `setNeedsLayout`).
@@ -298,8 +422,43 @@ extension UIView {
     /// Marks this view (and its container) as needing a constraint update.
     func legacySetNeedsUpdateConstraints() {
         LegacyAutoLayout.ensureInstalled()
-        legacyMutableState(self).constraintsAreClean = false
-        legacyInformContainerThatSubviewsNeedUpdateConstraints()
+        let state = legacyMutableState(self)
+        legacyMarkNeedsConstraintsUpdate(state)
+    }
+
+    /// Dirty marking with an already-resolved state object (one associated-object
+    /// lookup for the whole add/remove/flag change).
+    private func legacyMarkNeedsConstraintsUpdate(_ state: LegacyViewState) {
+        state.needsConstraintUpdateCallback = true
+        state.constraintsAreClean = false
+        state.stackFittingResult = nil
+        legacyPropagateGeometryParticipation()
+        guard let superview = superview else { return }
+        // Every ancestor must see the change. UIKit lays the root view out once before
+        // the controller adds its subviews and constraints, which leaves the root
+        // flagged clean; the layoutSubviews hook and the constraint walk both start
+        // from that flag, so without this the whole hierarchy keeps zero frames.
+        // The walk stops at the first ancestor that is already flagged.
+        var ancestor: UIView? = superview
+        while let current = ancestor {
+            let ancestorState = LegacyViewState.of(current)
+            ancestorState.stackFittingResult = nil
+            if ancestorState.needsLayout && !ancestorState.constraintsAreClean { break }
+            ancestorState.needsLayout = true
+            ancestorState.constraintsAreClean = false
+            ancestor = current.superview
+        }
+        // Dedupe at the container, not at this view: a stack view activating 80
+        // constraints on 20 children used to send 20 native setNeedsLayout calls
+        // (and one per constraint on a host-owned burst). The container flag is
+        // cleared when the container's constraints/layout pass runs.
+        let containerState = LegacyViewState.of(superview)
+        guard !containerState.containerInvalidated else { return }
+        containerState.containerInvalidated = true
+        let start = LegacyBridgeStats.begin()
+        LegacyAutoLayoutRuntime.containerLayoutInvalidationCount += 1
+        superview.setNeedsLayout()
+        if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.containerInvalidation) }
     }
 
     /// Runs the pending constraint update for this view and its subviews (backport of
@@ -308,13 +467,26 @@ extension UIView {
         LegacyAutoLayout.ensureInstalled()
         guard !(LegacyViewState.existing(of: self)?.constraintsAreClean ?? false) else { return }
 
-        legacyUpdateConstraints()
+        let state = legacyMutableState(self)
+        guard !state.isUpdatingConstraintCallbacks else { return }
+        state.isUpdatingConstraintCallbacks = true
+        defer { state.isUpdatingConstraintCallbacks = false }
+        // Native UIKit updates descendants before dispatching this view's public
+        // override. A direct Swift helper call silently bypasses subclass methods.
         for subview in subviews {
             subview.legacyUpdateConstraintsIfNeeded()
         }
+        if state.needsConstraintUpdateCallback {
+            state.needsConstraintUpdateCallback = false
+            if let controller = LegacyControllerConstraintUpdates.owner(of: self) {
+                _ = controller.perform(LegacyControllerConstraintUpdates.selector)
+            } else {
+                _ = perform(NSSelectorFromString("updateConstraints"))
+            }
+        }
 
-        legacyMutableState(self).constraintsAreClean = true
-        legacyMutableState(self).containerInvalidated = false
+        state.constraintsAreClean = !state.needsConstraintUpdateCallback
+        state.containerInvalidated = false
     }
 
     // MARK: Internal bridge hooks (used by LegacyAutoLayoutSwizzling)
@@ -326,6 +498,11 @@ extension UIView {
     internal func legacyUpdateConstraints() {
         legacyUpdateContentSizeConstraints()
         legacyUpdateAutoresizingConstraints()
+        // A public direct update consumes this view's pending callback too, not
+        // only an update dispatched by the recursive walker. Native iOS 6 marks
+        // the view clean in the base method. Keep subtree traversal dirty here:
+        // a descendant may still need its own callback after this direct call.
+        legacyMutableState(self).needsConstraintUpdateCallback = false
     }
 
     /// Content-size hook (the equivalent of RRAutoLayout's `rr_updateContentSizeConstraints`).
@@ -365,11 +542,25 @@ extension UIView {
     /// constraint graph for every frame assignment made non-Auto Layout containers (collection-view
     /// cells, overlay views) re-solve and re-invalidate on each layout pass.
     internal var legacyGeometryAffectsConstraints: Bool {
-        guard let state = LegacyViewState.existing(of: self) else { return false }
-        if !state.constraints.isEmpty { return true }
-        if state.translatesAutoresizingMaskIntoConstraints == false { return true }
-        if let intrinsic = state.intrinsicContentSize { return true }
-        return false
+        if let state = LegacyViewState.existing(of: self) {
+            if !state.constraints.isEmpty { return true }
+            if state.translatesAutoresizingMaskIntoConstraints == false { return true }
+            if state.intrinsicContentSize != nil { return true }
+        }
+        if LegacyLayoutEngine.diagnosticDisableGeometryPropagation { return false }
+        return LegacyViewState.existing(of: self)?.geometryAnchorsLayout ?? false
+    }
+
+    /// O(depth) only when participation first reaches an ancestor; geometry reads
+    /// remain O(1). Insertion propagates a moved participating subtree too.
+    internal func legacyPropagateGeometryParticipation() {
+        var ancestor: UIView? = self
+        while let current = ancestor {
+            let state = LegacyViewState.of(current)
+            if state.geometryAnchorsLayout { break }
+            state.geometryAnchorsLayout = true
+            ancestor = current.superview
+        }
     }
 
     /// Last global invalidation counter value consumed by this view's constraint walk.
@@ -441,7 +632,24 @@ extension UIView: LegacyLayoutItem {
     }
 
     var layoutSubitems: [LegacyLayoutItem] {
-        subviews
+        // A collection view positions its cells itself (frames come from the layout object, never from constraints
+        // of an ancestor) and every cell is laid out as its own root by its own layoutSubviews. Descending into
+        // them made each ancestor pass re-solve hundreds of unrelated variables whenever cells were recycled.
+        if LegacyCollectionViewClass.isCollectionView(self) || legacyUsesDirectStackLayout { return [] }
+        return subviews
+    }
+
+    var layoutHasScrollContent: Bool {
+        // iOS 6 Auto Layout resolves a scroll view's leading/trailing/top/bottom against its CONTENT area when the
+        // other item is a descendant, and sizes contentSize from it. Verified against native Auto Layout by
+        // Tests/run-simulator-chat-test.sh. LEGACY_AUTOLAYOUT_NO_SCROLL_CONTENT=1 restores viewport edges (diagnostics).
+        !LegacyScrollContent.disabled && self is UIScrollView &&
+            !(self is UITextView) && !LegacyCollectionViewClass.isCollectionView(self)
+    }
+
+    func layoutSetScrollContentSize(_ size: CGSize) {
+        guard let scroll = self as? UIScrollView else { return }
+        if scroll.contentSize != size { scroll.contentSize = size }
     }
 
     var layoutFrame: CGRect {
@@ -456,6 +664,12 @@ extension UIView: LegacyLayoutItem {
             y: frame.origin.y + size.height / 2
         )
 
+        // A settled bounds size change is what makes UIKit deliver -layoutSubviews after the pass.
+        if abs(bounds.size.width - size.width) >= 0.0001
+            || abs(bounds.size.height - size.height) >= 0.0001 {
+            legacyMutableState(self).pendingLayoutSubviews = true
+        }
+
         // Skip no-op writes: each write can schedule UIKit layout work, so a converged engine pass
         // should not keep dirtying views.
         if abs(bounds.size.width - size.width) < 0.0001,
@@ -465,6 +679,9 @@ extension UIView: LegacyLayoutItem {
             return
         }
 
+        if LegacyLayoutStats.enabled, NSStringFromClass(type(of: self)).contains("InputView") {
+            FileHandle.standardError.write(Data("legacy-write: \(type(of: self)) \(bounds.size.width)x\(bounds.size.height) -> \(size.width)x\(size.height) at t=\(CFAbsoluteTimeGetCurrent())\n".utf8))
+        }
         var newBounds = bounds
         newBounds.size = size
         bounds = newBounds
@@ -516,4 +733,107 @@ extension UIView: LegacyLayoutItem {
     var layoutLastBaselineOffsetFromBottom: CGFloat? {
         LegacyViewState.existing(of: self)?.lastBaselineOffsetFromBottom
     }
+}
+
+
+/// Detects the collection view backport without linking against it (the runtime is a separate archive).
+@MainActor
+internal enum LegacyCollectionViewClass {
+    private static let classes: [AnyClass] = ["PSTCollectionView", "UICollectionView"].compactMap { NSClassFromString($0) }
+    @inline(__always)
+    static func isCollectionView(_ view: UIView) -> Bool {
+        for cls in classes where view.isKind(of: cls) { return true }
+        return false
+    }
+}
+
+
+extension UIView {
+    internal var legacyUsesDirectStackLayout: Bool {
+        let sel = NSSelectorFromString("uic_usesDirectStackLayout")
+        guard let method = class_getInstanceMethod(type(of: self), sel) else { return false }
+        typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(method_getImplementation(method), to: Getter.self)(self, sel)
+    }
+
+    /// Lets a container that writes its children's frames itself (OAStackView's direct layout) mark those writes as
+    /// layout output, exactly like the engine does, so the geometry hooks do not treat them as outside changes that
+    /// invalidate the children's cached fitting sizes. Returns the previous value, to be restored by the caller.
+    @objc(uic_beginApplyingLayoutFrames)
+    internal static func uicBeginApplyingLayoutFrames() -> Bool {
+        let previous = LegacyAutoLayoutRuntime.isApplyingLayoutFrames
+        LegacyAutoLayoutRuntime.isApplyingLayoutFrames = true
+        return previous
+    }
+
+    @objc(uic_endApplyingLayoutFrames:)
+    internal static func uicEndApplyingLayoutFrames(_ previous: Bool) {
+        LegacyAutoLayoutRuntime.isApplyingLayoutFrames = previous
+    }
+
+    /// Clears the cached fitting size of this view and every ancestor. Callers that own their
+    /// children's frames (OAStackView's direct layout) change the content those caches describe
+    /// without going through `legacySetNeedsUpdateConstraints`; without this, a local layout pass
+    /// reuses the pre-change fitting size and the container keeps its stale height.
+    @objc(uic_clearStackFittingCaches)
+    internal func uicClearStackFittingCaches() {
+        var view: UIView? = self
+        while let current = view {
+            let state = LegacyViewState.of(current)
+            if state.stackFittingResult != nil || state.stackFittingProposal != nil {
+                state.stackFittingResult = nil
+                state.stackFittingProposal = nil
+            }
+            view = current.superview
+        }
+        LegacyLayoutMutation.bump()
+    }
+
+    /// Private, dynamically dispatched bridge so CGRect/CGSize use Objective-C's platform ABI.
+    @objc(uic_legacyStackFittingSize:)
+    internal func legacyStackFittingSize(_ proposal: CGSize) -> CGSize {
+        if legacyUsesDirectStackLayout { return sizeThatFits(proposal) }
+        if self is UILabel || self is UIImageView || self is UIButton {
+            let measured = sizeThatFits(CGSize(width: proposal.width >= 0 ? proposal.width : 100000,
+                                              height: proposal.height >= 0 ? proposal.height : 100000))
+            return CGSize(width: proposal.width >= 0 ? proposal.width : measured.width,
+                          height: proposal.height >= 0 ? proposal.height : measured.height)
+        }
+        let state = LegacyViewState.of(self)
+        if state.stackFittingProposal == proposal, let cached = state.stackFittingResult { LegacyLayoutDebug.fitHits += 1; return cached }
+        LegacyLayoutDebug.fitMisses += 1
+        if state.stackFittingResult == nil && state.stackFittingProposal != nil { LegacyLayoutDebug.fitMissInvalidated += 1 }
+        else if state.stackFittingProposal != nil { LegacyLayoutDebug.fitMissProposal += 1 } else { LegacyLayoutDebug.fitMissFirst += 1 }
+        let fitting = LegacyLayoutSolver(root: self, direction: LegacyAutoLayoutSemanticDirection.current)
+        fitting.fittingProposal = (width: proposal.width >= 0 ? proposal.width : nil,
+                                   height: proposal.height >= 0 ? proposal.height : nil)
+        _ = fitting.solve(writingFrames: false)
+        state.stackFittingProposal = proposal
+        state.stackFittingResult = fitting.fittedRootSize
+        return fitting.fittedRootSize
+    }
+}
+
+/// Serializes every legacy layout pass (the engine state is global and not thread-safe).
+internal final class LegacyLayoutLock {
+    internal static let shared = NSRecursiveLock()
+}
+
+
+internal enum LegacyScrollContent {
+    internal static let disabled: Bool = legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_NO_SCROLL_CONTENT")
+}
+
+
+/// Identity of the implementations that must NOT be treated as a subclass override.
+internal enum LegacyIntrinsicOverride {
+    /// The backport's forwarding method, installed on UIView (written once, on the main thread, at install).
+    nonisolated(unsafe) static var backportImplementation: IMP? = nil
+    /// UIView's own implementation (when the OS has one), captured before any backport method is added.
+    nonisolated(unsafe) static var uiViewImplementation: IMP? = nil
+    /// Per-class result of the override lookup (nil implementation = the class adds no override).
+    struct ClassEntry { let implementation: IMP? }
+    nonisolated(unsafe) static var classEntries: [ObjectIdentifier: ClassEntry] = [:]
+    /// Device A/B switch (env.txt: LEGACY_AUTOLAYOUT_NO_REMEASURE=1) for the second measuring step.
+    nonisolated(unsafe) static let remeasureEnabled: Bool = getenv("LEGACY_AUTOLAYOUT_NO_REMEASURE") == nil
 }

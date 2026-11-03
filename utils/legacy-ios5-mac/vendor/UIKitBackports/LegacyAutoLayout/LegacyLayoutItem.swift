@@ -109,6 +109,10 @@ protocol LegacyLayoutItem: AnyObject {
     /// The direct children, in subview order.
     var layoutSubitems: [LegacyLayoutItem] { get }
 
+    /// Scroll views have separate content-edge and viewport geometry (iOS 6 legacy anchor semantics).
+    var layoutHasScrollContent: Bool { get }
+    func layoutSetScrollContentSize(_ size: CGSize)
+
     /// The item's frame in its superitem's coordinate space.
     var layoutFrame: CGRect { get }
 
@@ -163,6 +167,9 @@ protocol LegacyLayoutItem: AnyObject {
 /// UIKit-like default implementations so fake items (and minimal bridges) only
 /// have to implement the tree shape and constraint storage.
 extension LegacyLayoutItem {
+
+    var layoutHasScrollContent: Bool { false }
+    func layoutSetScrollContentSize(_ size: CGSize) { _ = size }
 
     /// UIKit's `translatesAutoresizingMaskIntoConstraints` defaults to `true`;
     /// RRAutoLayout translated the autoresizing mask into edge constraints.

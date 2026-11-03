@@ -91,6 +91,14 @@ if [ -z "$OUTPUT" ]; then
 fi
 [ ! -e "$OUTPUT" ] || die "refusing to overwrite evidence directory: $OUTPUT (choose --output or remove it)"
 
+# Check the candidate's real runtime floor before copying anything into an
+# environment. A rejected target-7 runtime must not replace a working install.
+mkdir -p "$OUTPUT/logs"
+/usr/bin/python3 -B "$HERE/check-runtime-deployment.py" --toolchain "$TOOLCHAIN" \
+  --claimed-minimum 5.0 --output "$OUTPUT/runtime-deployment.json" \
+  > "$OUTPUT/logs/runtime-deployment.log" 2>&1 \
+  || die "runtime deployment floor exceeds iOS 5; see $OUTPUT/runtime-deployment.json"
+
 # 1. Install the assembled toolchain where the profile expects it.
 INSTALLED=0
 if [ -n "$ENVROOT" ] && [ "$CHECK_ONLY" -eq 0 ]; then
@@ -142,20 +150,61 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
     || { tail -20 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb pointer in libswift$name"; }
 done
 
-echo "== 2/5 ABI class marking"
-bash "$HERE/check-class-marking.sh" "$TC/usr/bin/swiftc" "$OUTPUT/class-marking" "$TC/usr/lib/swift" \
+echo "== 2/6 dyld initializer policy"
+# Launch safety on the legacy runtime: image initializers may only perform
+# Objective-C runtime registration. Swift-level Foundation work there traps.
+/usr/bin/python3 -B "$HERE/check-runtime-initializers.py" --runtime-dir "$RES/iphoneos" \
+  > "$OUTPUT/logs/dyld-initializers.log" 2>&1 \
+  || { cat "$OUTPUT/logs/dyld-initializers.log" >&2; die "unsafe dyld initializer in the legacy runtime"; }
+grep -c informational "$OUTPUT/logs/dyld-initializers.log" || true
+
+# Every strong import must exist on a real iOS 5.1.1 system (derived from Apple's
+# own 9B206 restore image): otherwise dyld refuses the image at launch.
+/usr/bin/python3 -B "$HERE/check-ios5-imports.py" --runtime-dir "$RES/iphoneos" \
+  > "$OUTPUT/logs/ios5-imports.log" 2>&1 \
+  || { cat "$OUTPUT/logs/ios5-imports.log" >&2; die "runtime has imports iOS 5.1.1 does not export"; }
+grep -c '^PASS' "$OUTPUT/logs/ios5-imports.log" || true
+
+/usr/bin/python3 -B "$HERE/check-objc-method-states.py" --runtime-dir "$RES/iphoneos" \
+  > "$OUTPUT/logs/objc-method-states.log" 2>&1 \
+  || { cat "$OUTPUT/logs/objc-method-states.log" >&2; die "Objective-C IMP with wrong ARM/Thumb state"; }
+
+# Selectors: the runtime core runs at launch, so an unimplemented selector there is a
+# guaranteed crash (it is how the tagged-NSString constructor killed the first launch).
+# The API-wrapper overlays (Foundation, UIKit, Metal, ...) are reported but not blocking:
+# their newer-OS selectors are reachable only through APIs app code must gate on
+# availability, never from process start-up.
+SELCHK=("$HERE/check-ios5-selectors.py")
+CORE_SET=()
+for n in Core Darwin ObjectiveC CoreFoundation Dispatch CoreGraphics CoreImage SwiftOnoneSupport; do
+  [ -f "$RES/iphoneos/libswift$n.dylib" ] && CORE_SET+=("$RES/iphoneos/libswift$n.dylib")
+done
+/usr/bin/python3 -B "${SELCHK[@]}" "${CORE_SET[@]}" "$RES/iphoneos/libswiftFoundation.dylib" \
+  > "$OUTPUT/logs/ios5-selectors.log" 2>&1 || true
+if grep -E '^FAIL libswift(Core|Darwin|ObjectiveC|CoreFoundation|Dispatch|CoreGraphics|CoreImage|SwiftOnoneSupport)\.dylib' \
+     "$OUTPUT/logs/ios5-selectors.log" >&2; then
+  die "runtime core sends a selector iOS 5.1.1 does not implement"
+fi
+
+echo "== 3/6 ABI class marking"
+# The layout descriptor must describe armv7. A pristine release toolchain ships
+# only arm64 layouts in the default tree, so prefer the assembled iOS 5 slot.
+CLASS_MARKING_RES="$TC/usr/lib/swift"
+[ -s "$RES/iphoneos/layouts-armv7.yaml" ] && CLASS_MARKING_RES="$RES"
+bash "$HERE/check-class-marking.sh" "$TC/usr/bin/swiftc" "$OUTPUT/class-marking" "$CLASS_MARKING_RES" \
   > "$OUTPUT/logs/class-marking.log" 2>&1 || { tail -20 "$OUTPUT/logs/class-marking.log" >&2; die "class-marking check failed"; }
 ensure_log "$OUTPUT/logs/class-marking.log" "PASS: class-marking check completed without diagnostics"
 
-echo "== 3/5 iOS 5 armv7 link (LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN)"
+echo "== 4/6 iOS 5 armv7 link (LC_VERSION_MIN 5.0, LC_UNIXTHREAD, no LC_MAIN)"
 mkdir -p "$OUTPUT/ios5-app"
 cat > "$OUTPUT/ios5-app/main.swift" <<'SW'
-// Keep the SDK's transitive os/log import covered: this failed at an iOS 5
-// deployment target even though Foundation/UIKit alone could compile.
+// Cover the overlays an iOS 5 application can actually use. Accelerate/os/simd
+// are deliberately absent: their Swift overlays need os_log (iOS 10) and SIMD
+// support (iOS 8) that do not exist on iOS 5, so the runtime does not ship them.
 import Foundation
 import UIKit
 import Dispatch
-import Accelerate
+import AVFoundation
 final class QualificationMarker { var value = 41; func bump() -> Int { value + 1 } }
 let marker = QualificationMarker()
 print("ios5-qualification \(marker.bump()) \(String(describing: Date.init(timeIntervalSince1970: 0)))")
@@ -202,7 +251,7 @@ bash "$HERE/check-foundation-api.sh" "$TC" "$SDK" "$OUTPUT/foundation-api" \
   > "$OUTPUT/logs/foundation-api.log" 2>&1 \
   || { tail -40 "$OUTPUT/logs/foundation-api.log" >&2; die "Foundation backport API check failed"; }
 
-echo "== 4/5 default resource tree still builds iOS 7.0 (LC_MAIN)"
+echo "== 5/6 default resource tree still builds iOS 7.0 (LC_MAIN)"
 mkdir -p "$OUTPUT/default-ios6-app"
 printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n' > "$OUTPUT/default-ios6-app/main.swift"
 "$TC/usr/bin/swiftc" -c "$OUTPUT/default-ios6-app/main.swift" -target armv7-apple-ios7.0 "${SDKROOT_ARGS[@]}" \
@@ -218,7 +267,7 @@ ensure_log "$OUTPUT/logs/default-ios6-link.log" "PASS: default-route link comple
 grep -q "cmd LC_MAIN" "$OUTPUT/default-ios6-app/load-commands.txt" || die "default-route executable has no LC_MAIN"
 grep -q "cmd LC_UNIXTHREAD" "$OUTPUT/default-ios6-app/load-commands.txt" && die "default-route executable wrongly uses LC_UNIXTHREAD"
 
-echo "== 5/5 imports and host signatures"
+echo "== 6/6 imports and host signatures"
 /usr/bin/python3 - "$RES" "$OUTPUT/ios5-app/App" "$OUTPUT/imports.txt" <<'PY'
 import subprocess, sys, pathlib
 res, app, report = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
@@ -300,6 +349,8 @@ evidence = {
     "assemblyReceiptSHA256": digest(tc / "ios5-assembly-receipt.json"),
     "resourceSHA256": resource_sha,
     "deviceExecution": "pending",
+    "runtimeDeploymentVerified": True,
+    "runtimeDeploymentReportSHA256": digest(out / "runtime-deployment.json"),
     "provenance": provenance,
 }
 (out / "qualification-evidence.json").write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")

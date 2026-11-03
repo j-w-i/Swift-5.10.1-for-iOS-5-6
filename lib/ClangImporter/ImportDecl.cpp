@@ -115,6 +115,12 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
       .Cases("NSLayoutConstraint", "NSLayoutRelation", "NSLayoutAttribute", 6)
       .Cases("NSLayoutFormatOptions", "UILayoutConstraintAxis", "UILayoutPriority", 6)
       .Case("UIRefreshControl", 6)
+      // Model objects registered by the backports runtime; their inline text
+      // layout needs the iOS 7 text system, which iOS 5 does not have.
+      .Cases("NSTextAttachment", "NSTextContainer", 7)
+      // Implemented by the backports runtime with the sharing services iOS 5
+      // itself provides (photo library, pasteboard, Safari).
+      .Case("UIActivityViewController", 6)
       // UILayoutGuide and the NSLayoutAnchor class family are NOT lowered: the
       // runtime has no UILayoutGuide class, and the anchor surface is provided by
       // the Swift shim as `Anchor`, so exposing the native classes would let a
@@ -137,6 +143,70 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
 }
 
 static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
+  // Modern SDKs define these genuine UIKit priorities as initialized static
+  // constants. They are emitted as literals, not imports from absent iOS 6
+  // globals. Do not relax older SDKs' extern declarations on this basis.
+  if (auto variable = dyn_cast<clang::VarDecl>(decl)) {
+    // The VFS binds this real UIKit global to the SDK-owned private definition.
+    if (variable->getName() == "UIViewNoIntrinsicMetric")
+      return 6;
+    // UIKit text-attribute names are the CoreText keys the runtime already
+    // exports under their own string values; only the iOS 6 symbols are missing.
+    if (llvm::StringSwitch<bool>(variable->getName())
+            .Case("NSFontAttributeName", true)
+            .Case("NSForegroundColorAttributeName", true)
+            .Case("NSUnderlineStyleAttributeName", true)
+            .Default(false))
+      return 6;
+    if (variable->getStorageClass() == clang::SC_Static &&
+        variable->getType().isConstQualified() && variable->hasInit()) {
+      auto initializer = variable->getInit()->IgnoreParenImpCasts();
+      bool literal = isa<clang::FloatingLiteral>(initializer) ||
+                     isa<clang::IntegerLiteral>(initializer);
+      if (literal && llvm::StringSwitch<bool>(variable->getName())
+                         .Cases("UILayoutPriorityRequired",
+                                "UILayoutPriorityDefaultHigh", true)
+                         .Cases("UILayoutPriorityDefaultLow",
+                                "UILayoutPriorityFittingSizeLevel", true)
+                         .Default(false))
+        return 6;
+    }
+  }
+  // NSUnderlineStyle's original values are CoreText's; expose them on iOS 5.
+  if (auto element = dyn_cast<clang::EnumConstantDecl>(decl)) {
+    auto owner = dyn_cast<clang::EnumDecl>(element->getDeclContext());
+    if (owner && owner->getName() == "NSUnderlineStyle")
+      return 6;
+  }
+  if (auto named = dyn_cast<clang::NamedDecl>(decl)) {
+    if (named->getIdentifier() && named->getName() == "NSUnderlineStyle")
+      return 6;
+  }
+  // NSLineBreakMode preserves the six pre-iOS-6 UILineBreakMode integer
+  // values. Only those original cases are lowered; future cases stay native.
+  if (auto named = dyn_cast<clang::NamedDecl>(decl)) {
+    if (named->getIdentifier() && named->getName() == "NSLineBreakMode")
+      return 6;
+    if (auto element = dyn_cast<clang::EnumConstantDecl>(decl)) {
+      auto owner = dyn_cast<clang::EnumDecl>(element->getDeclContext());
+      if (owner && owner->getName() == "NSLineBreakMode" &&
+          llvm::StringSwitch<bool>(element->getName())
+              .Cases("NSLineBreakByWordWrapping", "NSLineBreakByCharWrapping", true)
+              .Cases("NSLineBreakByClipping", "NSLineBreakByTruncatingHead", true)
+              .Cases("NSLineBreakByTruncatingTail", "NSLineBreakByTruncatingMiddle", true)
+              .Default(false))
+        return 6;
+    }
+  }
+  // UIButtonTypeSystem is a genuine alias of the pre-iOS-7 rounded-rectangle
+  // type (raw value 1). Legacy builds expose the real API; iOS 5 renders that
+  // system's own rounded-rectangle button style rather than the flat iOS 7 one.
+  if (auto element = dyn_cast<clang::EnumConstantDecl>(decl)) {
+    auto enumOwner = dyn_cast<clang::EnumDecl>(element->getDeclContext());
+    if (enumOwner && enumOwner->getName() == "UIButtonType" &&
+        element->getName() == "UIButtonTypeSystem")
+      return 7;
+  }
   StringRef owner, member;
   if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))
     member = method->getSelector().getNameForSlot(0);
@@ -163,6 +233,25 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
           .Cases("topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor", 9)
           .Cases("leftAnchor", "rightAnchor", "widthAnchor", "heightAnchor", 9)
           .Cases("centerXAnchor", "centerYAnchor", 9).Default(0);
+    if (owner == "UIActivityViewController")
+      return llvm::StringSwitch<unsigned>(member)
+          .Case("initWithActivityItems", 6)
+          .Case("activityItems", 6).Default(0);
+    if (owner == "NSTextAttachment")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("image", "setImage", "bounds", "setBounds", 7)
+          .Case("attachmentBoundsForTextContainer", 7).Default(0);
+    if (owner == "NSTextContainer")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("initWithSize", "size", "setSize", 7).Default(0);
+    if (owner == "UILabel")
+      // Implemented by the UIKit backports runtime using CoreText; `text`
+      // mirrors the attributed string as UIKit documents.
+      return (member == "attributedText" || member == "setAttributedText") ? 6 : 0;
+    if (owner == "NSString")
+      // Implemented for the legacy runtime by the UIKit backports: measured with
+      // CoreText using the same attribute-name strings UIKit exports.
+      return member == "sizeWithAttributes" ? 7 : 0;
     if (owner == "UIScrollView")
       // The backport API predates Apple's native iOS 10 property. Do not also
       // expose iOS 11 contentLayoutGuide/frameLayoutGuide (unsupported geometry).
@@ -234,6 +323,14 @@ static bool legacyFoundationProperty(StringRef member, StringRef property) {
 /// Match complete selectors, not just their first slot: overloads such as
 /// uploadTaskWithRequest:fromFile: must not inherit fromData:'s capability.
 static unsigned legacyFoundationDeclarationCeiling(const clang::Decl *decl) {
+  // The object table and pointer functions are provided by the SDK's own
+  // Foundation runtime backend (see native-foundation-runtime/HashTable).
+  if (auto named = dyn_cast<clang::NamedDecl>(decl)) {
+    if (named->getIdentifier() &&
+        (named->getName() == "NSHashTable" ||
+         named->getName() == "NSPointerFunctions"))
+      return 6;
+  }
   std::string selector;
   StringRef member;
   if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl)) {
@@ -254,6 +351,9 @@ static unsigned legacyFoundationDeclarationCeiling(const clang::Decl *decl) {
         return legacyFoundationProperty(member, name);
       });
     };
+    if (owner == "NSHashTable" || owner == "NSPointerFunctions")
+      // The backends implement the documented object/pointer configurations.
+      return 6;
     if (owner == "NSURLComponents") {
       if (property({"scheme", "user", "password", "host", "port", "path",
                     "query", "fragment", "percentEncodedUser",

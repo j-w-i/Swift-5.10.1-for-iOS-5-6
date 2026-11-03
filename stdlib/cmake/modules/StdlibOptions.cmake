@@ -103,6 +103,15 @@ else()
   set(SWIFT_STDLIB_ENABLE_PRESPECIALIZATION_default FALSE)
 endif()
 
+if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
+  # Statically prespecialized *class* metadata (for example _DictionaryStorage<K, V>)
+  # is emitted on a path that does not carry the legacy iOS 5 class marker, so the
+  # runtime does not recognise it as Swift metadata and the canonical-metadata cache
+  # dereferences a null generic-argument pointer. Prespecialization is purely an
+  # optimization; the legacy runtime instantiates generic metadata on demand.
+  set(SWIFT_STDLIB_ENABLE_PRESPECIALIZATION_default FALSE)
+endif()
+
 option(SWIFT_STDLIB_ENABLE_PRESPECIALIZATION
        "Should stdlib be built with generic metadata prespecialization enabled. Defaults to On on Darwin and on Linux."
        "${SWIFT_STDLIB_ENABLE_PRESPECIALIZATION_default}")

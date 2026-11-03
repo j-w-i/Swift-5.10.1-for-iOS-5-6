@@ -2,7 +2,7 @@
 
 The guarded importer maps SDK NSURLSession family references to the concrete FBP class hierarchy. Configurations, sessions and tasks **always retain FBP identity**, including on newer systems: they wrap actual native Foundation instances discovered with `NSClassFromString`. No raw native object is substituted for an FBP allocation/factory result; no isa, superclass, swizzle or global runtime-name alias is used. SDK delegate protocol names and metadata are retained.
 
-On iOS 5/6 (or with the test-only `FBP_FORCE_TEST_RUNTIME` macro), the transport is NSURLConnection. On iOS 7+, native Foundation does the transport; a private delegate bridge maps back to the original FBP session/task instances. Public sharedSession is one stable wrapper, with default native-backed transport and no-op invalidation, not Apple's unrelated singleton object.
+On iOS 5/6 (or with the test-only `FBP_FORCE_TEST_RUNTIME` macro), the transport is NSURLConnection, scheduled on one dedicated network thread (never `-setDelegateQueue:`: on iOS 5 that makes CFNetwork deliver from the main run loop and block it in `-[NSOperation waitUntilFinished]` while holding the connection lock, which deadlocks the app against `+cancelConnection` - device report 0x8badf00d, 2026-10-27). On iOS 7+, native Foundation does the transport; a private delegate bridge maps back to the original FBP session/task instances. Public sharedSession is one stable wrapper, with default native-backed transport and no-op invalidation, not Apple's unrelated singleton object.
 
 ## Supported surface
 

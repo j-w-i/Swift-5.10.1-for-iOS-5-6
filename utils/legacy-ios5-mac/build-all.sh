@@ -95,6 +95,17 @@ fetch515() {
   export LEGACY_515_ROOT="$ROOT/b515"; mkdir -p "$LEGACY_515_ROOT/src" "$LEGACY_515_ROOT/build" "$LEGACY_515_ROOT/tools"
   P="$LEGACY_515_ROOT/src"
   [ -d "$P/swift/.git" ] || git clone -q --depth 1 --branch "$SWIFT515_BRANCH" "$SWIFT515_REPO" "$P/swift"
+  # The legacy class marker is separate from the real deployment target. Never
+  # ship a runtime compiled for 7 merely because it uses the iOS 5 class marker.
+  RUNTIME515_PATCH="$HERE/runtime515-target5.patch"
+  if git -C "$P/swift" apply --check "$RUNTIME515_PATCH"; then
+    git -C "$P/swift" apply "$RUNTIME515_PATCH"
+  elif git -C "$P/swift" apply --reverse --check "$RUNTIME515_PATCH"; then
+    echo 'Runtime target-5 source patch is already applied.'
+  else
+    echo 'Runtime target-5 source patch conflicts; review the pinned source.' >&2
+    return 1
+  fi
   [ -d "$P/llvm-project/.git" ] || git clone -q --depth 1 --branch "$LLVM515_REF" "$LLVM515_REPO" "$P/llvm-project"
   [ -d "$P/cmark/.git" ] || git clone -q --depth 1 --branch "$CMARK515_REF" "$CMARK515_REPO" "$P/cmark"
   for d in llvm clang compiler-rt; do :; done
@@ -148,6 +159,16 @@ overlays() { # prepare + build + link the rewritten overlays
   bash "$HERE/build-foundation-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/foundation-runtime"
   bash "$HERE/build-overlay-stage.sh" "$ROOT/bootstrap" "$ROOT/build/swift/bin/swift-frontend" "$SDK" --legacy-marking
+  # Genuine native API implementations belong to the SDK's existing backports
+  # archive. No client helper module, renamed API or new app linker flag.
+  bash "$HERE/build-native-uikit-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/native-uikit-runtime"
+  OLD_CORE_DIR="$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos"
+  [ -d "$OLD_CORE_DIR" ] || OLD_CORE_DIR="$LEGACY_515_ROOT/build/runtime-ios5"
+  bash "$HERE/build-native-numeric-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+    "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/build/swift/bin/swift-frontend" \
+    "$ROOT/bootstrap/probes/modules510" "$ROOT/bootstrap/probes/native-numeric-runtime" \
+    "$OLD_CORE_DIR/libswiftCore.dylib"
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
   bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \

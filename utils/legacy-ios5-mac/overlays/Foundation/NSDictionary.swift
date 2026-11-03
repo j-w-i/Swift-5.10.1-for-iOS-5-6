@@ -135,6 +135,23 @@ extension Dictionary : _ObjectiveCBridgeable {
     count: Int,
     to: T.Type
   ) {
+    if T.self == Any.self {
+      // `Any` holds the object as-is: no conversion, and no per-element runtime
+      // metadata lookup / dynamic cast (the generic path below costs ~10x more).
+      for i in (0..<count).reversed() {
+        let value: Any = buffer[i]
+        _bridgeInitialize(index: i, of: buffer, to: value)
+      }
+      return
+    }
+    if T.self == String.self {
+      for i in (0..<count).reversed() {
+        var string = String._unconditionallyBridgeFromObjectiveC(buffer[i] as! NSString)
+        string.makeContiguousUTF8()
+        _bridgeInitialize(index: i, of: buffer, to: string)
+      }
+      return
+    }
     for i in (0..<count).reversed() {
       let bridged = buffer[i] as! T
       _bridgeInitialize(index: i, of: buffer, to: bridged)
@@ -148,6 +165,31 @@ extension Dictionary : _ObjectiveCBridgeable {
     to: T.Type
   ) -> Int {
     var numUninitialized = count
+    if T.self == Any.self {
+      // Upcasting an object to `Any` cannot fail.
+      while numUninitialized > 0 {
+        let value: Any = buffer[numUninitialized - 1]
+        numUninitialized -= 1
+        _bridgeInitialize(index: numUninitialized, of: buffer, to: value)
+      }
+      return numUninitialized
+    }
+    if T.self == String.self {
+      // NSString -> String without the generic runtime bridge (metadata lookup,
+      // protocol-witness search and dynamic cast per key).
+      while numUninitialized > 0 {
+        guard let nsString = buffer[numUninitialized - 1] as? NSString else {
+          return numUninitialized
+        }
+        // Make the key native: foreign (lazily bridged) Strings hash and compare
+        // ~4x slower, and a dictionary key is hashed on every later lookup.
+        var string = String._unconditionallyBridgeFromObjectiveC(nsString)
+        string.makeContiguousUTF8()
+        numUninitialized -= 1
+        _bridgeInitialize(index: numUninitialized, of: buffer, to: string)
+      }
+      return numUninitialized
+    }
     while numUninitialized > 0 {
       guard let bridged = Swift._conditionallyBridgeFromObjectiveC(
         buffer[numUninitialized - 1], T.self)

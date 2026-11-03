@@ -59,8 +59,16 @@ fi
 [[ "$SWIFT51_SOURCE" = /* ]] || fail 'SWIFT51_SOURCE must be absolute.'
 [ -d "$SWIFT51_SOURCE" ] || fail 'Missing Swift 5.1 source checkout.'
 SWIFT51_SOURCE=$(CDPATH= cd -- "$SWIFT51_SOURCE" && pwd -P)
-for file in include/swift/Runtime/Metadata.h include/swift/Runtime/CMakeConfig.h.in stdlib/public/runtime/SwiftHashableSupport.h; do
-  [ -s "$SWIFT51_SOURCE/$file" ] || fail "Missing Swift 5.1 header input: $file"
+# SWIFT_RUNTIME_GENERATION=510 selects the matching Swift 5.10 runtime headers
+# (the checkout passed as SWIFT51_SOURCE is then the 5.10 fork). The default keeps
+# the historical 5.1.5 layout.
+RUNTIME_GEN=${SWIFT_RUNTIME_GENERATION:-515}
+case "$RUNTIME_GEN" in
+  510) HDR_RUNTIME_METADATA=include/swift/ABI/Metadata.h ;;
+  *)   HDR_RUNTIME_METADATA=include/swift/Runtime/Metadata.h ;;
+esac
+for file in "$HDR_RUNTIME_METADATA" include/swift/Runtime/CMakeConfig.h.in stdlib/public/runtime/SwiftHashableSupport.h; do
+  [ -s "$SWIFT51_SOURCE/$file" ] || fail "Missing runtime header input ($RUNTIME_GEN): $file"
 done
 if [ -z "${LLVM_INCLUDE_DIR:-}" ]; then
   if [ -s "$SWIFT51_SOURCE/../llvm/include/llvm/ADT/ArrayRef.h" ]; then
@@ -102,6 +110,12 @@ for name in ('SWIFT_BNI_OS_BUILD', 'SWIFT_BNI_XCODE_BUILD'):
     if token not in text:
         raise SystemExit('Unexpected legacy runtime configuration template')
     text = text.replace(token, '#define ' + name + ' 0')
+# The 5.10 template additionally carries the compiler version; the matching
+# runtime generation is 5.10 by construction.
+for name, value in (('SWIFT_VERSION_MAJOR', '5'), ('SWIFT_VERSION_MINOR', '10')):
+    token = '#cmakedefine ' + name + ' "@' + name + '@"'
+    if token in text:
+        text = text.replace(token, '#define ' + name + ' "' + value + '"')
 if '#cmakedefine' in text:
     raise SystemExit('Unsupported legacy runtime configuration option')
 with open(sys.argv[2], 'x') as stream:
@@ -128,12 +142,17 @@ COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionVie
 BACKPORTS_ARCHIVE="$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a"
 COMPOSITIONAL_ARCHIVE="$STAGE/probes/compositional-layout-runtime/libswiftLegacyCompositionalLayout.a"
 FOUNDATION_ARCHIVE="$STAGE/probes/foundation-runtime/libswiftLegacyFoundationBackports.a"
+NATIVE_UIKIT="$STAGE/probes/native-uikit-runtime/UIKitGlobals.o"
+NATIVE_NUMERIC="$STAGE/probes/native-numeric-runtime/objects"
 case "$DEPLOYMENT" in
   5.*)
     [ -s "$COLLECTION_ARCHIVE" ] || fail "Missing source-built UIKit collection runtime: $COLLECTION_ARCHIVE"
     [ -s "$BACKPORTS_ARCHIVE" ] || fail "Missing source-built UIKit backport runtime: $BACKPORTS_ARCHIVE"
     [ -s "$COMPOSITIONAL_ARCHIVE" ] || fail "Missing source-built compositional layout runtime: $COMPOSITIONAL_ARCHIVE"
     [ -s "$FOUNDATION_ARCHIVE" ] || fail "Missing source-built Foundation backport runtime: $FOUNDATION_ARCHIVE"
+    for object in "$NATIVE_UIKIT" "$NATIVE_NUMERIC/NativeNumeric.o" "$NATIVE_NUMERIC/NumericParsing.o"; do
+      [ -s "$object" ] || fail "Missing source-built native API implementation: $object"
+    done
     ;;
 esac
 COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
@@ -143,15 +162,29 @@ COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 NATIVE=(-marm -O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
   -DSWIFT_RUNTIME -DSWIFT_STDLIB_BUILDING_OVERLAY -DOS_OBJECT_USE_OBJC=0 -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
   -I "$OUT/include" -I "$SWIFT51_SOURCE/include"
-  -I "$LLVM_CONFIG_INCLUDE_DIR" -I "$LLVM_INCLUDE_DIR"
-  -I "$SWIFT51_SOURCE/stdlib/public/Darwin/Foundation")
+  -I "$LLVM_CONFIG_INCLUDE_DIR" -I "$LLVM_INCLUDE_DIR")
+# The 5.10 runtime and LLVM headers are C++17; the 5.1.5 ones are C++14.
+if [ "$RUNTIME_GEN" = 510 ]; then CXX_STD=c++17; else CXX_STD=c++14; fi
+if [ "$RUNTIME_GEN" = 510 ]; then
+  # The matching runtime defines the same class-marking ABI the compiler emits;
+  # NSError.h reaches its sibling runtime headers via ../../runtime, which the
+  # 5.10 tree does not provide next to the overlay sources, so give it a mirror.
+  mkdir -p "$OUT/include510/stdlib/public/Darwin/Foundation"
+  ln -s "$SWIFT51_SOURCE/stdlib/public/runtime" "$OUT/include510/stdlib/public/runtime"
+  NATIVE+=(-DSWIFT_LEGACY_IOS5=1 -DSWIFT_LEGACY_IOS5_CLASS_MARKING=1
+           -I "$SWIFT51_SOURCE/stdlib/public" -I "$SWIFT51_SOURCE/stdlib/public/SwiftShims")
+  cp "$SRC/Foundation/NSError.h" "$OUT/include510/stdlib/public/Darwin/Foundation/NSError.h"
+  NATIVE+=(-I "$OUT/include510/stdlib/public/Darwin/Foundation")
+else
+  NATIVE+=(-I "$SWIFT51_SOURCE/stdlib/public/Darwin/Foundation")
+fi
 # The last include directory also resolves NSError.h's ../../runtime header
 # against the source tree, without altering the staged sources or using old .o's.
 FOUNDATION_OBJECTS=()
 for file in BundleLookup.mm DataThunks.m NSError.mm CheckClass.mm; do
   obj="$OUT/native/$file.o"
   if [[ "$file" = *.mm ]]; then
-    run "$file" "$CLANG" "${COMMON[@]}" "${NATIVE[@]}" -std=c++14 -stdlib=libc++ \
+    run "$file" "$CLANG" "${COMMON[@]}" "${NATIVE[@]}" -std="$CXX_STD" -stdlib=libc++ \
       ${CXX_HEADERS[@]+"${CXX_HEADERS[@]}"} -c "$SRC/Foundation/$file" -o "$obj"
   else
     run "$file" "$CLANG" "${COMMON[@]}" "${NATIVE[@]}" -c "$SRC/Foundation/$file" -o "$obj"
@@ -162,7 +195,12 @@ run DesignatedInitializers.mm "$CLANG" "${COMMON[@]}" "${NATIVE[@]}" -std=c++14 
   ${CXX_HEADERS[@]+"${CXX_HEADERS[@]}"} -c "$SRC/UIKit/DesignatedInitializers.mm" -o "$OUT/native/DesignatedInitializers.mm.o"
 run LegacyRuntimeBackports "$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -O2 -std=c11 \
   -c "$SCRIPT_DIR/LegacyRuntimeBackports.c" -o "$OUT/native/LegacyRuntimeBackports.o"
-run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/LegacyRuntimeBackports.o"
+API_OBJECTS=()
+case "$DEPLOYMENT" in
+  5.*) API_OBJECTS=("$NATIVE_UIKIT" "$NATIVE_NUMERIC/NativeNumeric.o" "$NATIVE_NUMERIC/NumericParsing.o") ;;
+esac
+run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/LegacyRuntimeBackports.o" \
+  ${API_OBJECTS[@]+"${API_OBJECTS[@]}"}
 
 # Explicit dependency paths ensure no old overlay (especially CoreGraphics) can
 # silently satisfy a rebuilt overlay dependency. Rebuild CG before Foundation.

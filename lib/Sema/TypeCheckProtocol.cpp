@@ -4224,6 +4224,39 @@ void ConformanceChecker::checkNonFinalClassWitness(ValueDecl *requirement,
   }
 }
 
+/// Match the deployment gate for usesLegacyUIKitBackportDeclarations without
+/// making Sema depend on the ClangImporter's private headers. Both the Swift
+/// deployment target and the actual Clang target must describe native iOS 5.
+static bool isLegacyIOS5OptionalObjCWitness(
+    const ASTContext &ctx, ValueDecl *requirement, ValueDecl *witness,
+    DeclContext *dc) {
+  const auto &deployment = ctx.LangOpts.Target;
+  const auto &target = ctx.LangOpts.ClangTarget
+      ? *ctx.LangOpts.ClangTarget : deployment;
+  auto isIOS5Device = [](const llvm::Triple &triple) {
+    return triple.isiOS() && !triple.isTvOS() &&
+           !triple.isSimulatorEnvironment() &&
+           !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5) &&
+           triple.isOSVersionLT(6);
+  };
+  if (!ctx.LangOpts.LegacyIOS5ClassMarking || !isIOS5Device(deployment) ||
+      !isIOS5Device(target) ||
+      (target.getSubArch() != llvm::Triple::ARMSubArch_v7 &&
+       target.getSubArch() != llvm::Triple::ARMSubArch_v7s))
+    return false;
+
+  if (!requirement->getAttrs().hasAttribute<OptionalAttr>() ||
+      !requirement->isObjC() || !witness->isObjC() ||
+      !witness->hasClangNode())
+    return false;
+
+  // Never discard an explicit Swift implementation or a member declared on
+  // the conforming class itself, including conformances in extensions.
+  auto *selfClass = dc->getSelfClassDecl();
+  auto *witnessClass = witness->getDeclContext()->getSelfClassDecl();
+  return selfClass && witnessClass && selfClass != witnessClass;
+}
+
 ResolveWitnessResult
 ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
   assert(!isa<AssociatedTypeDecl>(requirement) && "Use resolveTypeWitnessVia*");
@@ -4401,6 +4434,15 @@ ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
       break;
 
     case CheckKind::Availability: {
+      // On native iOS 5 an inherited foreign method introduced in a later OS
+      // need not exist at runtime (e.g. UIView's iOS 6 delegate hook). An
+      // optional @objc requirement may remain unwitnessed: its calls still use
+      // Objective-C optional dispatch. Drop the witness, rather than merely
+      // suppressing its availability diagnostic or changing SDK availability.
+      if (isLegacyIOS5OptionalObjCWitness(getASTContext(), requirement, witness,
+                                        DC))
+        return ResolveWitnessResult::Missing;
+
       diagnoseOrDefer(requirement, false,
         [witness, requirement, check](
             NormalProtocolConformance *conformance) {

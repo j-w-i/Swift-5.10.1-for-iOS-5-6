@@ -672,6 +672,11 @@ extension String {
     _connectOrphanedFoundationSubclassesIfNeeded()
 
     // Smol ASCII a) may bridge to tagged pointers, b) can't contain a BOM
+    //
+    // Tagged-pointer NSStrings (and the +newTaggedNSStringWithASCIIBytes_:length_:
+    // constructor used here) do not exist before iOS 7, so the legacy iOS 5 runtime
+    // never takes this path: small strings are grown to a native string below.
+#if !LEGACY_IOS5
     if _guts.isSmallASCII {
       let maybeTagged = _guts.asSmall.withUTF8 { bufPtr in
         return _createCFString(
@@ -682,6 +687,7 @@ extension String {
       }
       if let tagged = maybeTagged { return tagged }
     }
+#endif
 
     if _guts.isSmall {
         // We can't form a tagged pointer String, so grow to a non-small String,

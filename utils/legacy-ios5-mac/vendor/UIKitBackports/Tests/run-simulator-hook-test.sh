@@ -48,10 +48,11 @@ CSRC
 SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 TARGET=$(uname -m)-apple-ios15.0-simulator
 clang -target "$TARGET" -isysroot "$SDK" -c "$WORK/stub.c" -o "$WORK/stub.o"
+clang -target "$TARGET" -isysroot "$SDK" -O2 -ffp-contract=off -c "$VENDOR/CassowaryC/CassowaryC.c" -o "$WORK/CassowaryC.o"
 FILES=$(ls "$WORK"/src/*.swift | grep -v -E "LegacyAutoLayoutIOS5|UILayoutGuideShim|UIViewAnchorShims")
 # shellcheck disable=SC2086
 /usr/bin/xcrun swiftc -swift-version 5 -target "$TARGET" -sdk "$SDK" -O \
-  $FILES "$WORK/tool/main.swift" "$WORK/stub.o" -o "$WORK/simrun"
+  $FILES "$WORK/tool/main.swift" "$WORK/stub.o" "$WORK/CassowaryC.o" -o "$WORK/simrun"
 UDID=$(xcrun simctl list devices available | grep -m1 "$DEVICE" | sed -E 's/.*\(([0-9A-Fa-f-]+)\).*/\1/')
 [ -n "$UDID" ] || { echo "No available simulator named '$DEVICE'" >&2; exit 1; }
 xcrun simctl boot "$UDID" 2>/dev/null || true

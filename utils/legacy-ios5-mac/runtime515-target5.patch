@@ -1,0 +1,68 @@
+diff --git a/utils/legacy-ios5-mac/add-ios5-runtime.sh b/utils/legacy-ios5-mac/add-ios5-runtime.sh
+index a103bf1a..4594fd1e 100755
+--- a/utils/legacy-ios5-mac/add-ios5-runtime.sh
++++ b/utils/legacy-ios5-mac/add-ios5-runtime.sh
+@@ -3,8 +3,8 @@
+ #
+ #   add-ios5-runtime.sh <swift-source-dir> <build-dir> <toolchain-usr-dir> [ios-sdk-path]
+ #
+-# Why a second pass: build-script always compiles the iOS stdlib with a 7.0 deployment floor (your original
+-# procedure does too), so the deployment target cannot tell the compiler "this one must also run on iOS 5".
++# Why a second pass: the default build-script route compiles the iOS stdlib with a 7.0 deployment floor.
++# This separate pass compiles the runtime at 5.0; changing class marking alone cannot lower that floor.
+ # The compiler therefore has an explicit flag, -enable-legacy-ios5-runtime. When it is passed, the compiler uses
+ # <usr>/lib/swift_ios5 (its own modules, shims, API notes and dylibs) instead of <usr>/lib/swift, and emits the
+ # class metadata layout iOS < 6's Objective-C runtime can read. Without the flag nothing changes at all.
+@@ -29,7 +29,7 @@ cmake -G Ninja "$SRC" -B "$OUT" \
+   -DCMAKE_BUILD_TYPE=Release \
+   -DSWIFT_SDKS=IOS -DSWIFT_DARWIN_SUPPORTED_ARCHS=armv7 -DSWIFT_PRIMARY_VARIANT_SDK=IOS -DSWIFT_PRIMARY_VARIANT_ARCH=armv7 \
+   -DSWIFT_SDK_IOS_PATH="$SDK" \
+-  -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=7.0 \
++  -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=5.0 \
+   -DSWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING=ON \
+   -DSWIFT_INCLUDE_TOOLS=OFF -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_SDK_OVERLAY=ON \
+   -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=ON \
+diff --git a/utils/legacy-ios5-mac/configure-ios-runtime.sh b/utils/legacy-ios5-mac/configure-ios-runtime.sh
+index 11a496f7..d031f1d4 100755
+--- a/utils/legacy-ios5-mac/configure-ios-runtime.sh
++++ b/utils/legacy-ios5-mac/configure-ios-runtime.sh
+@@ -1,14 +1,18 @@
+ #!/bin/bash
+ # Configure (and optionally build) an iOS armv7 Swift runtime+overlays with the just-built Mac compiler.
+ #   configure-ios-runtime.sh <variant: ios5|default> [ninja args...]
+-# ios5    : SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING=ON  -> becomes <usr>/lib/swift_ios5 (use with -enable-legacy-ios5-runtime)
+-# default : flag OFF                                    -> becomes <usr>/lib/swift     (stock iOS 6+ behaviour)
++# ios5    : deployment 5.0, SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING=ON -> <usr>/lib/swift_ios5 (use with -enable-legacy-ios5-runtime)
++# default : deployment 7.0, flag OFF                                -> <usr>/lib/swift (unchanged default behaviour)
+ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+ V=${1:?ios5|default}; shift
+ L=$B/build/macos/llvm-macosx-x86_64; S=$B/build/macos/swift-macosx-x86_64; C=$B/build/macos/cmark-macosx-x86_64
+ SDK=${IOS_SDK:-$B/sdks/theos-sdks/iPhoneOS13.7.sdk}
+ O=$B/build/runtime-$V; mkdir -p $O; cd $O
+-[ "$V" = ios5 ] && FLAG=ON || FLAG=OFF
++case "$V" in
++  ios5) FLAG=ON; MIN=5.0 ;;
++  default) FLAG=OFF; MIN=7.0 ;;
++  *) echo "error: unknown runtime variant '$V' (expected ios5|default)" >&2; exit 1 ;;
++esac
+ # CMake on Apple Silicon injects "-arch <host>" into every compile line, which clashes with the iOS "-arch armv7" the
+ # Swift build adds (see clang-wrap). Swift's CMake forces the compiler to ${SWIFT_NATIVE_LLVM_TOOLS_PATH}/clang(++),
+ # so give it a tools dir where every LLVM tool is a symlink except clang/clang++, which are the wrappers.
+@@ -21,7 +25,7 @@ arch -x86_64 cmake -G Ninja -DCMAKE_MAKE_PROGRAM=$B/tools/ninja $SWIFT_SOURCE_RO
+  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-force_load,$L/lib/clang/7.0.0/lib/darwin/libclang_rt.ios.a" \
+  -DSWIFT_DARWIN_STDLIB_INSTALL_NAME_DIR=@rpath -DSWIFT_DARWIN_STDLIB_PRIVATE_INSTALL_NAME_DIR=@rpath \
+  -DSWIFT_SDKS=IOS -DSWIFT_SDK_IOS_PATH=$SDK \
+- -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=7.0 -DSWIFT_DARWIN_SUPPORTED_ARCHS=armv7 \
++ -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=$MIN -DSWIFT_DARWIN_SUPPORTED_ARCHS=armv7 \
+  -DSWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING=$FLAG \
+  -DSWIFT_INCLUDE_TOOLS=OFF -DSWIFT_INCLUDE_APINOTES=ON -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_SDK_OVERLAY=ON -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=ON \
+  -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF \
+@@ -29,4 +33,7 @@ arch -x86_64 cmake -G Ninja -DCMAKE_MAKE_PROGRAM=$B/tools/ninja $SWIFT_SOURCE_RO
+  -DSWIFT_PATH_TO_CMARK_BUILD=$C -DSWIFT_PATH_TO_CMARK_SOURCE=$SWIFT_SOURCE_ROOT/cmark \
+  -DSWIFT_NATIVE_LLVM_TOOLS_PATH=$W -DSWIFT_NATIVE_CLANG_TOOLS_PATH=$W -DSWIFT_NATIVE_SWIFT_TOOLS_PATH=$S/bin \
+  -DSWIFT_PRIMARY_VARIANT_SDK=IOS -DSWIFT_PRIMARY_VARIANT_ARCH=armv7 \
+- && { [ $# -gt 0 ] && arch -x86_64 $B/tools/ninja "$@" || true; }
++ || exit $?
++if [ "$#" -gt 0 ]; then
++  arch -x86_64 "$B/tools/ninja" "$@"
++fi

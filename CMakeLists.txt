@@ -396,6 +396,10 @@ option(SWIFT_STDLIB_ASSERTIONS
     "Enable internal checks for the Swift standard library (useful for debugging the library itself, does not affect checks required for safety)"
     "${SWIFT_STDLIB_ASSERTIONS_default}")
 
+option(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING
+       "Legacy iOS 5/6 fork: build the runtime and stdlib for the legacy class-metadata ABI and an iOS 5 OS floor"
+       FALSE)
+
 option(SWIFT_BUILD_RUNTIME_WITH_HOST_COMPILER
        "Use the host compiler and not the internal clang to build the swift runtime"
        FALSE)

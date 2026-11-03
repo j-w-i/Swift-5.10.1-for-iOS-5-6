@@ -37,6 +37,11 @@ internal enum LegacyLayoutMutation {
     /// The current mutation generation.
     internal static var generation: Int { value }
 
+    /// Bumped only when a CONSTRAINT is added, removed, activated, deactivated or edited (not for geometry, intrinsic size
+    /// or text changes). Containers that cache facts about the constraint graph key them to this.
+    nonisolated(unsafe) internal static var constraintGeneration: Int = 0
+    internal static func bumpConstraints() { constraintGeneration &+= 1; bump() }
+
     /// Records a mutation that can affect a constraint system.
     internal static func bump() {
         guard suppressionDepth == 0 else { return }
@@ -52,4 +57,12 @@ internal enum LegacyLayoutMutation {
         defer { suppressionDepth -= 1 }
         return body()
     }
+}
+
+
+/// Objective-C view of the constraint-system mutation generation, so containers (OAStackView) can skip re-deriving
+/// facts about the constraint graph on layout passes where no constraint was added, removed or changed anywhere.
+@objc(UICLegacyConstraintGeneration)
+internal final class UICLegacyConstraintGeneration: NSObject {
+    @objc(current) internal static func current() -> Int { LegacyLayoutMutation.constraintGeneration }
 }

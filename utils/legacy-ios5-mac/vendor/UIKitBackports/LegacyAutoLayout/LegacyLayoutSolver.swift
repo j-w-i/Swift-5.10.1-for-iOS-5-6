@@ -162,14 +162,12 @@
 
 import Foundation
 import CoreGraphics
-import Cassowary
 
 // `Foundation.Expression` (the iOS 18 Predicate type) collides with the
 // Cassowary linear-expression type of the same name. Pin the solver names at
 // file scope so the translation code below reads like the constraint algebra.
-private typealias Expression = Cassowary.Expression
-private typealias Constraint = Cassowary.Constraint
-private typealias RelationalOperator = Cassowary.RelationalOperator
+
+
 
 /// Builds and solves the constraint system for one root item.
 internal final class LegacyLayoutSolver {
@@ -223,7 +221,12 @@ internal final class LegacyLayoutSolver {
     private weak var rootStorage: LegacyLayoutItem?
     private var root: LegacyLayoutItem { rootStorage! }
     private var direction: RRLayoutDirection
-    private let solver = Solver()
+    private let solver: LegacyLinearSolver = LegacySolverBackend.make()
+
+    /// A finite axis is fixed at required strength; nil axes seek their smallest fitting size.
+    /// Used by independently measured containers without changing ordinary root layout semantics.
+    internal var fittingProposal: (width: CGFloat?, height: CGFloat?)?
+    internal private(set) var fittedRootSize: CGSize = .zero
 
     // Per-pass structure; cleared after the result is built.
     private var items: [LegacyLayoutItem] = []
@@ -233,6 +236,7 @@ internal final class LegacyLayoutSolver {
     private var firstBaselineOffsets: [ObjectIdentifier: CGFloat] = [:]
     private var lastBaselineOffsets: [ObjectIdentifier: CGFloat] = [:]
     private var variables: [ObjectIdentifier: ItemVariables] = [:]
+    private var scrollContentSizes: [ObjectIdentifier: (width: Variable, height: Variable)] = [:]
     private var brokenConstraints: [RRLayoutConstraint] = []
 
     // Persistent (incremental) state. Everything here is kept in sync with the
@@ -241,6 +245,22 @@ internal final class LegacyLayoutSolver {
     private var installedItemOrder: [ObjectIdentifier] = []
     private var installedSuperitems: [ObjectIdentifier: ObjectIdentifier] = [:]
     private var installedRootSize: CGSize = .zero
+    /// The two required rows pinning the root's width/height to its frame, kept so a changed root size is an in-place
+    /// constant update (valid only while presolve has not folded the root dimensions into other rows).
+    private var rootSizeConstraints: (width: Constraint?, height: Constraint?) = (nil, nil)
+    private var rootSizeChangedPending = false
+    /// Presolve folds required one-variable rows into constants, which is what makes first builds fast, but a root whose
+    /// size or required constraints keep changing (a stack view that grows with its content) can never be updated in
+    /// place while presolved, so every pass rebuilds. After repeated structural bails the root is rebuilt without
+    /// presolve and stays on the incremental path.
+    internal var presolveAllowed = true
+    internal private(set) var presolveStructuralBails = 0
+    internal func inheritPresolveHistory(from previous: LegacyLayoutSolver) {
+        presolveStructuralBails = previous.presolveStructuralBails
+        presolveAllowed = previous.presolveAllowed
+    }
+    internal var wantsPresolveDemotion: Bool { presolveStructuralBails >= 2 }
+    private func notePresolveStructuralBail() { if solver.presolveActive { presolveStructuralBails += 1 } }
     private var installedDirection: RRLayoutDirection = .leftToRight
     private var installedUserConstraints: [ObjectIdentifier: InstalledUserConstraint] = [:]
     private var installedIntrinsicConstraints: [ObjectIdentifier: InstalledIntrinsicConstraints] = [:]
@@ -254,6 +274,48 @@ internal final class LegacyLayoutSolver {
     /// ordinary install path does.
     private var presolveBatchSourceByIndex: [Int: RRLayoutConstraint] = [:]
     private var installedStays: [ObjectIdentifier: InstalledStays] = [:]
+    /// Items deliberately WITHOUT stays because the constraints alone determine their frame. Weak stays only matter for
+    /// under-constrained variables (UIKit's per-window engine keeps those where they were simply because the tableau
+    /// persists); everything else pays rows and pivots for nothing. Re-checked after every pass.
+    private var unstayedItems: Set<ObjectIdentifier> = []
+
+    internal static let deferredStaysEnabled: Bool = !legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_NO_DEFERRED_STAYS")
+    private var usesDeferredStays: Bool { LegacyLayoutSolver.deferredStaysEnabled && fittingProposal == nil }
+    internal private(set) var deferredStayInstalls = 0
+
+    /// Installs stays for every unstayed item that has a variable the constraints do not determine.
+    private func installStaysWhereUndetermined() {
+        guard usesDeferredStays, !unstayedItems.isEmpty else { return }
+        // Variables some REAL row pulls on, recomputed from what is installed right now (a removed constraint stops
+        // counting). Implicit rows (size >= 0) and stays do not count: they would mention every variable.
+        var mentionedVariableIDs = Set<ObjectIdentifier>()
+        func note(_ constraints: [Constraint]) {
+            for constraint in constraints { for term in constraint.expression.terms { mentionedVariableIDs.insert(ObjectIdentifier(term.variable)) } }
+        }
+        for (_, installed) in installedUserConstraints { note(installed.solverConstraints) }
+        for (_, installed) in installedIntrinsicConstraints { note(installed.solverConstraints) }
+        for (_, installed) in installedAutoresizingConstraints { note(installed.solverConstraints) }
+        let rootIdentifier = ObjectIdentifier(root as AnyObject)
+        let stayStrength = Strength.create(0, 0, 1)
+        var absoluteOrigins: [ObjectIdentifier: CGPoint] = [:]
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            if identifier == rootIdentifier { absoluteOrigins[identifier] = CGPoint(x: 0, y: 0); continue }
+            let values = stayValues(for: item, absoluteOrigins: &absoluteOrigins)
+            guard unstayedItems.contains(identifier), let vars = variables[identifier] else { continue }
+            // A stay is only redundant for a variable some real constraint pulls on: a user, intrinsic or autoresizing row
+            // that mentions it. A variable nothing mentions rests wherever the tableau left it, and only its stay keeps it
+            // at the incumbent geometry (UIKit's persistent tableau does that implicitly).
+            let all = [vars.minX, vars.minY, vars.width, vars.height]
+            var constrained = true
+            for index in 0..<4 where values[index] != nil && !mentionedVariableIDs.contains(ObjectIdentifier(all[index])) { constrained = false; break }
+            if constrained { continue }
+            unstayedItems.remove(identifier)
+            deferredStayInstalls += 1
+            installedStays[identifier] = InstalledStays(
+                constraints: installStayConstraints(values, vars: vars, strength: stayStrength), values: values)
+        }
+    }
     /// Cumulative bookkeeping counters (diagnostics).
     internal private(set) var installedConstraintCount = 0
     internal private(set) var removedConstraintCount = 0
@@ -262,6 +324,9 @@ internal final class LegacyLayoutSolver {
     internal private(set) var passRemovedConstraints = 0
     /// Mutations performed by the last incremental pass.
     private var changeCount = 0
+    /// Signature of every user constraint seen by the last build (installed, dropped by presolve, or skipped), so a
+    /// presolved system can prove "no input changed" without a tableau diff.
+    private var builtUserSignatures: [ObjectIdentifier: ConstraintSignature] = [:]
     /// Set when the last `install` row was fully presolved: it was not added to
     /// the solver, so it must not be recorded as a solver constraint.
     private var lastInstallWasDropped = false
@@ -272,6 +337,9 @@ internal final class LegacyLayoutSolver {
     /// relaxes the row internally, so incremental diff bookkeeping is not a
     /// faithful description of the installed tableau.
     private var rebuildOnly = false
+    /// Required constraints the presolve batch had to relax. They are baked into the presolved values, so an
+    /// incremental pass cannot rediscover them; they stay broken for as long as the required inputs are unchanged.
+    private var presolveBrokenSources: [RRLayoutConstraint] = []
     /// The mutation generation this solver's solution reflects. The engine
     /// returns `cachedLayoutResult` directly when the global generation still
     /// matches (O(1) no-change pass, no tree walk).
@@ -357,17 +425,25 @@ internal final class LegacyLayoutSolver {
     /// is written back through `layoutSetFrame` and the autoresizing references are
     /// advanced; the returned frames are identical either way.
     internal func solve(writingFrames: Bool) -> LegacyLayoutResult {
+        var tt = LegacyBridgeStats.begin(); var ph = ""
+        @inline(__always) func lap(_ n: String) { if tt != 0 { let t = DispatchTime.now().uptimeNanoseconds; ph += " \(n)=\((t - tt) / 1000)"; tt = t } }
+        defer { if LegacyBridgeStats.enabled { FileHandle.standardError.write(Data(("legacy-phases:" + ph + "\n").utf8)) } }
         passInstalledConstraints = 0
         passRemovedConstraints = 0
+        presolveBrokenSources.removeAll(keepingCapacity: true)
         collectItems()
+        lap("collect")
         createVariables()
+        lap("vars")
         // Allocation hint for the build path: per item the engine installs the
         // intrinsic size guarantees (2), the weak stays (4) and typically a few
         // user constraints, over 4 variables.
         solver.reserveCapacity(constraintCount: items.count * 10 + 4,
                                variableCount: items.count * 4)
+        lap("reserve")
         prepareUserConstraints()
-        guard Solver.presolvesEnabled else {
+        lap("prep")
+        guard Solver.presolvesEnabled && presolveAllowed else {
             // Presolve disabled (differential tests): the ordinary rebuild path,
             // exactly as before this round.
             installImplicitConstraints()
@@ -376,6 +452,7 @@ internal final class LegacyLayoutSolver {
             installUserRequiredConstraints()
             installIntrinsicContentConstraints()
             installUserOptionalConstraints()
+            installStaysWhereUndetermined()
             return finishSolve(writingFrames: writingFrames)
         }
         // Required rows are buffered so the guarded presolve can substitute
@@ -391,7 +468,9 @@ internal final class LegacyLayoutSolver {
         installImplicitConstraints()
         installAutoresizingConstraints()
         installUserRequiredConstraints()
+        lap("req")
         solver.endPresolveBatch()
+        lap("presolve")
         if !solver.presolveActive {
             // The build declined presolve (guard failed) but the ordinary path is
             // now in use. Keep rebuilding on later passes too: this guarantees the
@@ -413,12 +492,19 @@ internal final class LegacyLayoutSolver {
                 if !brokenConstraints.contains(where: { $0 === source }) {
                     brokenConstraints.append(source)
                 }
+                presolveBrokenSources.append(source)
             }
         }
         installStays()
+        lap("stays")
         installIntrinsicContentConstraints()
+        lap("intrinsic")
         installUserOptionalConstraints()
-        return finishSolve(writingFrames: writingFrames)
+        installStaysWhereUndetermined()
+        lap("optional")
+        let r = finishSolve(writingFrames: writingFrames)
+        lap("finish")
+        return r
     }
 
     /// Shared tail of a rebuild: record the installed structure, refresh external
@@ -445,41 +531,78 @@ internal final class LegacyLayoutSolver {
     /// (item tree changed, root resized, direction changed, or the solver
     /// rejected an update); the caller then rebuilds with a fresh solver. The
     /// solver is left untouched in that case.
+    internal static let experimentNoStays: Bool = legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_NO_STAYS")
+    internal static let depthOrderedInstall: Bool = !legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_NO_DEPTH_ORDER")
+    internal static let reverseInstall: Bool = legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_REVERSE_INSTALL")
+    internal static let verifyIncremental: Bool = legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_VERIFY")
+
+    internal static func bail(_ why: String) {
+        LegacyLayoutDebug.bails[why, default: 0] += 1
+        LegacyLayoutDebug.pendingBail = why
+        if LegacyBridgeStats.enabled { FileHandle.standardError.write(Data("legacy-bail: \(why)\n".utf8)) }
+    }
+
     internal func update(root: LegacyLayoutItem,
                          direction: RRLayoutDirection,
                          writingFrames: Bool) -> LegacyLayoutResult? {
-        guard isInitialized else { return nil }
-        if solver.presolveActive || rebuildOnly {
-            // Presolve removed variables from the tableau; rewrite-on-diff would
-            // be a second subtle implementation. Rebuilding through the same
-            // presolve path is cheap and keeps persisted and rebuilt systems
-            // identical by construction.
-            return nil
+        guard isInitialized else { LegacyLayoutSolver.bail("uninit"); return nil }
+        if rebuildOnly || !solver.presolveActive {
+            if rebuildOnly { LegacyLayoutSolver.bail("rebuildOnly"); return nil }
         }
         rootStorage = root
         guard direction == installedDirection else {
             rootStorage = nil
+            LegacyLayoutSolver.bail("direction")
             return nil
         }
         self.direction = direction
         collectItems()
         defer { clearPassState() }
-        guard itemOrder == installedItemOrder,
-              superitemIdentifiers == installedSuperitems,
-              root.layoutFrame.size == installedRootSize else {
+        guard let added = structureAdditions() else {
+            LegacyLayoutSolver.bail(itemOrder != installedItemOrder ? "itemOrder" : (superitemIdentifiers != installedSuperitems ? "superitems" : "rootSize"))
             return nil
         }
+        guard applyRootSizeChangeInPlace() else {
+            notePresolveStructuralBail(); LegacyLayoutSolver.bail("rootSize")
+            let now = root.layoutFrame.size
+            let key = "w \(Int(installedRootSize.width))->\(Int(now.width)) h \(Int(installedRootSize.height))->\(Int(now.height)) presolve=\(solver.presolveActive)"
+            LegacyLayoutDebug.bails["  rootSize " + key, default: 0] += 1
+            return nil
+        }
+        if solver.presolveActive {
+            // Presolve substituted variables that the REQUIRED rows determine. Everything the engine adds after the
+            // batch (stays, intrinsic, optional user rows) is rewritten against those values and is held as ordinary
+            // rows, so those can be diffed incrementally exactly like an unpresolved system. Only a change to a
+            // required input (autoresizing plan, required user constraint) invalidates the substitution.
+            guard presolvedRequiredInputsUnchanged(root: root, direction: direction, added: Set(added)) else { notePresolveStructuralBail(); return nil }
+        }
+        if !added.isEmpty { installAddedItems(added) }
 
         passInstalledConstraints = 0
         passRemovedConstraints = 0
         let changesBefore = changeCount
+        if rootSizeChangedPending { changeCount += 1; rootSizeChangedPending = false }
         brokenConstraints.removeAll(keepingCapacity: true)
+        for source in presolveBrokenSources where !brokenConstraints.contains(where: { $0 === source }) {
+            brokenConstraints.append(source)
+        }
         // Stays first: rebuilds capture them from the current frames, and the
         // incremental path keeps the installed rows in sync with constants only.
-        guard refreshStays() else { return nil }
-        guard refreshUserConstraints() else { return nil }
-        guard refreshAutoresizingConstraints() else { return nil }
+        guard refreshRequiredUserConstraints() else { LegacyLayoutSolver.bail("user"); return nil }
+        guard refreshStays() else { LegacyLayoutSolver.bail("stays"); return nil }
+        guard refreshIntrinsicAndOptionalConstraints() else { LegacyLayoutSolver.bail("user"); return nil }
+        guard refreshAutoresizingConstraints() else { LegacyLayoutSolver.bail("autoresizing"); return nil }
+        let stayInstallsBefore = deferredStayInstalls
+        installStaysWhereUndetermined()
+        if deferredStayInstalls != stayInstallsBefore { changeCount += 1 }
+        if !added.isEmpty {
+            installedItemOrder = itemOrder
+            installedSuperitems = superitemIdentifiers
+            changeCount += 1
+        }
 
+        builtUserSignatures.removeAll(keepingCapacity: true)
+        for constraint in collectConstraints() { builtUserSignatures[ObjectIdentifier(constraint)] = constraintSignature(constraint) }
         if changeCount == changesBefore, let cached = lastResult {
             // Nothing the solver depends on moved: serve the previous solution
             // without touching the tableau or allocating a new result.
@@ -490,6 +613,14 @@ internal final class LegacyLayoutSolver {
         }
         lastUpdateWasCached = false
         solver.updateVariables()
+        if LegacyLayoutSolver.verifyIncremental && solver.presolveActive {
+            // Device verification: the incremental result must equal a fresh rebuild of the same inputs.
+            let probe = extractResult(writingFrames: false)
+            let fresh = LegacyLayoutSolver(root: root, direction: direction).solve(writingFrames: false)
+            var bad = 0
+            for (k, f) in fresh.frames where probe.frames[k] != f { bad += 1 }
+            FileHandle.standardError.write(Data("legacy-verify: items=\(fresh.frames.count) mismatches=\(bad)\n".utf8))
+        }
         let result = extractResult(writingFrames: writingFrames)
         advanceStayValues(from: result)
         if writingFrames { lastResult = result }
@@ -498,11 +629,119 @@ internal final class LegacyLayoutSolver {
         return result
     }
 
+
+    private func applyRootSizeChangeInPlace() -> Bool {
+        let size = root.layoutFrame.size
+        if size == installedRootSize { return true }
+        guard fittingProposal == nil, !solver.presolveActive,
+              size.width.isFinite, size.height.isFinite, installedRootSize.width.isFinite, installedRootSize.height.isFinite,
+              let w = rootSizeConstraints.width, let h = rootSizeConstraints.height,
+              solver.hasConstraint(w), solver.hasConstraint(h) else { return false }
+        var updates: [(Constraint, Double)] = []
+        if size.width != installedRootSize.width { updates.append((w, -Double(size.width))) }
+        if size.height != installedRootSize.height { updates.append((h, -Double(size.height))) }
+        do { try solver.updateConstraintConstants(updates) } catch { return false }
+        installedRootSize = size
+        rootSizeChangedPending = true     // counted after update() captures its baseline, or the pass would look unchanged
+        return true
+    }
+
+    /// Compares the freshly collected tree with the installed one. `nil` = incompatible (rebuild); otherwise the
+    /// identifiers of items that were ADDED since the last pass (empty when the structure is identical). Only pure
+    /// additions are incremental: removals or reparenting would have to retract rows that are not tracked per item.
+    private func structureAdditions() -> [ObjectIdentifier]? {
+        if itemOrder == installedItemOrder { return superitemIdentifiers == installedSuperitems ? [] : nil }
+        let known = Set(installedItemOrder)
+        guard itemOrder.count > installedItemOrder.count else { return nil }
+        var added: [ObjectIdentifier] = []
+        var kept = 0
+        for identifier in itemOrder {
+            if known.contains(identifier) { kept += 1 } else { added.append(identifier) }
+        }
+        guard kept == installedItemOrder.count else { return nil }          // something was removed
+        for identifier in itemOrder where known.contains(identifier) {
+            // An existing item must keep its parent, and its parent must be an existing item.
+            guard superitemIdentifiers[identifier] == installedSuperitems[identifier] else { return nil }
+        }
+        return added
+    }
+
+    /// Creates variables and the implicit rows for items added since the last pass.
+    private func installAddedItems(_ added: [ObjectIdentifier]) {
+        let rootIdentifier = ObjectIdentifier(root as AnyObject)
+        let addedSet = Set(added)
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            guard addedSet.contains(identifier) else { continue }
+            let vars = ItemVariables(identifier: identifier, item: item, isRoot: identifier == rootIdentifier,
+                                     minX: Variable(), minY: Variable(), width: Variable(), height: Variable())
+            variables[identifier] = vars
+            installRequired(Expression(vars.width), .greaterThanOrEqual, name: "width >= 0")
+            installRequired(Expression(vars.height), .greaterThanOrEqual, name: "height >= 0")
+        }
+    }
+
+    /// True when nothing a presolve substitution depends on has changed: same tree, same root size, and every
+    /// autoresizing plan and required user constraint carries the signature the last build used.
+    private func presolvedRequiredInputsUnchanged(root: LegacyLayoutItem, direction: RRLayoutDirection, added: Set<ObjectIdentifier>) -> Bool {
+        guard isInitialized, direction == installedDirection else { LegacyLayoutSolver.bail("pi:init/direction"); return false }
+        let rootIdentifier = ObjectIdentifier(root as AnyObject)
+        let fallbackSuperviewSize = root.layoutFrame.size
+        var translating = 0
+        for item in items {
+            let identifier = ObjectIdentifier(item as AnyObject)
+            if identifier == rootIdentifier { continue }
+            if added.contains(identifier) { continue }
+            guard let vars = variables[identifier] else { LegacyLayoutSolver.bail("pi:novars"); return false }
+            if item.layoutTranslatesAutoresizingMaskIntoConstraints {
+                translating += 1
+                guard let installed = installedAutoresizingConstraints[identifier],
+                      installed.signature == autoresizingPlan(vars: vars, item: item, fallbackSuperviewSize: fallbackSuperviewSize).signature
+                else { LegacyLayoutSolver.bail("pi:autoresizing"); return false }
+            } else if installedAutoresizingConstraints[identifier] != nil { LegacyLayoutSolver.bail("pi:untranslated"); return false }
+        }
+        guard installedAutoresizingConstraints.count == translating else { LegacyLayoutSolver.bail("pi:transcount"); return false }
+        var currentIDs = Set<ObjectIdentifier>()
+        for constraint in collectConstraints() {
+            let id = ObjectIdentifier(constraint)
+            currentIDs.insert(id)
+            if let built = builtUserSignatures[id] {
+                // An existing constraint whose inputs changed may have been folded into a presolved value; only a
+                // non-required one can be re-installed incrementally.
+                // A changed required constraint can be re-installed incrementally only when its old row is held by
+                // the tableau. One that presolve folded away (installed nothing) may have fixed a presolved value.
+                if built != constraintSignature(constraint),
+                   (built.priority >= RRLayoutPriorityValue.required || constraint.priority >= RRLayoutPriorityValue.required) {
+                    LegacyLayoutSolver.bail("pi:requser"); return false
+                }
+            } else if !constraintTouchesAdded(constraint, added) {
+                LegacyLayoutSolver.bail("pi:newuser"); return false
+            }
+        }
+        // A constraint that disappeared may be baked into the presolved values: retracting it is not possible.
+        // Likewise a removed constraint is retractable only when a row of it is held by the tableau.
+        for id in builtUserSignatures.keys where !currentIDs.contains(id) {
+            LegacyLayoutSolver.bail("pi:removeduser"); return false
+        }
+        return true
+    }
+
+    private func constraintTouchesAdded(_ constraint: RRLayoutConstraint, _ added: Set<ObjectIdentifier>) -> Bool {
+        if added.isEmpty { return false }
+        if let first = constraint.firstItem as AnyObject?, added.contains(ObjectIdentifier(first)) { return true }
+        if let second = constraint.secondItem as AnyObject?, added.contains(ObjectIdentifier(second)) { return true }
+        return false
+    }
+
     /// Whether this solver knows the current pass's structure (used by tests).
     internal var canUpdateIncrementally: Bool { isInitialized }
 
     /// Symbols known to the tableau after the last pass.
     internal var tableauVariableCount: Int { solver.variableCount }
+
+    internal static var replayStats: (total: Int, presolved: Int) { Solver.replayStats }
+
+    internal var tableauDensity: (rows: Int, cells: Int, maxRow: Int, maxCol: Int) { solver.density }
 
     /// Rows held by the tableau after the last pass.
     internal var tableauConstraintCount: Int { solver.constraintCount }
@@ -514,6 +753,8 @@ internal final class LegacyLayoutSolver {
         superitemIdentifiers.removeAll(keepingCapacity: true)
         firstBaselineOffsets.removeAll(keepingCapacity: true)
         lastBaselineOffsets.removeAll(keepingCapacity: true)
+        passConstraintCache = nil
+        passSignatureCache.removeAll(keepingCapacity: true)
         rootStorage = nil
     }
 
@@ -563,6 +804,9 @@ internal final class LegacyLayoutSolver {
         let rootIdentifier = ObjectIdentifier(root as AnyObject)
         variables.reserveCapacity(items.count)
         for item in items {
+            if item.layoutHasScrollContent {
+                scrollContentSizes[ObjectIdentifier(item as AnyObject)] = (Variable(), Variable())
+            }
             let identifier = ObjectIdentifier(item as AnyObject)
             // Names are debug-only; empty names avoid one string allocation and
             // interpolation per variable in the build path.
@@ -596,6 +840,13 @@ internal final class LegacyLayoutSolver {
             installRequired(Expression(vars.height), .greaterThanOrEqual, name: "height >= 0")
         }
 
+        for (_, size) in scrollContentSizes {
+            installRequired(Expression(size.width), .greaterThanOrEqual, name: "scroll content width >= 0")
+            installRequired(Expression(size.height), .greaterThanOrEqual, name: "scroll content height >= 0")
+            _ = install(Expression(size.width), .equal, strength: .weak, name: "scroll fitting width")
+            _ = install(Expression(size.height), .equal, strength: .weak, name: "scroll fitting height")
+        }
+
         // 3. The root is the container: fix its geometry. The solver works in the
         //    root's LOCAL coordinate space (origin 0,0 + the root's bounds size),
         //    because a subitem's `layoutFrame` is relative to its superitem. If the
@@ -605,13 +856,24 @@ internal final class LegacyLayoutSolver {
             let frame = root.layoutFrame
             installRequired(Expression(rootVariables.minX), .equal, name: "root: minX = 0")
             installRequired(Expression(rootVariables.minY), .equal, name: "root: minY = 0")
-            if frame.width.isFinite {
-                installRequired(Expression(rootVariables.width).minus(Expression(constant: Double(frame.width))),
-                                .equal, name: "root: width = frame.width")
-            }
-            if frame.height.isFinite {
-                installRequired(Expression(rootVariables.height).minus(Expression(constant: Double(frame.height))),
-                                .equal, name: "root: height = frame.height")
+            if let proposal = fittingProposal {
+                installRequired(Expression(rootVariables.width), .greaterThanOrEqual, name: "fitting width >= 0")
+                installRequired(Expression(rootVariables.height), .greaterThanOrEqual, name: "fitting height >= 0")
+                let fitting = RRLayoutPriorityMapping.strength(for: RRLayoutPriorityValue.fittingSizeLevel)
+                _ = install(Expression(rootVariables.width).minus(Expression(constant: Double(proposal.width ?? 0))),
+                            .equal, strength: proposal.width == nil ? fitting : .required, name: "fitting width")
+                _ = install(Expression(rootVariables.height).minus(Expression(constant: Double(proposal.height ?? 0))),
+                            .equal, strength: proposal.height == nil ? fitting : .required, name: "fitting height")
+            } else {
+                rootSizeConstraints = (nil, nil)
+                if frame.width.isFinite {
+                    rootSizeConstraints.width = install(Expression(rootVariables.width).minus(Expression(constant: Double(frame.width))),
+                                                        .equal, strength: .required, name: "root: width = frame.width")
+                }
+                if frame.height.isFinite {
+                    rootSizeConstraints.height = install(Expression(rootVariables.height).minus(Expression(constant: Double(frame.height))),
+                                                         .equal, strength: .required, name: "root: height = frame.height")
+                }
             }
         }
     }
@@ -725,33 +987,24 @@ internal final class LegacyLayoutSolver {
         let superviewMinXExpression = minXExpression(ofSuperviewOf: vars) ?? Expression(constant: 0)
         let frameMinX = Expression(vars.minX).minus(superviewMinXExpression)
 
-        if mask.contains(.flexibleWidth) {
-            expressions.append((frameMinX.minus(Expression(constant: Double(x0))),
-                                .equal, "autoresizing: minX = x0"))
-            // superview.width == child.maxX(frame-relative) + right gap
-            expressions.append((superviewWidthExpression
-                                    .minus(Expression(vars.minX).plus(Expression(vars.width)))
-                                    .plus(superviewMinXExpression)
-                                    .minus(Expression(constant: Double(rightGap))),
-                                .equal, "autoresizing: superview.width = maxX + right gap"))
-        } else if mask.contains(.flexibleLeftMargin) && mask.contains(.flexibleRightMargin) {
-            let denominator = superviewWidth - w0
-            let ratio = denominator != 0 ? x0 / denominator : 0
-            expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
-                                .equal, "autoresizing: width = w0"))
-            // minX(frame-relative) == ratio * superview.width - ratio * w0
-            expressions.append((frameMinX
-                                    .minus(superviewWidthExpression.times(Double(ratio)))
-                                    .plus(Expression(constant: Double(ratio * w0))),
+        // Apple distributes the container's size delta among the flexible components (start margin,
+        // size, end margin) proportionally to their lengths at reference time. Verified against UIKit:
+        // container 320->400 with a 10pt left margin and 100pt width gives width 173 (80*100/110) and
+        // x 17 (80*10/110). Flexible components whose lengths are all zero split the delta evenly.
+        let flexibleStart = mask.contains(.flexibleLeftMargin)
+        let flexibleSize = mask.contains(.flexibleWidth)
+        let flexibleEnd = mask.contains(.flexibleRightMargin)
+        let weight = (flexibleStart ? x0 : 0) + (flexibleSize ? w0 : 0) + (flexibleEnd ? rightGap : 0)
+        let flexibleCount = [flexibleStart, flexibleSize, flexibleEnd].filter { $0 }.count
+        if flexibleCount > 0 {
+            let denominator = weight > 0 ? weight : 1
+            let startShare: Double = flexibleStart ? (weight > 0 ? x0 / denominator : 1 / Double(flexibleCount)) : 0
+            let sizeShare: Double = flexibleSize ? (weight > 0 ? w0 / denominator : 1 / Double(flexibleCount)) : 0
+            let delta = superviewWidthExpression.minus(Expression(constant: Double(superviewWidth)))
+            expressions.append((frameMinX.minus(delta.times(Double(startShare))).minus(Expression(constant: Double(x0))),
                                 .equal, "autoresizing: proportional minX"))
-        } else if mask.contains(.flexibleLeftMargin) {
-            expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
-                                .equal, "autoresizing: width = w0"))
-            expressions.append((superviewWidthExpression
-                                    .minus(Expression(vars.minX).plus(Expression(vars.width)))
-                                    .plus(superviewMinXExpression)
-                                    .minus(Expression(constant: Double(rightGap))),
-                                .equal, "autoresizing: superview.width = maxX + right gap"))
+            expressions.append((Expression(vars.width).minus(delta.times(Double(sizeShare))).minus(Expression(constant: Double(w0))),
+                                .equal, "autoresizing: proportional width"))
         } else {
             expressions.append((Expression(vars.width).minus(Expression(constant: Double(w0))),
                                 .equal, "autoresizing: width = w0"))
@@ -759,6 +1012,7 @@ internal final class LegacyLayoutSolver {
                                 .equal, "autoresizing: minX = x0"))
         }
     }
+
 
     /// Vertical axis of the autoresizing translation; symmetric to the horizontal
     /// one with `y`, `height`, `topMargin` and `bottomMargin`.
@@ -779,31 +1033,20 @@ internal final class LegacyLayoutSolver {
         let superviewMinYExpression = minYExpression(ofSuperviewOf: vars) ?? Expression(constant: 0)
         let frameMinY = Expression(vars.minY).minus(superviewMinYExpression)
 
-        if mask.contains(.flexibleHeight) {
-            expressions.append((frameMinY.minus(Expression(constant: Double(y0))),
-                                .equal, "autoresizing: minY = y0"))
-            expressions.append((superviewHeightExpression
-                                    .minus(Expression(vars.minY).plus(Expression(vars.height)))
-                                    .plus(superviewMinYExpression)
-                                    .minus(Expression(constant: Double(bottomGap))),
-                                .equal, "autoresizing: superview.height = maxY + bottom gap"))
-        } else if mask.contains(.flexibleTopMargin) && mask.contains(.flexibleBottomMargin) {
-            let denominator = superviewHeight - h0
-            let ratio = denominator != 0 ? y0 / denominator : 0
-            expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
-                                .equal, "autoresizing: height = h0"))
-            expressions.append((frameMinY
-                                    .minus(superviewHeightExpression.times(Double(ratio)))
-                                    .plus(Expression(constant: Double(ratio * h0))),
+        let flexibleStart = mask.contains(.flexibleTopMargin)
+        let flexibleSize = mask.contains(.flexibleHeight)
+        let flexibleEnd = mask.contains(.flexibleBottomMargin)
+        let weight = (flexibleStart ? y0 : 0) + (flexibleSize ? h0 : 0) + (flexibleEnd ? bottomGap : 0)
+        let flexibleCount = [flexibleStart, flexibleSize, flexibleEnd].filter { $0 }.count
+        if flexibleCount > 0 {
+            let denominator = weight > 0 ? weight : 1
+            let startShare: Double = flexibleStart ? (weight > 0 ? y0 / denominator : 1 / Double(flexibleCount)) : 0
+            let sizeShare: Double = flexibleSize ? (weight > 0 ? h0 / denominator : 1 / Double(flexibleCount)) : 0
+            let delta = superviewHeightExpression.minus(Expression(constant: Double(superviewHeight)))
+            expressions.append((frameMinY.minus(delta.times(Double(startShare))).minus(Expression(constant: Double(y0))),
                                 .equal, "autoresizing: proportional minY"))
-        } else if mask.contains(.flexibleTopMargin) {
-            expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
-                                .equal, "autoresizing: height = h0"))
-            expressions.append((superviewHeightExpression
-                                    .minus(Expression(vars.minY).plus(Expression(vars.height)))
-                                    .plus(superviewMinYExpression)
-                                    .minus(Expression(constant: Double(bottomGap))),
-                                .equal, "autoresizing: superview.height = maxY + bottom gap"))
+            expressions.append((Expression(vars.height).minus(delta.times(Double(sizeShare))).minus(Expression(constant: Double(h0))),
+                                .equal, "autoresizing: proportional height"))
         } else {
             expressions.append((Expression(vars.height).minus(Expression(constant: Double(h0))),
                                 .equal, "autoresizing: height = h0"))
@@ -899,6 +1142,7 @@ internal final class LegacyLayoutSolver {
                                         vars: ItemVariables,
                                         strength: Strength) -> [Constraint] {
         var installed: [Constraint] = []
+        if LegacyLayoutSolver.experimentNoStays { return [] }
         installed.reserveCapacity(4)
         for index in 0..<4 {
             guard let value = values[index] else { continue }
@@ -937,6 +1181,7 @@ internal final class LegacyLayoutSolver {
             }
             let values = stayValues(for: item, absoluteOrigins: &absoluteOrigins)
             guard let vars = variables[identifier] else { continue }
+            if usesDeferredStays { unstayedItems.insert(identifier); continue }
             installedStays[identifier] = InstalledStays(
                 constraints: installStayConstraints(values, vars: vars, strength: stayStrength),
                 values: values)
@@ -966,6 +1211,10 @@ internal final class LegacyLayoutSolver {
 
         for (identifier, vars, values, installed) in installedByItem {
             let desiredCount = values.lazy.filter { $0 != nil }.count
+            if usesDeferredStays && (installed == nil || unstayedItems.contains(identifier)) {
+                unstayedItems.insert(identifier)
+                continue
+            }
             guard let installed = installed else {
                 installedStays[identifier] = InstalledStays(
                     constraints: installStayConstraints(values, vars: vars, strength: stayStrength),
@@ -1046,6 +1295,8 @@ internal final class LegacyLayoutSolver {
     /// rows are installed in the presolve batch, the optional ones afterwards.
     private func prepareUserConstraints() {
         let constraints = collectConstraints()
+        builtUserSignatures.removeAll(keepingCapacity: true)
+        for constraint in constraints { builtUserSignatures[ObjectIdentifier(constraint)] = constraintSignature(constraint) }
         userRequiredConstraints.removeAll(keepingCapacity: true)
         userOptionalConstraints.removeAll(keepingCapacity: true)
         userRequiredConstraints.reserveCapacity(constraints.count)
@@ -1116,7 +1367,40 @@ internal final class LegacyLayoutSolver {
 
     /// Incremental user-constraint diff. Returns `false` when the solver could
     /// not apply the change; the caller then rebuilds.
+    /// Optional user rows deferred by `refreshRequiredUserConstraints` until stays and intrinsic rows are in, so an
+    /// incremental pass installs rows in the same order as a full rebuild (required, stays, intrinsic, optional).
+    private var pendingOptionalUserConstraints: [CompiledConstraint] = []
+
+
+    /// Stable sort of compiled rows by the depth of the view that owns them (deepest first). Ownership = the shallowest
+    /// of the constraint's items' depths is what ties it to the rest of the tree, so rows whose items are all deep go first.
+    private func depthOrdered(_ rows: [CompiledConstraint]) -> [CompiledConstraint] {
+        var depthCache: [ObjectIdentifier: Int] = [:]
+        func depth(_ item: LegacyLayoutItem) -> Int {
+            let id = ObjectIdentifier(item as AnyObject)
+            if let d = depthCache[id] { return d }
+            var d = 0; var cursor = item.layoutSuperitem
+            while let c = cursor { d += 1; cursor = c.layoutSuperitem; if d > 200 { break } }
+            depthCache[id] = d
+            return d
+        }
+        func rank(_ row: CompiledConstraint) -> Int {
+            var shallowest = Int.max
+            if let a = row.source.firstItem as AnyObject? as? LegacyLayoutItem { shallowest = min(shallowest, depth(a)) }
+            if let b = row.source.secondItem as AnyObject? as? LegacyLayoutItem { shallowest = min(shallowest, depth(b)) }
+            return shallowest == Int.max ? 0 : shallowest
+        }
+        let ranked = rows.enumerated().map { (index: $0.offset, rank: rank($0.element), row: $0.element) }
+        return ranked.sorted { $0.rank != $1.rank ? $0.rank > $1.rank : $0.index < $1.index }.map { $0.row }
+    }
+
     private func refreshUserConstraints() -> Bool {
+        guard refreshRequiredUserConstraints() else { return false }
+        return refreshIntrinsicAndOptionalConstraints()
+    }
+
+    private func refreshRequiredUserConstraints() -> Bool {
+        pendingOptionalUserConstraints.removeAll(keepingCapacity: true)
         let constraints = collectConstraints()
         var currentIdentifiers: Set<ObjectIdentifier> = []
         currentIdentifiers.reserveCapacity(constraints.count)
@@ -1151,8 +1435,21 @@ internal final class LegacyLayoutSolver {
             for identifier in removed { installedUserConstraints.removeValue(forKey: identifier) }
         }
 
+        if LegacyLayoutSolver.reverseInstall { required.reverse(); optional.reverse() }
+        else if LegacyLayoutSolver.depthOrderedInstall, required.count > 1 {
+            // A constraint is installed after everything inside the views it connects: a new message's internal rows go
+            // in before the rows tying it to the chain, so they never pivot through the chain's long columns.
+            required = depthOrdered(required); optional = depthOrdered(optional)
+        }
         for compiled in required { installUserConstraint(compiled) }
+        pendingOptionalUserConstraints = optional
+        return true
+    }
+
+    private func refreshIntrinsicAndOptionalConstraints() -> Bool {
         guard refreshIntrinsicConstraints() else { return false }
+        let optional = pendingOptionalUserConstraints
+        pendingOptionalUserConstraints.removeAll(keepingCapacity: true)
         for compiled in optional { installUserConstraint(compiled) }
         return true
     }
@@ -1160,6 +1457,14 @@ internal final class LegacyLayoutSolver {
     /// The immutable configuration plus the mutable constant/priority of a user
     /// constraint. The constraint's other inputs cannot change after creation.
     private func constraintSignature(_ constraint: RRLayoutConstraint) -> ConstraintSignature {
+        let key = ObjectIdentifier(constraint)
+        if let cached = passSignatureCache[key] { return cached }
+        let signature = computeConstraintSignature(constraint)
+        passSignatureCache[key] = signature
+        return signature
+    }
+
+    private func computeConstraintSignature(_ constraint: RRLayoutConstraint) -> ConstraintSignature {
         ConstraintSignature(
             firstItem: constraint.firstItem.map { ObjectIdentifier($0 as AnyObject) },
             secondItem: constraint.secondItem.map { ObjectIdentifier($0 as AnyObject) },
@@ -1188,7 +1493,19 @@ internal final class LegacyLayoutSolver {
 
     /// Constraints owned by any item of the subtree, plus activated constraints
     /// that reference a subtree item, de-duplicated by object identity.
+    /// One pass collects the subtree's constraints once; refreshRequired/presolve-guard/signature-table all share it.
+    /// Cleared with the rest of the pass state, so a new pass always re-collects.
+    private var passConstraintCache: [RRLayoutConstraint]?
+    private var passSignatureCache: [ObjectIdentifier: ConstraintSignature] = [:]
+
     private func collectConstraints() -> [RRLayoutConstraint] {
+        if let cached = passConstraintCache { return cached }
+        let collected = collectConstraintsUncached()
+        passConstraintCache = collected
+        return collected
+    }
+
+    private func collectConstraintsUncached() -> [RRLayoutConstraint] {
         let activated = LegacyActiveConstraintRegistry.shared.activeConstraints()
         var result: [RRLayoutConstraint] = []
         result.reserveCapacity(items.count * 4)
@@ -1253,7 +1570,8 @@ internal final class LegacyLayoutSolver {
             // nil / deallocated first item or item outside the solved subtree.
             return nil
         }
-        guard let firstExpression = expression(for: firstVariables, attribute: constraint.firstAttribute) else {
+        guard let firstExpression = constraintExpression(for: firstVariables, attribute: constraint.firstAttribute,
+                                                        otherItem: constraint.secondItem as AnyObject?) else {
             brokenConstraints.append(constraint)
             return nil
         }
@@ -1273,8 +1591,8 @@ internal final class LegacyLayoutSolver {
                 // The constraint belongs to an ancestor's layout pass.
                 return nil
             }
-            guard let secondExpression = expression(for: secondVariables,
-                                                    attribute: constraint.secondAttribute) else {
+            guard let secondExpression = constraintExpression(for: secondVariables,
+                                                    attribute: constraint.secondAttribute, otherItem: firstObject) else {
                 brokenConstraints.append(constraint)
                 return nil
             }
@@ -1321,8 +1639,40 @@ internal final class LegacyLayoutSolver {
                                   name: constraint.identifier)
     }
 
+    /// Display scale of the view being laid out (window screen scale, else main screen).
+    private func extractedDisplayScale() -> Double {
+        if let view = root as? UIView, let scale = view.window?.screen.scale, scale > 0 {
+            return Double(scale)
+        }
+        let scale = UIScreen.main.scale
+        return Double(scale > 0 ? scale : 1)
+    }
+
     /// The expression for an attribute on an item, or `nil` when the item cannot
     /// provide that attribute (unsupported baseline).
+    private func constraintExpression(for vars: ItemVariables, attribute: RRLayoutAttribute,
+                                      otherItem: AnyObject?) -> Expression? {
+        guard let size = scrollContentSizes[vars.identifier], let other = otherItem as? LegacyLayoutItem else {
+            return expression(for: vars, attribute: attribute)
+        }
+        var ancestor = other.layoutSuperitem
+        var descendant = false
+        while let item = ancestor {
+            if ObjectIdentifier(item as AnyObject) == vars.identifier { descendant = true; break }
+            ancestor = item.layoutSuperitem
+        }
+        guard descendant else { return expression(for: vars, attribute: attribute) }
+        switch attribute {
+        case .right: return Expression(vars.minX).plus(Expression(size.width))
+        case .bottom: return Expression(vars.minY).plus(Expression(size.height))
+        case .trailing:
+            return direction == .leftToRight ? Expression(vars.minX).plus(Expression(size.width)) : Expression(vars.minX)
+        case .leading:
+            return direction == .leftToRight ? Expression(vars.minX) : Expression(vars.minX).plus(Expression(size.width))
+        default: return expression(for: vars, attribute: attribute)
+        }
+    }
+
     private func expression(for variables: ItemVariables, attribute: RRLayoutAttribute) -> Expression? {
         switch attribute {
         case .notAnAttribute:
@@ -1406,17 +1756,36 @@ internal final class LegacyLayoutSolver {
     ///
     /// `UIViewNoIntrinsicMetric` (`-1`) means "no intrinsic size on this axis".
     private func intrinsicPlan(for item: LegacyLayoutItem, vars: ItemVariables) -> IntrinsicPlan {
-        let intrinsicSize = item.layoutIntrinsicContentSize
-        let huggingX = item.layoutContentHuggingPriority(for: .horizontal)
-        let huggingY = item.layoutContentHuggingPriority(for: .vertical)
-        let compressionX = item.layoutContentCompressionResistancePriority(for: .horizontal)
-        let compressionY = item.layoutContentCompressionResistancePriority(for: .vertical)
-        let signature = IntrinsicSignature(width: Double(intrinsicSize.width),
-                                           height: Double(intrinsicSize.height),
-                                           huggingX: huggingX,
-                                           huggingY: huggingY,
-                                           compressionX: compressionX,
-                                           compressionY: compressionY)
+        let inputs = intrinsicInputs(for: item)
+        return intrinsicPlan(inputs: inputs, vars: vars)
+    }
+
+    /// Everything the plan depends on, gathered without allocating any solver expression. An unchanged view (the common
+    /// case on an incremental pass) only needs this to prove its installed rows are still right.
+    private struct IntrinsicInputs {
+        var size: CGSize
+        var huggingX: RRLayoutPriority, huggingY: RRLayoutPriority
+        var compressionX: RRLayoutPriority, compressionY: RRLayoutPriority
+        var signature: IntrinsicSignature {
+            IntrinsicSignature(width: Double(size.width), height: Double(size.height),
+                               huggingX: huggingX, huggingY: huggingY,
+                               compressionX: compressionX, compressionY: compressionY)
+        }
+    }
+
+    private func intrinsicInputs(for item: LegacyLayoutItem) -> IntrinsicInputs {
+        return IntrinsicInputs(size: item.layoutIntrinsicContentSize,
+                        huggingX: item.layoutContentHuggingPriority(for: .horizontal),
+                        huggingY: item.layoutContentHuggingPriority(for: .vertical),
+                        compressionX: item.layoutContentCompressionResistancePriority(for: .horizontal),
+                        compressionY: item.layoutContentCompressionResistancePriority(for: .vertical))
+    }
+
+    private func intrinsicPlan(inputs: IntrinsicInputs, vars: ItemVariables) -> IntrinsicPlan {
+        let intrinsicSize = inputs.size
+        let huggingX = inputs.huggingX, huggingY = inputs.huggingY
+        let compressionX = inputs.compressionX, compressionY = inputs.compressionY
+        let signature = inputs.signature
         var expressions: [(expression: Expression, op: RelationalOperator, strength: Strength, name: String)] = []
         expressions.reserveCapacity(4)
         if intrinsicSize.width >= 0 && intrinsicSize.width.isFinite {
@@ -1444,6 +1813,18 @@ internal final class LegacyLayoutSolver {
         return IntrinsicPlan(signature: signature, expressions: expressions)
     }
 
+    /// Installs one intrinsic-size row. Like a user constraint, a required row the solver rejects (a view whose
+    /// required hugging/compression pins it to a size the required constraints cannot give it) is not dropped:
+    /// it is kept at the "broken" strength, so the required constraints win and the intrinsic size still pulls
+    /// as hard as it can (UIKit breaks the unsatisfiable required set instead of ignoring the intrinsic size).
+    private func installIntrinsicRow(_ expression: Expression, _ op: RelationalOperator,
+                                     strength: Strength, name: String) -> Constraint? {
+        if let constraint = install(expression, op, strength: strength, name: name) { return constraint }
+        guard strength == Strength.required, !lastInstallWasDropped else { return nil }
+        return install(expression.plus(Expression(constant: 0)), op,
+                       strength: LegacyLayoutSolver.brokenStrength, name: name)
+    }
+
     private func installIntrinsicContentConstraints() {
         for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
@@ -1454,8 +1835,8 @@ internal final class LegacyLayoutSolver {
             var installed: [Constraint] = []
             installed.reserveCapacity(plan.expressions.count)
             for entry in plan.expressions {
-                if let constraint = install(entry.expression, entry.op,
-                                            strength: entry.strength, name: entry.name) {
+                if let constraint = installIntrinsicRow(entry.expression, entry.op,
+                                                        strength: entry.strength, name: entry.name) {
                     installed.append(constraint)
                 }
             }
@@ -1471,17 +1852,18 @@ internal final class LegacyLayoutSolver {
             let identifier = ObjectIdentifier(item as AnyObject)
             guard let vars = variables[identifier], !vars.isRoot else { continue }
             seen.insert(identifier)
-            let plan = intrinsicPlan(for: item, vars: vars)
+            let inputs = intrinsicInputs(for: item)
             if let installed = installedIntrinsicConstraints[identifier] {
-                if installed.signature == plan.signature { continue }
+                if installed.signature == inputs.signature { continue }      // unchanged: no expressions built at all
                 if !removeSolverConstraints(installed.solverConstraints) { return false }
                 installedIntrinsicConstraints.removeValue(forKey: identifier)
             }
+            let plan = intrinsicPlan(inputs: inputs, vars: vars)
             var installed: [Constraint] = []
             installed.reserveCapacity(plan.expressions.count)
             for entry in plan.expressions {
-                if let constraint = install(entry.expression, entry.op,
-                                            strength: entry.strength, name: entry.name) {
+                if let constraint = installIntrinsicRow(entry.expression, entry.op,
+                                                        strength: entry.strength, name: entry.name) {
                     installed.append(constraint)
                 }
             }
@@ -1570,6 +1952,7 @@ internal final class LegacyLayoutSolver {
         installedIntrinsicConstraints.removeAll(keepingCapacity: true)
         installedAutoresizingConstraints.removeAll(keepingCapacity: true)
         installedStays.removeAll(keepingCapacity: true)
+        unstayedItems.removeAll(keepingCapacity: true)
         presolveBatchSourceByIndex.removeAll(keepingCapacity: true)
         installedConstraintCount = 0
         removedConstraintCount = 0
@@ -1620,6 +2003,8 @@ internal final class LegacyLayoutSolver {
             changeCount += 1
             return constraint
         } catch {
+            LegacyLayoutDebug.noteRejected(name: name, op: "\(op)", strengthIsRequired: strength == .required,
+                                           terms: expression.terms.count, constant: expression.constant, error: "\(error)")
             return nil
         }
     }
@@ -1637,7 +2022,12 @@ internal final class LegacyLayoutSolver {
         for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
             if identifier == rootIdentifier {
-                let rootFrame = item.layoutFrame
+                var rootFrame = item.layoutFrame
+                if fittingProposal != nil, let vars = variables[identifier] {
+                    rootFrame.size = CGSize(width: max(0, solver.value(of: vars.width)),
+                                            height: max(0, solver.value(of: vars.height)))
+                    fittedRootSize = rootFrame.size
+                }
                 absoluteOrigins[identifier] = CGPoint(x: 0, y: 0)
                 solvedSizes[identifier] = CGSize(width: rootFrame.width.isFinite ? rootFrame.width : 0,
                                                  height: rootFrame.height.isFinite ? rootFrame.height : 0)
@@ -1678,18 +2068,38 @@ internal final class LegacyLayoutSolver {
             }
         }
 
+        // UIKit writes Auto Layout results on the display pixel grid: a 2x screen snaps frames to
+        // 0.5pt (differential: 69.75 -> 70, 81.75 -> 82, 38.25 -> 38.5). Ties round half-up.
+        let pixelScale = extractedDisplayScale()
+        func snap(_ value: Double) -> Double {
+            guard pixelScale > 0 else { return value }
+            let scaled = value * pixelScale
+            let floorValue = floor(scaled)
+            if abs((scaled - floorValue) - 0.5) < 1e-9 { return (floorValue + 1) / pixelScale }
+            return scaled.rounded() / pixelScale
+        }
+
         // Write frames back (root untouched) and advance autoresizing references.
         // Both only happen for a real layout pass, not for `solve`.
         if writingFrames {
             for item in items {
                 let identifier = ObjectIdentifier(item as AnyObject)
+                if let size = scrollContentSizes[identifier] {
+                    item.layoutSetScrollContentSize(CGSize(width: max(0, solver.value(of: size.width)),
+                                                          height: max(0, solver.value(of: size.height))))
+                }
                 if identifier == rootIdentifier {
                     continue
                 }
-                guard let frame = currentFrames[identifier], frame.minX.isFinite,
-                      frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite else {
+                guard let candidate = currentFrames[identifier], candidate.minX.isFinite,
+                      candidate.minY.isFinite, candidate.width.isFinite, candidate.height.isFinite else {
                     continue
                 }
+                let parentAbsolute = parentAbsoluteOrigin(of: item, absoluteOrigins: absoluteOrigins)
+                let frame = CGRect(x: snap(parentAbsolute.x + Double(candidate.minX)) - Double(parentAbsolute.x),
+                                   y: snap(parentAbsolute.y + Double(candidate.minY)) - Double(parentAbsolute.y),
+                                   width: max(0, snap(Double(candidate.width))),
+                                   height: max(0, snap(Double(candidate.height))))
                 item.layoutSetFrame(frame)
             }
             for item in items {

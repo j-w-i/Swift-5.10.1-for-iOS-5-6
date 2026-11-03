@@ -92,6 +92,8 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
             .Case("NSURLSessionDataTask", "FBPURLSessionDataTask")
             .Case("NSURLSessionUploadTask", "FBPURLSessionUploadTask")
             .Case("NSURLSessionDownloadTask", "FBPURLSessionDownloadTask")
+            .Case("NSHashTable", "FBPHashTable")
+            .Case("NSPointerFunctions", "FBPPointerFunctions")
             .Default("") : StringRef();
         if (!runtime.empty())
           edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
@@ -145,6 +147,40 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
       }
     }
     auto name = spelling(tokens[i]);
+    if (backportFacades && name == "UIViewNoIntrinsicMetric" && i &&
+        spelling(tokens[i - 1]) == "CGFloat")
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_SwiftLegacyUIViewNoIntrinsicMetric\")"});
+    // iOS 11 exposes `safeAreaLayoutGuide` with the native guide class, but the
+    // legacy configuration surfaces the backport guide instead. Preprocessor
+    // guards hide that one declaration so the overlay can provide the same API
+    // name and availability with the backport's own guide type.
+    if (backportFacades && name == "safeAreaLayoutGuide") {
+      size_t attribute = i;
+      while (attribute > 0 &&
+             !(tokens[attribute].is(clang::tok::at) &&
+               spelling(tokens[attribute + 1]) == "property"))
+        --attribute;
+      size_t semicolon = i;
+      while (semicolon < tokens.size() &&
+             !tokens[semicolon].is(clang::tok::semi))
+        ++semicolon;
+      if (attribute < i && semicolon < tokens.size()) {
+        edits.push_back({tokens[attribute].getLocation().getRawEncoding() - 1,
+                         std::string("#if 0 /* legacy: backport guide */\n")});
+        edits.push_back({tokens[semicolon].getLocation().getRawEncoding() - 1 +
+                             tokens[semicolon].getLength(),
+                         std::string("\n#endif\n")});
+      }
+    }
+    // Genuine UIKit attribute-name constants (iOS 6) with the identical CoreText
+    // string values, provided by the SDK runtime on iOS 5.
+    if (backportFacades && i && spelling(tokens[i - 1]) == "const" &&
+        (name == "NSFontAttributeName" ||
+         name == "NSForegroundColorAttributeName" ||
+         name == "NSUnderlineStyleAttributeName"))
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
     if (backportFacades && name == "NSDirectionalEdgeInsetsZero" && i &&
         spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
@@ -696,7 +732,7 @@ static void getLegacyCollectionFileMapping(
                           "UICollectionViewController.h", "UICollectionViewUpdateItem.h",
                           "UILayoutGuide.h", "NSLayoutAnchor.h", "UIRefreshControl.h",
                           "UIStackView.h", "UICollectionViewCompositionalLayout.h",
-                          "UIGeometry.h"}) {
+                          "UIGeometry.h", "UIView.h", "NSAttributedString.h"}) {
       Path path(headers);
       llvm::sys::path::append(path, file);
       if (auto source = vfs->getBufferForFile(path))
@@ -734,7 +770,7 @@ static void getLegacyFoundationFileMapping(
   llvm::sys::path::append(headers, "System", "Library", "Frameworks");
   llvm::sys::path::append(headers, "Foundation.framework", "Headers");
   for (StringRef file : {"NSURL.h", "NSURLComponents.h", "NSURLSession.h",
-                        "NSISO8601DateFormatter.h"}) {
+                        "NSISO8601DateFormatter.h", "NSHashTable.h"}) {
     Path path(headers);
     llvm::sys::path::append(path, file);
     if (auto source = vfs->getBufferForFile(path))

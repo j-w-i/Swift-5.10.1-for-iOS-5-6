@@ -184,8 +184,29 @@ void CompilerInvocation::setDefaultBlocklistsIfNecessary() {
   }
 }
 
+/// SDK Swift modules need not match the source-built iOS 5 runtime. In the
+/// explicitly opted-in legacy configuration, a missing resource-directory
+/// module must not silently fall back to a modern SDK overlay: those interfaces
+/// declare newer libraries and autolink dylibs that do not exist on iOS 5.
+static bool shouldIsolateLegacyIOS5SDKSwiftModules(const LangOptions &LangOpts) {
+  const auto isNativeIOS5 = [](const llvm::Triple &Triple) {
+    return Triple.getArch() == llvm::Triple::arm &&
+           (Triple.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
+            Triple.getSubArch() == llvm::Triple::ARMSubArch_v7s) &&
+           Triple.isiOS() && !Triple.isTvOS() &&
+           !Triple.isSimulatorEnvironment() &&
+           !Triple.isMacCatalystEnvironment() && !Triple.isOSVersionLT(5) &&
+           Triple.isOSVersionLT(6);
+  };
+  const auto &ClangTarget =
+      LangOpts.ClangTarget ? *LangOpts.ClangTarget : LangOpts.Target;
+  return LangOpts.LegacyIOS5ClassMarking && isNativeIOS5(LangOpts.Target) &&
+         isNativeIOS5(ClangTarget);
+}
+
 static void updateRuntimeLibraryPaths(SearchPathOptions &SearchPathOpts,
-                                      llvm::Triple &Triple) {
+                                      const LangOptions &LangOpts) {
+  const auto &Triple = LangOpts.Target;
   llvm::SmallString<128> LibPath(SearchPathOpts.RuntimeResourcePath);
 
   StringRef LibSubDir = getPlatformNameForTriple(Triple);
@@ -215,7 +236,8 @@ static void updateRuntimeLibraryPaths(SearchPathOptions &SearchPathOpts,
     RuntimeLibraryImportPaths.push_back(std::string(LibPath.str()));
   }
 
-  if (!SearchPathOpts.getSDKPath().empty()) {
+  if (!SearchPathOpts.getSDKPath().empty() &&
+      !shouldIsolateLegacyIOS5SDKSwiftModules(LangOpts)) {
     if (tripleIsMacCatalystEnvironment(Triple)) {
       LibPath = SearchPathOpts.getSDKPath();
       llvm::sys::path::append(LibPath, "System", "iOSSupport");
@@ -294,7 +316,7 @@ setBridgingHeaderFromFrontendOptions(ClangImporterOptions &ImporterOpts,
 
 void CompilerInvocation::setRuntimeResourcePath(StringRef Path) {
   SearchPathOpts.RuntimeResourcePath = Path.str();
-  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts.Target);
+  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts);
 }
 
 void CompilerInvocation::setTargetTriple(StringRef Triple) {
@@ -303,12 +325,12 @@ void CompilerInvocation::setTargetTriple(StringRef Triple) {
 
 void CompilerInvocation::setTargetTriple(const llvm::Triple &Triple) {
   LangOpts.setTarget(Triple);
-  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts.Target);
+  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts);
 }
 
 void CompilerInvocation::setSDKPath(const std::string &Path) {
   SearchPathOpts.setSDKPath(Path);
-  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts.Target);
+  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts);
 }
 
 bool CompilerInvocation::setModuleAliasMap(std::vector<std::string> args,
@@ -3134,7 +3156,7 @@ bool CompilerInvocation::parseArgs(
     return true;
   }
 
-  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts.Target);
+  updateRuntimeLibraryPaths(SearchPathOpts, LangOpts);
   setDefaultPrebuiltCacheIfNecessary();
   setDefaultBlocklistsIfNecessary();
 

@@ -232,7 +232,11 @@ void addImageCallback2Sections(const mach_header *mh, intptr_t vmaddr_slide) {
 
 } // end anonymous namespace
 
-#if OBJC_ADDLOADIMAGEFUNC_DEFINED && SWIFT_OBJC_INTEROP
+#if defined(SWIFT_LEGACY_IOS5)
+// objc_addLoadImageFunc{,2} do not exist on iOS 5; dyld's image callback is the
+// only registration mechanism and is available on every iOS version.
+#define REGISTER_FUNC(...) _dyld_register_func_for_add_image(__VA_ARGS__)
+#elif OBJC_ADDLOADIMAGEFUNC_DEFINED && SWIFT_OBJC_INTEROP
 #define REGISTER_FUNC(...)                                                     \
   if (SWIFT_RUNTIME_WEAK_CHECK(objc_addLoadImageFunc2)) {                      \
     SWIFT_RUNTIME_WEAK_USE(objc_addLoadImageFunc2(__VA_ARGS__));               \

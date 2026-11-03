@@ -20,6 +20,8 @@ private func anchorConstraint(item: UIView?, attribute: NSLayoutConstraint.Attri
                                   toItem: toItem, attribute: secondAttribute,
                                   multiplier: multiplier, constant: constant)
     }
+    let createStart = LegacyBridgeStats.begin()
+    defer { if createStart != 0 { LegacyBridgeStats.record(createStart, &LegacyBridgeStats.anchorCreate) } }
     let model = legacyConstraint(item: item,
                                  attribute: RRLayoutAttribute(rawValue: attribute.rawValue)!,
                                  relatedBy: RRLayoutRelation(rawValue: relatedBy.rawValue)!,
@@ -157,6 +159,9 @@ private var secondAnchorKey: UInt8 = 0
 // Store activation state on the constraint itself. Unlike NSHashTable, associated
 // objects are available on iOS 5 and do not require a global weak collection.
 private var activeConstraintKey: UInt8 = 0
+/// One shared boxed `true` so activation does not allocate an NSNumber per
+/// constraint on device.
+private let activeConstraintTrue = NSNumber(value: true)
 
 @MainActor
 @available(iOS, introduced: 5.0, obsoleted: 9.0)
@@ -176,18 +181,57 @@ public extension NSLayoutConstraint {
     @available(iOS, introduced: 5.0, obsoleted: 9.0)
     @_disfavoredOverload
     var isActive: Bool {
-        get { (objc_getAssociatedObject(self, &activeConstraintKey) as? NSNumber)?.boolValue ?? false }
+        get {
+            if let model = legacyLayoutModel(for: self) { return model.legacyIsActive }
+            return (objc_getAssociatedObject(self, &activeConstraintKey) as? NSNumber)?.boolValue ?? false
+        }
         set {
-            guard let firstView = firstItem as? UIView else { return }
-            firstView.translatesAutoresizingMaskIntoConstraints = false
+            let start = LegacyBridgeStats.begin()
+            LegacyBridgeStats.beginActivation()
+            defer {
+                LegacyBridgeStats.endActivation()
+                if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.extensionActive) }
+            }
+
+            let firstItemStart = LegacyBridgeStats.begin()
+            guard let firstView = firstItem as? UIView else {
+                if firstItemStart != 0 {
+                    LegacyBridgeStats.record(firstItemStart, &LegacyBridgeStats.extensionActiveFirstItem)
+                }
+                return
+            }
+            if firstItemStart != 0 {
+                LegacyBridgeStats.record(firstItemStart, &LegacyBridgeStats.extensionActiveFirstItem)
+            }
+
+            // `firstView.translatesAutoresizingMaskIntoConstraints = false` used to go
+            // through the ObjC shim + injected setter on every activation; read the
+            // legacy storage directly and only write when it changes.
+            let translatesStart = LegacyBridgeStats.begin()
+            if firstView.legacyTranslatesAutoresizingMaskIntoConstraints {
+                firstView.legacyTranslatesAutoresizingMaskIntoConstraints = false
+            }
+            if translatesStart != 0 {
+                LegacyBridgeStats.record(translatesStart, &LegacyBridgeStats.extensionActiveTranslates)
+            }
 
             // iOS 5: this instance is the runtime bridge's model; drive the engine.
-            if let model = legacyLayoutModel(for: self) {
+            let modelStart = LegacyBridgeStats.begin()
+            let model = legacyLayoutModel(for: self)
+            if modelStart != 0 {
+                LegacyBridgeStats.record(modelStart, &LegacyBridgeStats.extensionActiveModelLookup)
+            }
+            if let model = model {
+                let dispatchStart = LegacyBridgeStats.begin()
+                // The model stores activation state; no extra associated-object
+                // write (that write was one ObjC association call per activation
+                // and deactivation).
+                model.legacyIsActive = newValue
                 if newValue { firstView.legacyAddConstraint(model) }
                 else { firstView.legacyRemoveConstraint(model) }
-                objc_setAssociatedObject(self, &activeConstraintKey,
-                                         newValue ? NSNumber(value: true) : nil,
-                                         .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+                if dispatchStart != 0 {
+                    LegacyBridgeStats.record(dispatchStart, &LegacyBridgeStats.extensionActiveDispatch)
+                }
                 return
             }
 
@@ -200,7 +244,7 @@ public extension NSLayoutConstraint {
             let selector = NSSelectorFromString(newValue ? "addConstraint:" : "removeConstraint:")
             if owner.responds(to: selector) { _ = owner.perform(selector, with: self) }
             objc_setAssociatedObject(self, &activeConstraintKey,
-                                     newValue ? NSNumber(value: true) : nil,
+                                     newValue ? activeConstraintTrue : nil,
                                      .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         }
     }

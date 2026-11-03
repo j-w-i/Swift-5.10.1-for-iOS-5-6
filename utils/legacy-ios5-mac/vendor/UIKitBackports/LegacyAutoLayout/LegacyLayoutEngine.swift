@@ -43,6 +43,9 @@
 //
 
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 import CoreGraphics
 
 /// The direction in which `leading`/`trailing` attributes are resolved.
@@ -176,7 +179,14 @@ final class LegacyLayoutEngine {
     /// dirty pass rebuilds the system exactly like the pre-optimisation engine.
     /// Intended for A/B verification on device; it does not change the API.
     internal static let strictRebuildMode: Bool = {
-        ProcessInfo.processInfo.environment["LEGACY_AUTOLAYOUT_FORCE_REBUILD"] == "1"
+        legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_FORCE_REBUILD")
+    }()
+
+    /// Diagnostic A/B switch (`LEGACY_AUTOLAYOUT_NO_GEOMETRY_PROPAGATION=1`): geometry changes on views
+    /// that only ANCHOR constrained descendants do not dirty the hierarchy. Used to measure what the
+    /// ancestor-participation rule costs while scrolling.
+    internal static let diagnosticDisableGeometryPropagation: Bool = {
+        legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_NO_GEOMETRY_PROPAGATION")
     }()
 
     private static var solverCache: [ObjectIdentifier: CacheEntry] = [:]
@@ -184,7 +194,7 @@ final class LegacyLayoutEngine {
 
     /// Bounded so an app that lays out many short-lived roots (collection-view
     /// cells, popovers) cannot accumulate unbounded solver state.
-    private static let maximumCachedRoots = 16
+    private static let maximumCachedRoots = 512
 
     /// Clears all persistent solver state (tests and diagnostics).
     internal static func resetPersistentState() {
@@ -208,6 +218,7 @@ final class LegacyLayoutEngine {
     @discardableResult
     func layout(_ root: LegacyLayoutItem) -> LegacyLayoutResult {
         let start = DispatchTime.now().uptimeNanoseconds
+        let bridgeStart = LegacyBridgeStats.begin()
         let rootObject = root as AnyObject
         let identifier = ObjectIdentifier(rootObject)
 
@@ -247,11 +258,30 @@ final class LegacyLayoutEngine {
         // Full rebuild: the fast path could not prove equivalence (or this pass
         // is a first pass / persistence is disabled for tests).
         let solver = LegacyLayoutSolver(root: root, direction: direction)
+        if let previous = Self.solverCache[identifier], previous.root === rootObject {
+            // A root that keeps invalidating its presolved system is rebuilt without presolve from here on.
+            solver.inheritPresolveHistory(from: previous.solver)
+            if solver.wantsPresolveDemotion { solver.presolveAllowed = false }
+        }
         let result = solver.solve(writingFrames: true)
+        do {
+            let size = root.layoutFrame.size
+            let key = "\(type(of: rootObject)) [\(LegacyLayoutDebug.pendingBail)] \(size.width <= 0 || size.height <= 0 ? "zero-size" : "sized")"
+            let old = LegacyLayoutDebug.rebuildRoots[key] ?? (0, 0)
+            LegacyLayoutDebug.rebuildRoots[key] = (old.count + 1, old.rows + solver.tableauConstraintCount)
+            LegacyLayoutDebug.pendingBail = "first-pass"
+        }
         if usesPersistentSolver {
             Self.store(solver: solver, root: rootObject, identifier: identifier, direction: direction)
         }
         Self.notePass(start: start, solver: solver, cached: false, rebuilt: true)
+        if LegacyLayoutStats.enabled {
+            let line = "legacy-autolayout: root=\(type(of: rootObject)) variables=\(solver.tableauVariableCount) rows=\(solver.tableauConstraintCount)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+        if bridgeStart != 0 {
+            LegacyBridgeStats.noteLayoutPass(nanoseconds: DispatchTime.now().uptimeNanoseconds - bridgeStart)
+        }
         return result
     }
 
@@ -297,6 +327,10 @@ final class LegacyLayoutEngine {
                                  solver: LegacyLayoutSolver,
                                  cached: Bool,
                                  rebuilt: Bool) {
+        if LegacyLayoutStats.enabled {
+            let d = solver.tableauDensity
+            FileHandle.standardError.write(Data("legacy-density: rows=\(d.rows) cells=\(d.cells) maxRow=\(d.maxRow) maxCol=\(d.maxCol) installed=\(solver.passInstalledConstraints) removed=\(solver.passRemovedConstraints) replays=\(LegacyLayoutSolver.replayStats.total) presolvedReplays=\(LegacyLayoutSolver.replayStats.presolved)\n".utf8))
+        }
         let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1000.0
         LegacyLayoutStats.noteConstraints(installed: solver.passInstalledConstraints,
                                           removed: solver.passRemovedConstraints,

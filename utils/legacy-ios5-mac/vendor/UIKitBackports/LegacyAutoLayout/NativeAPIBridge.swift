@@ -18,6 +18,8 @@ private final class LegacyConstraintTemplate: NSObject {
     dynamic func initialize(_ first: AnyObject, attribute: Int, relation: Int,
                             second: AnyObject?, secondAttribute: Int,
                             multiplier: CGFloat, constant: CGFloat) -> AnyObject {
+        let start = LegacyBridgeStats.begin()
+        defer { if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.create) } }
         model = RRLayoutConstraint(item: first, attribute: RRLayoutAttribute(rawValue: attribute)!,
             relatedBy: RRLayoutRelation(rawValue: relation)!, toItem: second,
             attribute: RRLayoutAttribute(rawValue: secondAttribute)!, multiplier: multiplier, constant: constant)
@@ -47,7 +49,15 @@ private final class LegacyConstraintTemplate: NSObject {
     @objc dynamic var isActive: Bool {
         get { model.legacyIsActive }
         set {
+            let start = LegacyBridgeStats.begin()
+            LegacyBridgeStats.beginActivation()
+            defer {
+                LegacyBridgeStats.endActivation()
+                if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.templateActive) }
+            }
+            let toggleStart = LegacyBridgeStats.begin()
             model.legacyIsActive = newValue
+            if toggleStart != 0 { LegacyBridgeStats.record(toggleStart, &LegacyBridgeStats.templateActiveDispatch) }
             guard let view = model.firstItem as? UIView else { return }
             if newValue { view.legacyAddConstraint(model) }
             else { view.legacyRemoveConstraint(model) }
@@ -62,8 +72,11 @@ func legacyLayoutModel(for object: AnyObject) -> RRLayoutConstraint? {
 }
 
 internal func legacyModel(for object: AnyObject) -> RRLayoutConstraint? {
-    if let model = object as? RRLayoutConstraint { return model }
-    return objc_getAssociatedObject(object, &nativeConstraintModelKey) as? RRLayoutConstraint
+    // Hot path (public constraint API): the model is the associated object.
+    if let model = objc_getAssociatedObject(object, &nativeConstraintModelKey) as? RRLayoutConstraint {
+        return model
+    }
+    return object as? RRLayoutConstraint
 }
 
 /// Creates an `NSLayoutConstraint` whose storage is the legacy model, without
@@ -81,11 +94,24 @@ func legacyConstraint(item: Any?, attribute: RRLayoutAttribute,
 
 /// Attaches a legacy model to the runtime `NSLayoutConstraint` instance so the
 /// bridge's methods (firstItem, constant, isActive, ...) report it.
+/// The runtime class registered under the `NSLayoutConstraint` name. Resolved
+/// once: `legacyAttach` runs for every constraint creation and `NSClassFromString`
+/// is not free.
+private let legacyConstraintClass: NSObject.Type? = {
+    // The Objective-C runtime takes a C string, so this avoids Foundation's
+    // String-to-NSString bridging. These lookups run from the image initializer,
+    // where that bridging is not safe on the legacy runtime.
+    objc_getClass("NSLayoutConstraint") as? NSObject.Type
+}()
+
+/// Whether `legacyConstraintClass` implements `init` (checked once).
+private let legacyConstraintClassHasInit: Bool = {
+    guard let cls = legacyConstraintClass else { return false }
+    return class_getInstanceMethod(cls as AnyClass, NSSelectorFromString("init")) != nil
+}()
+
 func legacyAttach(model: RRLayoutConstraint) -> NSLayoutConstraint? {
-    guard let cls = NSClassFromString("NSLayoutConstraint") as? NSObject.Type else { return nil }
-    // Never touch a runtime class that does not implement the initializer we are
-    // about to send: the class may exist as a stub on an OS without Auto Layout.
-    guard class_getInstanceMethod(cls as AnyClass, NSSelectorFromString("init")) != nil else { return nil }
+    guard let cls = legacyConstraintClass, legacyConstraintClassHasInit else { return nil }
     let object = cls.init()
     objc_setAssociatedObject(object, &nativeConstraintModelKey, model, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     return object as? NSLayoutConstraint
@@ -101,8 +127,9 @@ func legacyAttach(model: RRLayoutConstraint) -> NSLayoutConstraint? {
 /// raises doesNotRecognizeSelector inside the caller's `init` call.
 internal nonisolated func registerNativeAutoLayoutAPI() {
     guard LegacyAutoLayout.isRequired else { return }
+    if LegacyBridgeStats.enabled { LegacyBridgeStats.registerNativeRuns &+= 1 }
 
-    let existing = NSClassFromString("NSLayoutConstraint")
+    let existing = objc_getClass("NSLayoutConstraint") as? AnyClass
     let cls: AnyClass
     if let existing = existing {
         cls = existing

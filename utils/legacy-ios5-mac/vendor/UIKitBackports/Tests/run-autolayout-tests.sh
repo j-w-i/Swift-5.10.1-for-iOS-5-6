@@ -89,8 +89,10 @@ echo 'PASS: hook dispatch audit detects the pre-fix crash pattern and accepts th
 
 CASS="$OUT/build/cassowary"
 echo "=== building Cassowary + engine (current tree)"
+# The C core is linked straight into the Cassowary library: the Swift facade calls it through @_silgen_name.
+/usr/bin/clang -O2 -ffp-contract=off -c "$VENDOR/CassowaryC/CassowaryC.c" -o "$CASS/CassowaryC.o"
 /usr/bin/xcrun swiftc -emit-module -emit-library -module-name Cassowary -O \
-  "$VENDOR"/Cassowary/*.swift \
+  "$VENDOR"/Cassowary/*.swift "$CASS/CassowaryC.o" \
   -o "$CASS/libCassowary.dylib" -emit-module-path "$CASS/Cassowary.swiftmodule"
 
 build_host() { # dir extra-flags...
@@ -118,8 +120,8 @@ for rel in "${BASELINE_SOURCES[@]}"; do
   git -C "$REPO" show "$GOLDEN_REF:utils/legacy-ios5-mac/vendor/UIKitBackports/$rel" > "$BASELINE_DIR/$rel"
 done
 mkdir -p "$BASELINE_DIR/Cassowary"
-for name in "$VENDOR"/Cassowary/*.swift; do
-  base=$(basename "$name")
+# The pinned reference predates the C core: take exactly the Cassowary files that existed at that ref.
+for base in $(git -C "$REPO" ls-tree --name-only "$GOLDEN_REF" "utils/legacy-ios5-mac/vendor/UIKitBackports/Cassowary/" | xargs -n1 basename); do
   git -C "$REPO" show "$GOLDEN_REF:utils/legacy-ios5-mac/vendor/UIKitBackports/Cassowary/$base" \
     > "$BASELINE_DIR/Cassowary/$base"
 done

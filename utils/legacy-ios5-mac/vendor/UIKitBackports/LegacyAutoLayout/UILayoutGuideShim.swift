@@ -115,5 +115,29 @@ public extension UIView {
     }
 }
 
+private var safeAreaLayoutGuideKey: UInt8 = 0
+
+@available(iOS 11.0, *)
+public extension UIView {
+    /// Genuine UIKit API (iOS 11) for the legacy configuration. No armv7 system
+    /// that can run this binary implements safe areas, and on those systems the
+    /// safe area equals the view's own bounds (no notch and no home indicator),
+    /// so the backport guide is pinned to the bounds and reports them.
+    var safeAreaLayoutGuide: UILayoutGuide {
+        if let existing = objc_getAssociatedObject(self, &safeAreaLayoutGuideKey) as? UILayoutGuide {
+            return existing
+        }
+        let guide = UILayoutGuide()
+        addLayoutGuide(guide)
+        NSLayoutConstraint.activate([
+            guide.topAnchor.constraint(equalTo: topAnchor),
+            guide.bottomAnchor.constraint(equalTo: bottomAnchor),
+            guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            guide.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+        objc_setAssociatedObject(self, &safeAreaLayoutGuideKey, guide, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return guide
+    }
+}
 private var layoutMarginsGuideKey: UInt8 = 0
 #endif

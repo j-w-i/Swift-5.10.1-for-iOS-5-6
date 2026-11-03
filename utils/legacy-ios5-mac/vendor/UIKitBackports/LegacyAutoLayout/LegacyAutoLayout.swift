@@ -92,7 +92,9 @@ enum LegacyAutoLayout {
     /// on iOS 6+. If a non-main thread triggers it, installation is hopped to the main queue so the
     /// runtime mutation happens on the thread UIKit actually uses.
     internal nonisolated static func ensureInstalled() {
+        if LegacyBridgeStats.enabled { LegacyBridgeStats.ensureCalls &+= 1 }
         guard !LegacyAutoLayoutInstaller.isInstalled else { return }
+        if LegacyBridgeStats.enabled { LegacyBridgeStats.ensureInstalls &+= 1 }
         if Thread.isMainThread {
             registerNativeAutoLayoutAPI()
             LegacyAutoLayoutInstaller.install()

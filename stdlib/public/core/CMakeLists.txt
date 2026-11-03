@@ -252,6 +252,16 @@ set(swift_core_framework_depends)
 set(swift_core_private_link_libraries)
 set(swift_stdlib_compile_flags "${SWIFT_RUNTIME_SWIFT_COMPILE_FLAGS}")
 
+if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING AND SWIFT_PRIMARY_VARIANT_SDK IN_LIST SWIFT_APPLE_PLATFORMS)
+  # The legacy runtime reads the OS version with CoreFoundation and the object
+  # model comes from Foundation's NSObject; these are linked explicitly rather
+  # than relying on a modern SDK's re-export layout.
+  list(APPEND swift_core_framework_depends Foundation CoreFoundation)
+  # Source-level switch for stdlib code that assumes OS facilities newer than iOS 5
+  # (for example tagged-pointer NSStrings in StringBridge.swift).
+  list(APPEND swift_stdlib_compile_flags "-D" "LEGACY_IOS5")
+endif()
+
 if(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "CYGWIN")
   # TODO(compnerd) cache this variable to permit re-configuration
   execute_process(COMMAND "cygpath" "-u" "$ENV{SYSTEMROOT}" OUTPUT_VARIABLE ENV_SYSTEMROOT)

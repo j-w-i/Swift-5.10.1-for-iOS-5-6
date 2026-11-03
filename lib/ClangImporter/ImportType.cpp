@@ -16,6 +16,7 @@
 
 #include "CFTypeInfo.h"
 #include "ClangDiagnosticConsumer.h"
+#include "ClangIncludePaths.h"
 #include "ImporterImpl.h"
 #include "swift/ABI/MetadataValues.h"
 #include "swift/AST/ASTContext.h"
@@ -787,7 +788,59 @@ namespace {
       return Visit(type->getLocallyUnqualifiedSingleStepDesugaredType());
     }
 
+    /// UIKit's legacy string-drawing APIs use UILineBreakMode, while UILabel
+    /// uses NSLineBreakMode. Their six values and NSInteger ABI are identical.
+    /// Canonicalize references only in the explicit iOS 5 backport mode, using
+    /// the real SDK enum rather than manufacturing a Swift type or using Int.
+    llvm::Optional<ImportResult>
+    importLegacyUIKitLineBreakMode(const clang::TypeDecl *referencedDecl) {
+      if (!usesLegacyUIKitBackportDeclarations(Impl.SwiftContext) ||
+          referencedDecl->getName() != "UILineBreakMode")
+        return llvm::None;
+      auto isUIKit = [](const clang::Decl *decl) {
+        auto module = decl->getOwningModule();
+        return module && module->getTopLevelModule()->Name == "UIKit";
+      };
+      // Check the referenced type, not the owner of a method/category using it.
+      if (!isUIKit(referencedDecl))
+        return llvm::None;
+
+      auto &ctx = Impl.getClangASTContext();
+      auto name = &ctx.Idents.get("NSLineBreakMode");
+      const clang::EnumDecl *modernEnum = nullptr;
+      // lookup(), unlike walking decls(), loads lazy module declarations.
+      for (auto candidate : referencedDecl->getDeclContext()->lookup(name)) {
+        if (!isUIKit(candidate))
+          continue;
+        const clang::EnumDecl *enumDecl = nullptr;
+        if (auto alias = dyn_cast<clang::TypedefNameDecl>(candidate)) {
+          if (auto enumType = alias->getUnderlyingType()->getAs<clang::EnumType>())
+            enumDecl = enumType->getDecl();
+        } else {
+          enumDecl = dyn_cast<clang::EnumDecl>(candidate);
+        }
+        if (!enumDecl || !isUIKit(enumDecl) || !enumDecl->getDefinition())
+          continue;
+        enumDecl = enumDecl->getDefinition();
+        if (modernEnum && modernEnum->getCanonicalDecl() !=
+                              enumDecl->getCanonicalDecl())
+          return ImportResult();
+        modernEnum = enumDecl;
+      }
+      // A partial SDK must not silently turn this into an integer parameter or
+      // retain an incompatible legacy enum after opting into canonicalization.
+      if (!modernEnum)
+        return ImportResult();
+      auto decl = dyn_cast_or_null<EnumDecl>(
+          Impl.importDecl(modernEnum, Impl.CurrentVersion));
+      if (!decl)
+        return ImportResult();
+      return ImportResult(decl->getDeclaredInterfaceType());
+    }
+
     ImportResult VisitTypedefType(const clang::TypedefType *type) {
+      if (auto result = importLegacyUIKitLineBreakMode(type->getDecl()))
+        return *result;
       // If the underlying declaration is an Objective-C type parameter,
       // pull the corresponding generic type parameter from the imported class.
       if (auto *objcTypeParamDecl =
@@ -965,6 +1018,8 @@ namespace {
     }
 
     ImportResult VisitEnumType(const clang::EnumType *type) {
+      if (auto result = importLegacyUIKitLineBreakMode(type->getDecl()))
+        return *result;
       auto clangDecl = type->getDecl()->getDefinition();
       if (!clangDecl) {
         // FIXME: If the enum has a fixed underlying type, can we use that

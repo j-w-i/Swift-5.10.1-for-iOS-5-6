@@ -115,3 +115,28 @@ It runs on a modern simulator using the system toolchain because the legacy
 device toolchain ships no simulator Swift stdlib; the fixture
 `Tests/LegacyStackViewSmoke.swift` is the device counterpart for a legacy-name
 app build.
+
+## Bridge timing attribution (`LEGACY_AUTOLAYOUT_STATS=1`)
+
+In addition to the per-pass counters, every engine pass prints a `legacy-bridge:`
+line (see `LegacyBridgeStats` in `LegacyAutoLayout/LegacyLayoutStats.swift`) when
+`LEGACY_AUTOLAYOUT_STATS=1`. It accumulates total/max/count for the device-facing
+paths:
+
+- `create` / `anchorCreate`: runtime `NSLayoutConstraint` creation (template
+  initializer and the anchor-based public shim).
+- `templateActive` / `extActive`: the platform `setActive:` setter and the public
+  `NSLayoutConstraint.isActive` shim, including sub-segments
+  (`extFirstItem`, `extTranslates`, `extModel`, `extDispatch`).
+- `hookAdd`/`hookRemove`: injected `UIView addConstraint:`/`removeConstraint:` hooks.
+- `legacyAdd`/`legacyRemove`/`legacyStorage`: engine-side storage and dirty marking.
+- `invalidation`: native `superview.setNeedsLayout()` time (now one per container
+  per burst).
+- `layout`/`updateWalk`: engine pass and recursive constraints walk.
+- counters: `ensure` calls, actual `installs`, `registerAPI` runs,
+  `layoutDuringActivation` (engine passes executed synchronously inside an
+  activation scope), and `updateWalksDuringActivation`.
+
+Run the device stress microbench with the variable set and capture stderr; the
+`legacy-bridge:` line printed at the first engine pass after each phase attributes
+the observed `activate`/`layout`/`deactivate` costs directly.

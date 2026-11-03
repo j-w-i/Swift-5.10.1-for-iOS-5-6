@@ -8,7 +8,10 @@ fail() { printf 'build-backports-runtime: %s\n' "$*" >&2; exit 1; }
 [ "$#" = 4 ] || fail 'Usage: build-backports-runtime.sh SDK CLANG AR OUT'
 SDK=$1; CLANG=$2; AR=$3; OUT=$4
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-SRC="$HERE/vendor/UIKitBackports"
+# Test/reproduction builds can select a small source snapshot without swapping
+# files in the live checkout (for example, isolate engine changes from text work).
+SRC=${LEGACY_UIKIT_SOURCE:-"$HERE/vendor/UIKitBackports"}
+[[ "$SRC" = /* ]] && [ -d "$SRC/LegacyAutoLayout" ] && [ -d "$SRC/Runtime" ] || fail 'Invalid UIKit backport source root'
 for path in "$SDK" "$CLANG" "$AR" "$OUT"; do [[ "$path" = /* ]] || fail "Use absolute paths: $path"; done
 [ -d "$SDK" ] && [ -x "$CLANG" ] && [ -x "$AR" ] || fail 'Missing SDK/compiler/archive tool'
 [ ! -e "$OUT" ] && [ ! -L "$OUT" ] || fail 'Refusing existing output'
@@ -28,6 +31,8 @@ for path in sorted((src / 'OAStackView').glob('*.m')):
     (out / 'Native' / path.name).write_text(text)
 for component in ('Cassowary', 'LegacyAutoLayout'):
     for path in sorted((src / component).glob('*.swift')):
+        if path.name == 'SolverReference.swift':
+            continue   # test oracle only (Tests/run-cassowary-c-diff.sh); the shipped Solver is the C-backed facade
         text = path.read_text()
         text = re.sub(r'^import (UIKit|Cassowary|LegacyAutoLayout)\s*$', '', text, flags=re.M)
         text = re.sub(r'^private typealias (Expression|Constraint|RelationalOperator) = Cassowary\.\w+\s*$', '', text, flags=re.M)
@@ -73,6 +78,29 @@ for source in "$OUT/Native/"*.m "$SRC/Runtime/"*.m; do
   fi
   OBJECTS+=("$OUT/objects/$name.o")
 done
+# The C solver core: plain C (no ObjC prefix header, no ARC). -ffp-contract=off keeps every double identical to the
+# host differential test (Tests/run-cassowary-c-diff.sh); ARM mode like every other backport object.
+command=("$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
+  "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" -I "$SRC/CassowaryC"
+  -c "$SRC/CassowaryC/CassowaryC.c" -o "$OUT/objects/CassowaryC.o")
+(printf '%q ' "${command[@]}"; printf '\n') > "$OUT/logs/CassowaryC.command"
+/usr/bin/nice -n 15 "${command[@]}" > "$OUT/logs/CassowaryC.log" 2>&1 || { tail -50 "$OUT/logs/CassowaryC.log" >&2; fail 'CassowaryC compilation failed'; }
+OBJECTS+=("$OUT/objects/CassowaryC.o")
+# Apple's incremental-simplex engine (clean-room C port, NSISC): used when the layout solver
+# backend is switched to "nsis" (LEGACY_AUTOLAYOUT_SOLVER=nsis). Kept separate from CassowaryC
+# so the accepted engine remains the default and unmodified.
+for source in "$SRC/NSISC/"*.c; do
+  name=$(basename -- "$source" .c)
+  # The legacy Swift frontend emits AAPCS soft-float argument marshalling for its C
+  # declarations, so this C side must use the same convention or mixed int/float calls
+  # arrive corrupted (verified on device: a -3787 probe returned 213.49).
+  command=("$CLANG" -target armv7-apple-ios5.0 -marm -mfloat-abi=softfp -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
+    "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" -I "$SRC/NSISC"
+    -c "$source" -o "$OUT/objects/NSISC-$name.o")
+  (printf '%q ' "${command[@]}"; printf '\n') > "$OUT/logs/NSISC-$name.command"
+  /usr/bin/nice -n 15 "${command[@]}" > "$OUT/logs/NSISC-$name.log" 2>&1 || { tail -50 "$OUT/logs/NSISC-$name.log" >&2; fail "NSISC $name compilation failed"; }
+  OBJECTS+=("$OUT/objects/NSISC-$name.o")
+done
 "${PYTHON:-python3}" - "$OUT" "${OBJECTS[@]}" <<'PY'
 from pathlib import Path
 import json, struct, sys
@@ -114,6 +142,7 @@ import hashlib, json, subprocess, sys
 src, sdk, clang, ar, out = map(Path, sys.argv[1:])
 hashfile = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 manifest = {'target': 'armv7-apple-ios5.0', 'instructionSet': 'ARM', 'swiftPayload': 'compiled in UIKit overlay',
+            'sourceRoot': str(src.resolve()),
             'sdk': str(sdk.resolve()), 'clang': str(clang.resolve()), 'ar': str(ar.resolve()),
             'clangVersion': subprocess.check_output([str(clang), '--version'], text=True),
             'sourceSHA256': {str(p.relative_to(src)): hashfile(p) for p in sorted(src.rglob('*')) if p.is_file()},

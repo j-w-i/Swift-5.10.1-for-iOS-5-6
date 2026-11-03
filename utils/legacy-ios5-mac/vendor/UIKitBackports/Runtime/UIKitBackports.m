@@ -4,6 +4,10 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <stdarg.h>
+#import <CoreText/CoreText.h>
+
+// Deferred Swift-bridge installation (defined with the image constructor below).
+static void UICEnsureSwiftBridge(void);
 
 NSDictionary *UICDictionaryOfVariableBindings(NSString *names, id firstValue, ...) {
     NSArray *keys = [names componentsSeparatedByString:@","];
@@ -21,7 +25,7 @@ static UIView *UICConstraintItem(id item) {
     return [item isKindOfClass:[UICLayoutGuide class]] ? [(UICLayoutGuide *)item proxyView] : item;
 }
 id UICMakeConstraint(id first, NSInteger attribute, NSInteger relation, id second, NSInteger secondAttribute, CGFloat multiplier, CGFloat constant) {
-    UICLegacyInitializeAutoLayout();
+    UICEnsureSwiftBridge();
     Class cls = NSClassFromString(@"NSLayoutConstraint");
     SEL selector = @selector(initWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:);
     if (!cls || !class_getInstanceMethod(cls, selector))
@@ -190,10 +194,30 @@ UIC_ANCHOR_GETTERS
 }
 @end
 @implementation UICStackView
-- (instancetype)initWithArrangedSubviews:(NSArray *)views { UICLegacyInitializeAutoLayout(); return [super initWithArrangedSubviews:views]; }
-- (instancetype)initWithFrame:(CGRect)frame { UICLegacyInitializeAutoLayout(); return [super initWithFrame:frame]; }
-- (instancetype)initWithCoder:(NSCoder *)coder { UICLegacyInitializeAutoLayout(); return [super initWithCoder:coder]; }
+- (instancetype)initWithArrangedSubviews:(NSArray *)views { UICEnsureSwiftBridge(); return [super initWithArrangedSubviews:views]; }
+- (instancetype)initWithFrame:(CGRect)frame { UICEnsureSwiftBridge(); return [super initWithFrame:frame]; }
+- (instancetype)initWithCoder:(NSCoder *)coder { UICEnsureSwiftBridge(); return [super initWithCoder:coder]; }
 @end
+// Genuine UIKit drawing API (iOS 7+) implemented for the legacy runtime. UIKit
+// attribute names are the same strings CoreText consumes (NSFont/NSColor/
+// NSUnderline), so the measurement is the real text system's own.
+@interface UICStringDrawingAdditions : NSObject
+- (CGSize)sizeWithAttributes:(NSDictionary *)attributes;
+@end
+
+@implementation UICStringDrawingAdditions
+- (CGSize)sizeWithAttributes:(NSDictionary *)attributes {
+    NSAttributedString *text = [[NSAttributedString alloc]
+        initWithString:(NSString *)(id)self attributes:attributes];
+    CTLineRef line = CTLineCreateWithAttributedString((CFAttributedStringRef)text);
+    if (!line) return CGSizeZero;
+    CGFloat ascent = 0, descent = 0, leading = 0;
+    double width = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
+    CFRelease(line);
+    return CGSizeMake((CGFloat)ceil(width), (CGFloat)ceil(ascent + descent + leading));
+}
+@end
+
 static void UICInstallMissingMethods(Class target, Class template) {
     unsigned count = 0; Method *methods = class_copyMethodList(template, &count);
     for (unsigned i = 0; i < count; i++) {
@@ -202,13 +226,60 @@ static void UICInstallMissingMethods(Class target, Class template) {
     }
     free(methods);
 }
+// The Swift half of the bridge is deliberately NOT installed from a dyld image
+// initializer and NOT from anything UIKit runs during application startup. On the
+// legacy runtime, Swift-level work (bridging, dynamic casts, stdlib thunks) is
+// only safe once the application is fully up. Installation is therefore triggered
+// by the first real Auto Layout use, which is app code by definition.
+static int UICBootstrapState = 0;  // 0 = pending, 1 = installed
+
+static void UICEnsureSwiftBridge(void) {
+    if (__sync_bool_compare_and_swap(&UICBootstrapState, 0, 1))
+        UICLegacyInitializeAutoLayout();
+}
+
+
+// Full-screen layout default (iOS < 7 only).
+//
+// Source written for modern iOS expects a view controller's view to extend under
+// the status bar: from iOS 7 `edgesForExtendedLayout` defaults to `.all`, and safe-area
+// code (`safeAreaInsets.top` = status bar height) is written against that. iOS 5/6 default
+// `wantsFullScreenLayout` to NO and inset the view below the status bar, which shifts every
+// controller 20 pt down relative to the modern layout. The default is therefore YES here;
+// an explicit `wantsFullScreenLayout = ...` from the app is always honoured, and the original
+// setter still runs so UIKit relays out exactly as it does natively.
+static const void *UICWantsFullScreenKey = &UICWantsFullScreenKey;
+static void (*UICOriginalSetWantsFullScreen)(id, SEL, BOOL);
+static BOOL UICWantsFullScreenLayoutGetter(id self, SEL _cmd) {
+    NSNumber *explicitValue = objc_getAssociatedObject(self, UICWantsFullScreenKey);
+    return explicitValue ? [explicitValue boolValue] : YES;
+}
+static void UICSetWantsFullScreenLayout(id self, SEL _cmd, BOOL value) {
+    objc_setAssociatedObject(self, UICWantsFullScreenKey, [NSNumber numberWithBool:value], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (UICOriginalSetWantsFullScreen) UICOriginalSetWantsFullScreen(self, _cmd, value);
+}
+static void UICInstallFullScreenLayoutDefault(void) {
+    // iOS 7.0 is CoreFoundation 847.20; earlier systems have the property and the old default.
+    if (kCFCoreFoundationVersionNumber >= 847.20) return;
+    Class controller = objc_getClass("UIViewController");
+    SEL getterSelector = sel_registerName("wantsFullScreenLayout");
+    SEL setterSelector = sel_registerName("setWantsFullScreenLayout:");
+    Method getter = class_getInstanceMethod(controller, getterSelector);
+    Method setter = class_getInstanceMethod(controller, setterSelector);
+    if (!getter || !setter || UICOriginalSetWantsFullScreen) return;
+    UICOriginalSetWantsFullScreen = (void (*)(id, SEL, BOOL))method_getImplementation(setter);
+    method_setImplementation(getter, (IMP)UICWantsFullScreenLayoutGetter);
+    method_setImplementation(setter, (IMP)UICSetWantsFullScreenLayout);
+}
+
 __attribute__((constructor)) static void UICInstallBackportMethods(void) {
     @autoreleasepool {
-        // All method installation is additive. Existing native API wins, including
-        // newer OS versions running an application compiled for iOS 5.
+        // Constructor work is limited to Objective-C runtime registration: no
+        // Foundation objects, no Swift calls, no message sends to UIKit.
         if (!objc_getClass("UILayoutGuide") || !objc_getClass("NSLayoutAnchor"))
             UICInstallMissingMethods([UIView class], [UICViewAdditions class]);
         UICInstallMissingMethods([UIScrollView class], [UICScrollAdditions class]);
-        if (!objc_getClass("NSLayoutConstraint")) UICLegacyInitializeAutoLayout();
+        UICInstallMissingMethods([NSString class], [UICStringDrawingAdditions class]);
+        UICInstallFullScreenLayoutDefault();
     }
 }

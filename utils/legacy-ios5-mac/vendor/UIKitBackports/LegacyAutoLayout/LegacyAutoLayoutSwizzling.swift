@@ -83,12 +83,32 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         // Unconditionally solving here means a full subtree Cassowary pass for every view whose
         // -layoutSubviews UIKit calls, which is what made scrolling and cell reuse slow.
         if LegacyAutoLayout.isActive && (view.legacyConstraintsAreDirty || view.legacyNeedsLayoutPass) {
-            view.legacyLayoutIfNeeded()
+            // Solve only dependency-proven scroll-content boundaries outward.
+            // The diagnostic switch retains the prior local-scope behavior.
+            if getenv("LEGACY_AUTOLAYOUT_NO_SCROLL_CONTENT_ROOT") == nil {
+                view.legacyPerformAutomaticLayoutIfNeeded()
+            } else {
+                view.legacyLayoutIfNeeded()
+            }
         }
         LegacyAutoLayoutInstaller.callOriginalVoid(
             selector: NSSelectorFromString("layoutSubviews"),
             receiver: view
         )
+    }
+
+    /// `-[UIView setNeedsDisplay]` / `-[UIView setNeedsLayout]`: content changes on system
+    /// controls invalidate their natural size (iOS 6 does this inside each setter).
+    @objc dynamic func rr_r_setNeedsDisplay() {
+        let view = bridgedView(self)
+        LegacyAutoLayoutInstaller.callOriginalVoid(selector: NSSelectorFromString("setNeedsDisplay"), receiver: view)
+        view.legacyContentMayHaveChanged()
+    }
+
+    @objc dynamic func rr_r_setNeedsLayout() {
+        let view = bridgedView(self)
+        LegacyAutoLayoutInstaller.callOriginalVoid(selector: NSSelectorFromString("setNeedsLayout"), receiver: view)
+        view.legacyContentMayHaveChanged()
     }
 
     /// RRAutoLayout `rr_r_layoutSublayersOfLayer:`: resolve pending constraint updates first, then
@@ -127,6 +147,10 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             argument: subview
         )
         if LegacyAutoLayout.isActive {
+            if subview.legacyGeometryAffectsConstraints {
+                bridgedView(self).legacyPropagateGeometryParticipation()
+                bridgedView(self).legacySetNeedsUpdateConstraints()
+            }
             LegacyLayoutMutation.bump()
         }
     }
@@ -163,15 +187,35 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         return initialized
     }
 
+    // UIKit may implement setFrame: directly in terms of layer geometry without
+    // messaging setBounds:/setCenter:. Observe this public geometry entry point
+    // too, otherwise frame-managed containers retain stale descendant solutions.
+    @objc dynamic func rr_r_setFrame(_ frame: CGRect) {
+        let view = bridgedView(self)
+        let before = view.frame
+        LegacyAutoLayoutInstaller.callOriginalVoidRect(
+            selector: NSSelectorFromString("setFrame:"), receiver: view, argument: frame)
+        if before != view.frame && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            legacyClearAutoresizingReference(view)
+            LegacyLayoutMutation.bump()
+            view.legacySetNeedsUpdateConstraints()
+        }
+    }
+
     /// RRAutoLayout `rr_r_setBounds:`: apply the value, then invalidate constraints.
     @objc dynamic func rr_r_setBounds(_ bounds: CGRect) {
         let view = bridgedView(self)
+        let before = view.bounds
         LegacyAutoLayoutInstaller.callOriginalVoidRect(
             selector: NSSelectorFromString("setBounds:"),
             receiver: view,
             argument: bounds
         )
-        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+        // Only a size change can alter a constraint solution. A bounds ORIGIN change is a scroll (UIScrollView
+        // contentOffset): subview frames and the view's own frame are unchanged, and Apple's engine does not
+        // invalidate layout for it either.
+        if before.size != view.bounds.size && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            legacyClearAutoresizingReference(view)
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
@@ -180,12 +224,14 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// RRAutoLayout `rr_r_setCenter:`: apply the value, then invalidate constraints.
     @objc dynamic func rr_r_setCenter(_ center: CGPoint) {
         let view = bridgedView(self)
+        let before = view.center
         LegacyAutoLayoutInstaller.callOriginalVoidPoint(
             selector: NSSelectorFromString("setCenter:"),
             receiver: view,
             argument: center
         )
-        if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+        if before != view.center && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+            legacyClearAutoresizingReference(view)
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
@@ -216,7 +262,14 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         }
         return explicit
     }
-    @objc dynamic func rr_a_invalidateIntrinsicContentSize() { bridgedView(self).legacySetNeedsUpdateConstraints() }
+    @objc dynamic func rr_a_invalidateIntrinsicContentSize() {
+        let view = bridgedView(self)
+        // Explicit intrinsic invalidation must invalidate the engine's cached
+        // solution even for custom overrides, which bypass system size tracking.
+        LegacyViewState.existing(of: view)?.systemIntrinsicCache = nil
+        LegacyLayoutMutation.bump()
+        view.legacySetNeedsUpdateConstraints()
+    }
     @objc dynamic func rr_a_contentHuggingPriorityForAxis(_ axis: Int) -> Float {
         bridgedView(self).legacyContentHuggingPriority(for: axis == 0 ? .horizontal : .vertical)
     }
@@ -279,6 +332,8 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// selector the view does not implement (`doesNotRecognizeSelector:` —
     /// the iOS 5 UIStackView crash). Hooks must only call non-`@objc` helpers.
     private static func hookAddConstraint(_ receiver: AnyObject, _ constraint: AnyObject) {
+        let start = LegacyBridgeStats.begin()
+        defer { if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.hookAdd) } }
         let view = bridgedView(receiver)
         guard let model = legacyModel(for: constraint) else { return }
         view.legacyAddConstraint(model)
@@ -289,6 +344,8 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
 
     /// Shared body for `removeConstraint:` and `removeConstraints:`.
     private static func hookRemoveConstraint(_ receiver: AnyObject, _ constraint: AnyObject) {
+        let start = LegacyBridgeStats.begin()
+        defer { if start != 0 { LegacyBridgeStats.record(start, &LegacyBridgeStats.hookRemove) } }
         let view = bridgedView(receiver)
         if let model = legacyModel(for: constraint) { view.legacyRemoveConstraint(model) }
         var owned = (objc_getAssociatedObject(view, &nativeConstraintOwnersKey) as? [AnyObject]) ?? []
@@ -396,8 +453,20 @@ internal enum LegacyAutoLayoutInstaller {
             replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_layoutSublayersOfLayer(_:))
         )
         exchangeIfPresent(
+            original: NSSelectorFromString("setNeedsDisplay"),
+            replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_setNeedsDisplay)
+        )
+        exchangeIfPresent(
+            original: NSSelectorFromString("setNeedsLayout"),
+            replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_setNeedsLayout)
+        )
+        exchangeIfPresent(
             original: NSSelectorFromString("initWithCoder:"),
             replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_initWithCoder(_:))
+        )
+        exchangeIfPresent(
+            original: NSSelectorFromString("setFrame:"),
+            replacement: #selector(LegacyUIViewRuntimeHooks.rr_r_setFrame(_:))
         )
         exchangeIfPresent(
             original: NSSelectorFromString("setBounds:"),
@@ -456,12 +525,13 @@ internal enum LegacyAutoLayoutInstaller {
         addMethodIfAbsent(selector: NSSelectorFromString("setContentHuggingPriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentHuggingPriority(_:forAxis:)))
         addMethodIfAbsent(selector: NSSelectorFromString("contentCompressionResistancePriorityForAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentCompressionResistancePriorityForAxis(_:)))
         addMethodIfAbsent(selector: NSSelectorFromString("setContentCompressionResistancePriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentCompressionResistancePriority(_:forAxis:)))
+        LegacyControllerConstraintUpdates.installIfAbsent()
         installed = true
         auditIssues = auditInstalledSurface()
         if !auditIssues.isEmpty {
             // A broken bridge surface must never crash the app: record the issues
             // and keep the already-installed hooks (they are individually guarded).
-            if ProcessInfo.processInfo.environment["LEGACY_AUTOLAYOUT_AUDIT"] == "1" {
+            if legacyEnvironmentFlag("LEGACY_AUTOLAYOUT_AUDIT") {
                 for issue in auditIssues {
                     FileHandle.standardError.write(Data("legacy-autolayout audit: \(issue)\n".utf8))
                 }
@@ -577,6 +647,10 @@ internal enum LegacyAutoLayoutInstaller {
         guard let typeEncoding, strlen(typeEncoding) > 0 else {
             auditIssues.append("hook has no type encoding: \(implementation)")
             return
+        }
+        if selector == NSSelectorFromString("intrinsicContentSize") {
+            if let existing = class_getInstanceMethod(UIView.self, selector) { LegacyIntrinsicOverride.uiViewImplementation = method_getImplementation(existing) }
+            LegacyIntrinsicOverride.backportImplementation = method_getImplementation(hookMethod)
         }
         if class_addMethod(UIView.self, selector, method_getImplementation(hookMethod), typeEncoding) {
             addedSelectors.append((selector: selector, hook: implementation))

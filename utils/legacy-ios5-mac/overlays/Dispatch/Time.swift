@@ -15,9 +15,12 @@
 // DISPATCH_TIME_FOREVER: ok
 
 import CDispatch
+#if canImport(Darwin)
+import Darwin
+#endif
 
 public struct DispatchTime : Comparable {
-#if HAVE_MACH
+#if HAVE_MACH || canImport(Darwin)
 	private static let timebaseInfo: mach_timebase_info_data_t = {
 		var info = mach_timebase_info_data_t(numer: 1, denom: 1)
 		mach_timebase_info(&info)
@@ -58,7 +61,7 @@ public struct DispatchTime : Comparable {
 	///               system sleep time), not zero nanoseconds since boot.
 	public init(uptimeNanoseconds: UInt64) {
 		var rawValue = uptimeNanoseconds
-#if HAVE_MACH
+#if HAVE_MACH || canImport(Darwin)
 		// UInt64.max means distantFuture. Do not try to scale it.
 		if rawValue != UInt64.max && DispatchTime.timebaseInfo.numer != DispatchTime.timebaseInfo.denom {
 			var (result, overflow) = rawValue.multipliedReportingOverflow(by: UInt64(DispatchTime.timebaseInfo.denom))
@@ -73,7 +76,7 @@ public struct DispatchTime : Comparable {
 
 	public var uptimeNanoseconds: UInt64 {
 		var result = self.rawValue
-#if HAVE_MACH
+#if HAVE_MACH || canImport(Darwin)
 		var overflow: Bool
 
 		// UInt64.max means distantFuture. Do not try to scale it.

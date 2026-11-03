@@ -1,0 +1,4 @@
+module _SwiftLegacyNativeNumericPrivate {
+  header "NumericParsing.h"
+  export *
+}

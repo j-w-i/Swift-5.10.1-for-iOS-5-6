@@ -13,6 +13,40 @@ static Class FBPNative(NSString *name) {
     return Nil;
 #endif
 }
+// Legacy transport: NSURLConnection is scheduled on ONE dedicated network thread's run loop and
+// its delegate callbacks run on that thread. Using -setDelegateQueue: instead makes iOS 5's CFNetwork
+// deliver events from the *main* run loop and block the main thread in -waitUntilFinished on the
+// delegate queue while it holds the connection's client lock; the queue operation then needs that
+// same lock (+cancelConnection) and the process deadlocks. With a private thread, the main thread
+// is never part of the connection's locking protocol.
+@interface FBPNetworkBlock : NSObject { @public void (^block)(void); }
+@end
+@implementation FBPNetworkBlock
+- (void)run { block(); }
+@end
+static NSThread *FBPNetworkThread(void) {
+    static NSThread *thread; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        thread=[[NSThread alloc] initWithTarget:[FBPNetworkBlock class] selector:@selector(threadMain:) object:nil];
+        thread.name=@"com.apple.legacy.NSURLSession.network"; [thread start];
+    });
+    return thread;
+}
+@interface FBPNetworkBlock (Thread)
++ (void)threadMain:(id)unused;
+@end
+@implementation FBPNetworkBlock (Thread)
++ (void)threadMain:(id)unused { @autoreleasepool {
+    NSRunLoop *loop=[NSRunLoop currentRunLoop];
+    [loop addPort:[NSMachPort port] forMode:NSDefaultRunLoopMode]; // keeps the run loop alive
+    for(;;) @autoreleasepool { [loop runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantFuture]]; }
+} }
+@end
+static void FBPOnNetworkThread(void (^block)(void)) {
+    FBPNetworkBlock *b=[[FBPNetworkBlock alloc] init]; b->block=[block copy];
+    [b performSelector:@selector(run) onThread:FBPNetworkThread() withObject:nil waitUntilDone:NO];
+}
+
 @interface FBPURLSessionConfiguration ()
 @property(strong) id nativeConfiguration;
 @end
@@ -64,7 +98,6 @@ CONFIG_ACCESS(BOOL, HTTPShouldUsePipelining, setHTTPShouldUsePipelining)
 @property(strong) id nativeTask;
 @property(strong) FBPURLSession *session;
 @property(strong) NSURLConnection *connection;
-@property(strong) NSOperationQueue *transportQueue;
 @property(strong) NSMutableData *data;
 @property(copy) id completion;
 @property NSUInteger suspendCount;
@@ -177,8 +210,8 @@ FBP_REQUEST_ACCESS(currentRequest, setCurrentRequest)
 - (void)resume { @synchronized(self) {
     if(_nativeTask) { [(FBPURLSessionTask *)_nativeTask resume]; return; }
     if(_terminal || _suspendCount==0) return; if(--_suspendCount) return; _state=FBPTaskRunning;
-    if(_started) { _transportQueue.suspended=NO; return; }
-    _started=YES; _transportQueue=[[NSOperationQueue alloc] init]; _transportQueue.maxConcurrentOperationCount=1;
+    if(_started) return;
+    _started=YES;
     if(_download) { NSString *path=[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSProcessInfo processInfo] globallyUniqueString]]; _fileURL=[NSURL fileURLWithPath:path]; _fileStream=[NSOutputStream outputStreamToFileAtPath:path append:NO]; [_fileStream open]; }
     else if(_completion) _data=[NSMutableData data];
     NSMutableURLRequest *transport=[_currentRequest mutableCopy]; FBPURLSessionConfiguration *config=_session.configuration;
@@ -188,10 +221,11 @@ FBP_REQUEST_ACCESS(currentRequest, setCurrentRequest)
     transport.HTTPShouldUsePipelining=transport.HTTPShouldUsePipelining || config.HTTPShouldUsePipelining;
     _connection=[[NSURLConnection alloc] initWithRequest:transport delegate:self startImmediately:NO];
     if(!_connection) { [self finish:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorUnsupportedURL userInfo:nil]]; return; }
-    [_connection setDelegateQueue:_transportQueue]; [_connection start];
+    NSURLConnection *connection=_connection;
+    FBPOnNetworkThread(^{ [connection scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes]; [connection start]; });
 } }
-- (void)suspend { @synchronized(self) { if(_nativeTask) { [(FBPURLSessionTask *)_nativeTask suspend]; return; } if(_terminal || _state==FBPTaskCanceling) return; ++_suspendCount; _state=FBPTaskSuspended; _transportQueue.suspended=YES; } }
-- (void)cancel { @synchronized(self) { if(_nativeTask) { [_nativeTask cancel]; return; } if(_terminal) return; _state=FBPTaskCanceling; [_connection cancel]; _transportQueue.suspended=NO; [self finish:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]]; } }
+- (void)suspend { @synchronized(self) { if(_nativeTask) { [(FBPURLSessionTask *)_nativeTask suspend]; return; } if(_terminal || _state==FBPTaskCanceling) return; ++_suspendCount; _state=FBPTaskSuspended; } }
+- (void)cancel { @synchronized(self) { if(_nativeTask) { [_nativeTask cancel]; return; } if(_terminal) return; _state=FBPTaskCanceling; { NSURLConnection *connection=_connection; FBPOnNetworkThread(^{ [connection cancel]; }); } [self finish:[NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCancelled userInfo:nil]]; } }
 // Native files are only valid during the native callback. Move to our own file
 // before queue hopping; our file in turn exists only during the public callback.
 - (void)nativeDownloaded:(NSURL *)location { @synchronized(self) { if(!location) return; NSURL *owned=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSProcessInfo processInfo] globallyUniqueString]]]; NSError *e=nil; if([[NSFileManager defaultManager] moveItemAtURL:location toURL:owned error:&e]) _fileURL=owned; else _error=e; } }

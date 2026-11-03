@@ -128,10 +128,29 @@ extension DispatchQueue {
 		return DispatchQueue(queue: CDispatch.dispatch_get_global_queue(Int(priority._translatedValue), 0))
 	}
 
+#if LEGACY_IOS5
+	/// Genuine `DispatchQueue.global(qos:)`, available from iOS 5 in this legacy
+	/// configuration because the pre-QoS libdispatch global queues are selected
+	/// by priority. The requested QoS class is mapped to the equivalent legacy
+	/// priority; iOS 5 has no QoS scheduling classes, so relative scheduling
+	/// weight beyond those four priorities cannot be reproduced here.
+	@available(iOS 5.0, *)
+	public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
+		let priority: GlobalQueuePriority
+		switch qos {
+		case .userInteractive, .userInitiated: priority = .high
+		case .default, .unspecified: priority = .default
+		case .utility: priority = .low
+		case .background: priority = .background
+		}
+		return global(priority: priority)
+	}
+#else
 	@available(macOS 10.10, iOS 8.0, *)
 	public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
 		return DispatchQueue(queue: CDispatch.dispatch_get_global_queue(Int(qos.rawValue.rawValue), 0))
 	}
+#endif
 
 	public class func getSpecific<T>(key: DispatchSpecificKey<T>) -> T? {
 		let k = Unmanaged.passUnretained(key).toOpaque()

@@ -168,7 +168,13 @@ void printHelp(const char *extra) {
 // Initialization code.
 swift::once_t swift::runtime::environment::initializeToken;
 
-#if SWIFT_STDLIB_HAS_ENVIRON && (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__linux__))
+#if SWIFT_STDLIB_HAS_ENVIRON && defined(__APPLE__) && defined(SWIFT_LEGACY_IOS5)
+// Before iOS 7 libSystem does not export the `environ` variable to dylibs (only
+// executables get it from crt1); the portable accessor, present since the first
+// iOS release, is _NSGetEnviron(). A missing strong import is a dyld launch failure.
+#include <crt_externs.h>
+#define ENVIRON (*_NSGetEnviron())
+#elif SWIFT_STDLIB_HAS_ENVIRON && (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__linux__))
 extern "C" char **environ;
 #define ENVIRON environ
 #elif defined(_WIN32)

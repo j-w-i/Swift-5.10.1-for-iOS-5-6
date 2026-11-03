@@ -27,6 +27,14 @@ else()
   list(APPEND SWIFT_RUNTIME_CXX_FLAGS "-Wall")
 endif()
 
+if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
+  # One switch for everything compiled into the runtime: the class-metadata
+  # marker scheme (must match what IRGen emits) and the iOS 5 OS-support paths
+  # (pthread mutexes, no objc_readClassPair, plist-based OS version).
+  list(APPEND SWIFT_RUNTIME_CXX_FLAGS
+       "-DSWIFT_LEGACY_IOS5_CLASS_MARKING=1" "-DSWIFT_LEGACY_IOS5=1")
+endif()
+
 set(SWIFT_RUNTIME_CORE_CXX_FLAGS "${SWIFT_RUNTIME_CXX_FLAGS}")
 set(SWIFT_RUNTIME_CORE_LINK_FLAGS "${SWIFT_RUNTIME_LINK_FLAGS}")
 

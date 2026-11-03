@@ -362,6 +362,22 @@ def main(argv=None):
         require(not os.path.lexists(root / PROFILE), "Refusing existing profile: " + str(root / PROFILE))
         toolchain = toolchain.resolve(strict=True)
         resources, receipt, receipt_hash, files = check_toolchain(toolchain, evidence)
+        # Independently enforce the genuine runtime deployment floor even when
+        # publication is invoked without qualify-ios5.sh. Hashes alone can bind
+        # an unsuitable target-7 runtime just as faithfully as a target-5 one.
+        import importlib.util
+        from types import SimpleNamespace
+        checker_path = Path(__file__).with_name("check-runtime-deployment.py")
+        spec = importlib.util.spec_from_file_location("runtime_deployment_gate", checker_path)
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
+        deployment = checker.run_audit(SimpleNamespace(
+            claimed_minimum="5.0", toolchain=str(toolchain), runtime_dir=None,
+            objects_dir=None, command_log=None, compiler_provenance=None,
+            sdk_provenance=None))
+        require(deployment["passed"], "Selected runtime is not built for iOS 5: " +
+                "; ".join(error for library in deployment["libraries"]
+                          for error in library.get("errors", [])))
         # Bind the exact evidence bytes and preserved artifacts used above.
         current, current_hash, current_provenance = validate_evidence(evidence_path)
         require(current == evidence and current_hash == evidence_hash and current_provenance == provenance,

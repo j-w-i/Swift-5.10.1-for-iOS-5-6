@@ -83,6 +83,68 @@ inline llvm::Optional<stack_bounds> thread_get_current_stack_bounds() {
 
 // .. Mutex support ..........................................................
 
+#if defined(SWIFT_LEGACY_IOS5)
+// os_unfair_lock was introduced in iOS 10; iOS 5 has no equivalent unfair lock,
+// so the legacy runtime uses plain pthread mutexes (same semantics the Pthreads
+// backend provides, and available on every iOS version).
+using mutex_handle = ::pthread_mutex_t;
+
+inline void mutex_init(mutex_handle &handle, bool checked = false) {
+  if (!checked) {
+    handle = PTHREAD_MUTEX_INITIALIZER;
+  } else {
+    ::pthread_mutexattr_t attr;
+    SWIFT_PTHREADS_CHECK(::pthread_mutexattr_init(&attr));
+    SWIFT_PTHREADS_CHECK(
+        ::pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK));
+    SWIFT_PTHREADS_CHECK(::pthread_mutex_init(&handle, &attr));
+    SWIFT_PTHREADS_CHECK(::pthread_mutexattr_destroy(&attr));
+  }
+}
+inline void mutex_destroy(mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_destroy(&handle));
+}
+inline void mutex_lock(mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_lock(&handle));
+}
+inline void mutex_unlock(mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_unlock(&handle));
+}
+inline bool mutex_try_lock(mutex_handle &handle) {
+  SWIFT_PTHREADS_RETURN_TRUE_OR_FALSE(EBUSY, ::pthread_mutex_trylock(&handle));
+}
+inline void mutex_unsafe_lock(mutex_handle &handle) {
+  (void)::pthread_mutex_lock(&handle);
+}
+inline void mutex_unsafe_unlock(mutex_handle &handle) {
+  (void)::pthread_mutex_unlock(&handle);
+}
+
+using lazy_mutex_handle = ::pthread_mutex_t;
+
+inline constexpr lazy_mutex_handle lazy_mutex_initializer() {
+  return PTHREAD_MUTEX_INITIALIZER;
+}
+inline void lazy_mutex_destroy(lazy_mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_destroy(&handle));
+}
+inline void lazy_mutex_lock(lazy_mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_lock(&handle));
+}
+inline void lazy_mutex_unlock(lazy_mutex_handle &handle) {
+  SWIFT_PTHREADS_CHECK(::pthread_mutex_unlock(&handle));
+}
+inline bool lazy_mutex_try_lock(lazy_mutex_handle &handle) {
+  SWIFT_PTHREADS_RETURN_TRUE_OR_FALSE(EBUSY, ::pthread_mutex_trylock(&handle));
+}
+inline void lazy_mutex_unsafe_lock(lazy_mutex_handle &handle) {
+  (void)::pthread_mutex_lock(&handle);
+}
+inline void lazy_mutex_unsafe_unlock(lazy_mutex_handle &handle) {
+  (void)::pthread_mutex_unlock(&handle);
+}
+#else // !SWIFT_LEGACY_IOS5
+
 using mutex_handle = ::os_unfair_lock;
 
 inline void mutex_init(mutex_handle &handle, bool checked = false) {
@@ -129,6 +191,7 @@ inline void lazy_mutex_unsafe_lock(lazy_mutex_handle &handle) {
 inline void lazy_mutex_unsafe_unlock(lazy_mutex_handle &handle) {
   ::os_unfair_lock_unlock(&handle);
 }
+#endif // SWIFT_LEGACY_IOS5
 
 // .. ConditionVariable support ..............................................
 

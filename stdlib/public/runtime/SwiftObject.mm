@@ -1293,6 +1293,21 @@ void swift::swift_instantiateObjCClass(const ClassMetadata *_c) {
   Class c = class_const_cast(_c);
   [class_getSuperclass(c) class];
 
+#if defined(SWIFT_LEGACY_IOS5_CLASS_MARKING)
+  // objc_readClassPair exists only from iOS 8. On legacy objc4 the class
+  // metadata already carries a class_ro_t, but merely realizing its superclass
+  // leaves this class unrealized. objc_retain/objc_release may then use the
+  // default NSObject path before objc4 has discovered inherited custom RR
+  // methods, bypassing the Swift refcount word (notably for bridged collections).
+  // A dispatch lookup realizes AND initializes this class and establishes its
+  // inherited RR flags without invoking a retain or a user-selected method.
+  // class_getInstanceMethod alone does not perform this initialization on iOS 5.
+  if (!SWIFT_RUNTIME_WEAK_CHECK(objc_readClassPair)) {
+    (void)class_getMethodImplementation(c, sel_registerName("retain"));
+    return;
+  }
+#endif
+
   // Register the class.
   Class registered = objc_readClassPair(c, &ImageInfo);
   assert(registered == c

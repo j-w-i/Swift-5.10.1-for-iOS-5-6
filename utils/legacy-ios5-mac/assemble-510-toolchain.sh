@@ -160,7 +160,7 @@ try:
     dependencies(frontend, baseline / 'usr/bin/swift-frontend')
     dependencies(driver, baseline / 'usr/bin/swift-driver')
 
-    for name in ('Core', 'Darwin', 'ObjectiveC', 'CoreFoundation'):
+    for name in ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation'):
         nonempty(oldlib / ('libswift' + name + '.dylib'))
         # ObjectiveC/CoreFoundation import from the real selected SDK (Clang or
         # SDK overlay), not fabricated local Swift modules. Core/Darwin ship
@@ -219,6 +219,23 @@ try:
     # The staged clang link points into its original host tree: do not copy it.
     shutil.copytree(modules, slot, symlinks=True,
                     ignore=lambda root, names: ['clang'] if Path(root) == modules else [])
+    # A Swift overlay module that is present makes the compiler autolink and
+    # force-load its runtime library. These overlays cannot exist on iOS 5 (os_log
+    # needs iOS 10, simd/SceneKit/SpriteKit/ModelIO/GameplayKit need iOS 8+ and
+    # newer hardware assumptions), yet iOS 11-era SDK headers (for example
+    # AVCameraCalibrationData.h) import them transitively. Ship no module whose
+    # runtime is not shipped: clients then use the plain Clang module and never
+    # emit a reference to a library that is absent from the device.
+    unsupported_overlays = ('os', 'OSLogPrototype', 'OSLogTestHelper', 'simd',
+                            'Accelerate', 'GameplayKit', 'ModelIO', 'SceneKit',
+                            'SpriteKit')
+    for name in unsupported_overlays:
+        module = slot / 'iphoneos' / (name + '.swiftmodule')
+        if module.is_dir():
+            shutil.rmtree(module)
+        top = slot / (name + '.swiftmodule')
+        if top.is_dir():
+            shutil.rmtree(top)
     # Swift derives Clang's resource directory as <swift-resource-dir>/clang, so
     # that entry must itself be a Clang resource directory (the one containing
     # include/stdarg.h), not the directory that holds version subdirectories.
@@ -272,6 +289,13 @@ try:
         if '_OBJC_CLASS_$_FBP' + name not in foundation_symbols:
             fail('Foundation overlay lacks integrated backport class: FBP' + name)
     nonempty(stage / 'probes/foundation-runtime/legacy-foundation/LICENSE')
+    # New native API entries are SDK-owned implementation objects, not client
+    # modules. Assert exact genuine Swift ABI exports in the packaged archive.
+    native_api_symbols = run(NM, '-gU', backports)
+    for symbol in ('_$sSdySdSgSscfC', '_$sSfySfSgSscfC',
+                   '_SwiftLegacyUIViewNoIntrinsicMetric'):
+        if symbol not in native_api_symbols:
+            fail('Native API implementation missing from SDK archive: ' + symbol)
     # Redistribution notices for the vendored backports travel with the runtime,
     # and a self-describing inventory hash-binds them into qualification.
     notices = slot / 'legacy-backports'
@@ -295,6 +319,15 @@ try:
             shutil.copyfile(item, destination)
             inventory[str(relative)] = hashlib.sha256(
                 destination.read_bytes()).hexdigest()
+    numeric_source = stage / 'probes/native-numeric-runtime'
+    for name in ('LICENSE.txt', 'exports.txt', 'build-manifest.json'):
+        source = numeric_source / name
+        nonempty(source)
+        relative = Path('native-numeric') / name
+        destination = notices / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        inventory[str(relative)] = hashlib.sha256(destination.read_bytes()).hexdigest()
     if not inventory:
         fail('No backport notices were packaged.')
     with (notices / 'INVENTORY.json').open('x') as stream:
@@ -302,11 +335,31 @@ try:
         stream.write('\n')
     ios = slot / 'iphoneos'
     # Modules always come from the rebuilt tree, never from OLD_RUNTIME_DIR.
-    for source in sorted(oldlib.glob('*.dylib')):
+    # OLD_RUNTIME_DIR now holds the base runtime of the *matching* Swift 5.10
+    # generation (Core, Darwin, ObjectiveC, CoreFoundation, Dispatch). Copy only
+    # those, so no stale sibling dylib from another compiler generation ships.
+    base_runtime = ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation')
+    for name in base_runtime:
+        source = oldlib / ('libswift' + name + '.dylib')
+        nonempty(source)
         replace_copy(source, ios / source.name)
     for name in OVERLAYS:
         source = linked / ('libswift' + name + '.dylib')
         replace_copy(source, ios / source.name)
+    # Optional media overlays (AVFoundation and its CoreMedia/CoreAudio
+    # dependencies) are rebuilt against the same matching runtime. They are
+    # shipped only from LEGACY_EXTRA_OVERLAYS_DIR; os/simd/Accelerate are not
+    # shipped because they need OS facilities that iOS 5 does not have.
+    extra_dir = os.environ.get('LEGACY_EXTRA_OVERLAYS_DIR')
+    shipped_extras = []
+    if extra_dir:
+        for name in ('CoreAudio', 'CoreMedia', 'AVFoundation'):
+            dylib = Path(extra_dir) / ('libswift' + name + '.dylib')
+            nonempty(dylib)
+            if run(OTOOL, '-D', dylib).splitlines()[1:] != ['@rpath/' + dylib.name]:
+                fail('Unexpected extra overlay install name: ' + str(dylib))
+            replace_copy(dylib, ios / dylib.name)
+            shipped_extras.append(name)
     replace_copy(backports, ios / 'libswiftLegacyIOS5Backports.a')
     # The overlays are linked by a different toolchain than the runtime they sit
     # beside, so the LC_ID_DYLIB versions can be lower than what their consumers
@@ -358,7 +411,7 @@ try:
     receipt = {
         'toolchainID': ID, 'baseline': str(baseline), 'stage': str(stage),
         'defaultResourceProfile': 'baseline', 'ios5ResourceDirectory': 'usr/lib/swift_ios5',
-        'runtime515SlotIncluded': False, 'overlays': list(OVERLAYS),
+        'runtime515SlotIncluded': False, 'overlays': list(OVERLAYS), 'extraOverlays': shipped_extras,
         'inputs': {str(p): digest(p) for p in (frontend, driver, backports, crt1)},
         'adhocSignedAndVerified': signed,
         'limitations': ['Packaging only; no compiler execution or device tests.',

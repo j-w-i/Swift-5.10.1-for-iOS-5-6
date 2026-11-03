@@ -32,6 +32,14 @@ internal final class LegacyViewState: NSObject {
 
     /// `intrinsicContentSize`; nil means no intrinsic size set.
     internal var intrinsicContentSize: CGSize?
+    internal var stackFittingProposal: CGSize?
+    internal var stackFittingResult: CGSize?
+
+    /// `UILabel.preferredMaxLayoutWidth`; nil means the iOS 5 default (0 = auto).
+    internal var preferredMaxLayoutWidth: CGFloat?
+    /// The width a multi-line label with no `preferredMaxLayoutWidth` was last re-measured at. UIKit's layout pass does the
+    /// same: a first measure at an unbounded width, then a re-measure at the width Auto Layout actually gave the label.
+    internal var measuredWrapWidth: CGFloat?
 
     internal var contentHuggingPriorityHorizontal: CGFloat?
     internal var contentHuggingPriorityVertical: CGFloat?
@@ -49,15 +57,37 @@ internal final class LegacyViewState: NSObject {
 
     /// `constraintsAreClean`; false means the constraints need updating.
     internal var constraintsAreClean = false
+    /// Own callback dirtiness is separate from an ancestor's dirty-subtree walk.
+    internal var needsConstraintUpdateCallback = true
+    internal var isUpdatingConstraintCallbacks = false
+    internal var isPerformingAutomaticLayout = false
 
     /// `needsLayout`; false when the view is clean.
     internal var needsLayout = false
+    /// A settled bounds size changed during the legacy frame write-back, so -layoutSubviews must
+    /// be delivered for this view once the pass completes (UIKit's lifecycle, which the backport
+    /// otherwise skipped even though the frames were right).
+    internal var pendingLayoutSubviews = false
+    /// Conservative participation bit propagated on constraint mutation/reparenting.
+    /// Sticky true avoids subtree scans in UIKit's hot geometry setters; removal
+    /// may cause an extra invalidation but can never suppress a required update.
+    internal var geometryAnchorsLayout = false
     /// Whether this view already asked its container for a layout pass since the
     /// last constraints/layout pass. Constraint bursts (a stack view activating
     /// dozens of constraints) used to send one native `setNeedsLayout` per
     /// constraint to the container; one per burst is enough and is what native
     /// Auto Layout effectively does.
     internal var containerInvalidated = false
+
+    /// Intrinsic size derived from the system control's `-sizeThatFits:`; nil when stale.
+    internal var systemIntrinsicCache: CGSize?
+    /// Content inputs the cached system intrinsic size was measured from. iOS 6 invalidates the
+    /// cache from the setters that change them; iOS 5 does not, so the read path compares this
+    /// key and re-measures when the content changed.
+    internal var intrinsicMeasurementKey: String?
+    /// The engine has consumed this system control's intrinsic size, so a later content
+    /// change must invalidate it (views the engine never measured need no bookkeeping).
+    internal var systemIntrinsicObserved = false
 
     /// Last global invalidation counter consumed by this view's constraint walk.
     internal var handledInvalidation = -1

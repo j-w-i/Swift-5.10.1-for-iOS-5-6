@@ -1,0 +1,8 @@
+{
+  "_comment": "Selectors a shipped image sends that no iOS 5.1.1 class implements, each with the reason the send is safe. Keyed by file name; '*' applies to every image.",
+  "libswiftCore.dylib": {
+    "debugQuickLookObject": "ReflectionMirrorObjC.mm sends it only after [object respondsToSelector:@selector(debugQuickLookObject)].",
+    "_swift_bundleForClass:": "Selector the runtime itself installs on NSBundle at startup (ObjCRuntimeGetImageNameFromClass.mm PATCH_NSBUNDLE); it is implemented by us.",
+    "_swift_bundleWithExecutablePath:": "Helper selector the runtime installs on NSBundle together with _swift_bundleForClass: (ObjCRuntimeGetImageNameFromClass.mm PATCH_NSBUNDLE); implemented by us."
+  }
+}
