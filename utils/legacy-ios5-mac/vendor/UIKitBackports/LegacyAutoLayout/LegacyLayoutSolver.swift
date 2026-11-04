@@ -2127,7 +2127,15 @@ internal final class LegacyLayoutSolver {
         }
 
         // UIKit writes Auto Layout results on the display pixel grid: a 2x screen snaps frames to
-        // 0.5pt (differential: 69.75 -> 70, 81.75 -> 82, 38.25 -> 38.5). Ties round half-up.
+        // 0.5pt (differential: 69.75 -> 70, 81.75 -> 82, 38.25 -> 38.5).
+        //
+        // Tie rule: round HALF-UP (toward +infinity) on exact half-pixel values. The iOS 6.1.6
+        // oracle (mass_oracle on the 6.1.6 iPod) resolved four negative ties in the pattern
+        // -25.5px->-25, -24.5px->-25, -27.5px->-27, -7.5px->-7 — no single fixed rule (not
+        // C round(), not banker's); the resolutions track the engine's float history, not a
+        // quantization policy. Half-up reproduces 3 of the 4 exactly (the -24.5 case — scenario
+        // 302 y, 6.1.6 wrote -23.5 — is the known float-history residual, 0.5pt, round 118).
+        // Positive ties (160.5px->161, scenario 227) match under any convention.
         let pixelScale = extractedDisplayScale()
         func snap(_ value: Double) -> Double {
             guard pixelScale > 0 else { return value }
