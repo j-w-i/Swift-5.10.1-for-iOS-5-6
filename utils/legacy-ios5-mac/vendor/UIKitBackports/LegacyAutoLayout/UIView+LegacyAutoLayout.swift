@@ -326,7 +326,7 @@ extension UIView {
 
     // MARK: Layout / constraint-update driving
 
-    /// Runs the legacy layout pass over this view's subtree.
+    /// Runs the legacy layout pass covering this view's subtree.
     ///
     /// This is the explicit opt-in path: it runs the engine even when the ObjC bridge is not
     /// installed (i.e. on iOS 6+, for tests and for library shims that need deterministic layout).
@@ -350,13 +350,22 @@ extension UIView {
         // (that is what would turn an RR-style pass into a layout feedback loop).
         let wasApplyingLayoutFrames = LegacyAutoLayoutRuntime.isApplyingLayoutFrames
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = true
-        engine.layout(self)
+        // The pass root follows the automatic callback path's selection (legacyAutomaticLayoutRoot):
+        // UIKit 6.1's layoutBelowIfNeeded never solves a triggering view in isolation. A hierarchy
+        // with no engine gets a temporary engine at the topmost ancestor, pinned to its current
+        // frame; a windowed view promotes to the ancestor owning the crossing equations. Solving
+        // the triggering view as its own root drops the ancestor-owned equations that size it,
+        // leaving its geometry an undetermined degree of freedom that the tableau resolves to
+        // near-zero instead of the incumbent geometry (differential: children of aspect-sized
+        // containers drifted 0.125–0.5pt off the native solution on every subtree pass — round 117).
+        let passRoot = legacyAutomaticLayoutRoot()
+        engine.layout(passRoot)
         // UIKit's second measuring step: multi-line labels the app gave no preferredMaxLayoutWidth are re-measured at the
         // width layout just gave them, then layout runs again. Bounded: a label settles in one or two rounds.
         var rounds = 0
         while rounds < 3, LegacyIntrinsicOverride.remeasureEnabled, legacyRemeasureWrappingLabels() {
             legacyUpdateConstraintsIfNeeded()
-            engine.layout(self)
+            engine.layout(passRoot)
             rounds += 1
         }
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = wasApplyingLayoutFrames
@@ -364,11 +373,15 @@ extension UIView {
         // UIKit delivers -layoutSubviews to every view whose bounds size changed during the pass,
         // parents before children. The legacy engine only writes frames, so deliver it explicitly;
         // the reentrancy guard above is already released and each view is cleared before the call.
-        legacyDeliverLayoutSubviews()
+        legacyDeliverLayoutSubviews(from: passRoot)
 
-        let state = legacyMutableState(self)
+        let state = legacyMutableState(passRoot)
         state.needsLayout = false
         state.containerInvalidated = false
+        if passRoot !== self, let caller = LegacyViewState.existing(of: self) {
+            caller.needsLayout = false
+            caller.containerInvalidated = false
+        }
     }
 
 
@@ -398,8 +411,9 @@ extension UIView {
     /// Delivers -layoutSubviews in Apple's order (depth-first, parent before children) for views
     /// whose settled bounds size changed in this pass. Apple's engine marks exactly those views dirty
     /// and UIKit lays them out; the legacy engine has to do it itself because it writes frames directly.
+    /// `scope` widens the walk to a pass root promoted above `self` (see `legacyLayoutIfNeeded`).
     @MainActor
-    private func legacyDeliverLayoutSubviews() {
+    private func legacyDeliverLayoutSubviews(from scope: UIView? = nil) {
         func deliver(_ view: UIView) {
             if let state = LegacyViewState.existing(of: view), state.pendingLayoutSubviews {
                 state.pendingLayoutSubviews = false
@@ -409,7 +423,8 @@ extension UIView {
             }
             for child in view.subviews { deliver(child) }
         }
-        for child in subviews { deliver(child) }
+        let start = scope ?? self
+        for child in start.subviews { deliver(child) }
     }
 
     /// Marks this view as needing a layout pass (backport of `setNeedsLayout`).

@@ -512,6 +512,64 @@ internal final class LegacyLayoutSolver {
     private func finishSolve(writingFrames: Bool) -> LegacyLayoutResult {
         recordInstalledStructure()
         solver.updateVariables()
+        if ProcessInfo.processInfo.environment["LEGACY_LAYOUT_RESIDUAL_DEBUG"] != nil {
+            var out = ""
+            let rootClass = String(describing: type(of: root as AnyObject))
+            let firstItemClass = items.first.map { String(describing: type(of: $0 as AnyObject)) } ?? "none"
+            out += "PASS root=\(ObjectIdentifier(root as AnyObject).hashValue) rootClass=\(rootClass) items=\(items.count) firstItem=\(firstItemClass)\n"
+            func eval(_ e: Expression) -> Double {
+                var v = e.constant
+                for t in e.terms { v += t.coefficient * solver.value(of: t.variable) }
+                return v
+            }
+            var labels: [ObjectIdentifier: String] = [:]
+            for (identifier, vars) in variables {
+                let item = vars.item as? UIView
+                let hv = item.map { ObjectIdentifier($0).hashValue % 100000 } ?? -1
+                let base = item == nil ? "?" : "v\(hv)"
+                labels[ObjectIdentifier(vars.minX)] = base + ".minX"
+                labels[ObjectIdentifier(vars.minY)] = base + ".minY"
+                labels[ObjectIdentifier(vars.width)] = base + ".w"
+                labels[ObjectIdentifier(vars.height)] = base + ".h"
+                if let sc = scrollContentSizes[identifier] {
+                    labels[ObjectIdentifier(sc.width)] = base + ".scW"
+                    labels[ObjectIdentifier(sc.height)] = base + ".scH"
+                }
+            }
+            let rootId = ObjectIdentifier(root as AnyObject).hashValue
+            for cc in userRequiredConstraints + userOptionalConstraints {
+                let r = eval(cc.expression)
+                guard abs(r) > 1e-9 else { continue }
+                let op = cc.operator == .equal ? "eq" : (cc.operator == .lessThanOrEqual ? "le" : "ge")
+                let terms = cc.expression.terms.map { t -> String in
+                    let lbl = labels[ObjectIdentifier(t.variable)] ?? "v\(t.variable.description)"
+                    return t.coefficient == 1.0 ? lbl : "\(t.coefficient)*\(lbl)"
+                }.joined(separator: " ")
+                out += "RESID root=\(rootId) \(op) name=\(cc.name ?? "?") r=\(String(format: "%.6f", r)) [\(terms) c=\(cc.expression.constant)]\n"
+            }
+            if let cass = solver as? Solver {
+                for (idx, row) in cass.constraints.enumerated() {
+                    let r = eval(row.expression)
+                    guard abs(r) > 1e-9 else { continue }
+                    let op = row.op == .equal ? "eq" : (row.op == .lessThanOrEqual ? "le" : "ge")
+                    let terms = row.expression.terms.map { t -> String in
+                        let lbl = labels[ObjectIdentifier(t.variable)] ?? "v\(t.variable.description)"
+                        return t.coefficient == 1.0 ? lbl : "\(t.coefficient)*\(lbl)"
+                    }.joined(separator: " ")
+                    out += "ROW root=\(rootId) #\(idx) \(op) s=\(row.strength) r=\(String(format: "%.6f", r)) [\(terms) c=\(row.expression.constant)]\n"
+                }
+            }
+            for (identifier, vars) in variables {
+                if identifier == ObjectIdentifier(root as AnyObject) { continue }
+                let item = vars.item
+                guard let v = item as? UIView else { continue }
+                out += String(format: "SOLVED root=%d %@ hash=%d abs=(%.4f %.4f) size=(%.4f %.4f)\n",
+                              rootId, String(describing: type(of: v)), ObjectIdentifier(v).hashValue,
+                              solver.value(of: vars.minX), solver.value(of: vars.minY),
+                              solver.value(of: vars.width), solver.value(of: vars.height))
+            }
+            if !out.isEmpty { FileHandle.standardError.write(Data(out.utf8)) }
+        }
         let result = extractResult(writingFrames: writingFrames)
         if writingFrames {
             // A rebuild captures next pass's stays from the frames it just wrote.
@@ -2082,6 +2140,14 @@ internal final class LegacyLayoutSolver {
         // Write frames back (root untouched) and advance autoresizing references.
         // Both only happen for a real layout pass, not for `solve`.
         if writingFrames {
+            // Final (written) absolute origins, accumulated per item: a child's snapped local
+            // origin subtracts the parent's WRITTEN origin (the parent's own snap already
+            // applied) rather than the parent's unsolved one. Native writes child =
+            // snap(childAbs) - snapped(parentAbs), which keeps every local coordinate on the
+            // pixel grid; subtracting the unsolved parent leaves 0.125–0.25pt local drift on
+            // 2x displays (differential round 117: children of aspect-sized containers).
+            var finalAbsolute: [ObjectIdentifier: CGPoint] = [:]
+            finalAbsolute[rootIdentifier] = absoluteOrigins[rootIdentifier] ?? root.layoutFrame.origin
             for item in items {
                 let identifier = ObjectIdentifier(item as AnyObject)
                 if let size = scrollContentSizes[identifier] {
@@ -2096,11 +2162,27 @@ internal final class LegacyLayoutSolver {
                     continue
                 }
                 let parentAbsolute = parentAbsoluteOrigin(of: item, absoluteOrigins: absoluteOrigins)
-                let frame = CGRect(x: snap(parentAbsolute.x + Double(candidate.minX)) - Double(parentAbsolute.x),
-                                   y: snap(parentAbsolute.y + Double(candidate.minY)) - Double(parentAbsolute.y),
+                let parentFinal: CGPoint
+                if let superitem = item.layoutSuperitem {
+                    parentFinal = finalAbsolute[ObjectIdentifier(superitem as AnyObject)] ?? finalAbsolute[rootIdentifier] ?? parentAbsolute
+                } else {
+                    parentFinal = finalAbsolute[rootIdentifier] ?? parentAbsolute
+                }
+                let frame = CGRect(x: snap(parentAbsolute.x + Double(candidate.minX)) - parentFinal.x,
+                                   y: snap(parentAbsolute.y + Double(candidate.minY)) - parentFinal.y,
                                    width: max(0, snap(Double(candidate.width))),
                                    height: max(0, snap(Double(candidate.height))))
+                if ProcessInfo.processInfo.environment["LEGACY_LAYOUT_FRAME_DEBUG"] != nil, let v = item as? UIView {
+                    FileHandle.standardError.write(Data(String(
+                        format: "FRAMEDEBUG %d %s pre=%.4f %.4f %.4f %.4f post=%.4f %.4f %.4f %.4f\n",
+                        ObjectIdentifier(v).hashValue,
+                        (ObjectIdentifier(v).debugDescription as NSString).utf8String!,
+                        candidate.minX, candidate.minY, candidate.width, candidate.height,
+                        frame.minX, frame.minY, frame.width, frame.height).utf8))
+                }
                 item.layoutSetFrame(frame)
+                finalAbsolute[identifier] = CGPoint(x: parentFinal.x + frame.minX,
+                                                    y: parentFinal.y + frame.minY)
             }
             for item in items {
                 let identifier = ObjectIdentifier(item as AnyObject)
