@@ -51,3 +51,7 @@ NSArray *UICConstraintsWithVisualFormat(NSString *format, NSUInteger options, NS
 id UICMakeConstraint(id first, NSInteger attribute, NSInteger relation, id second, NSInteger secondAttribute, CGFloat multiplier, CGFloat constant);
 void UICAddLayoutGuide(UIView *view, UICLayoutGuide *guide);
 void UICRemoveLayoutGuide(UIView *view, UICLayoutGuide *guide);
+// Real-Apple preferredMaxLayoutWidth bridge (see UICLabelPreferredWidth.m).
+// On iOS 6+ Apple's UILabel implements the property natively; these forward to it.
+CGFloat UICLabelRealPreferredMaxLayoutWidth(UILabel *label);
+void UICLabelSetRealPreferredMaxLayoutWidth(UILabel *label, CGFloat value);
