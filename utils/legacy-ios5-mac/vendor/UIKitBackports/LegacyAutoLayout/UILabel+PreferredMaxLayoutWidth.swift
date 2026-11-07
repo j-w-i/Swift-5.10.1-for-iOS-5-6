@@ -26,11 +26,11 @@ import Foundation
 import CoreGraphics
 import UIKit
 
-@_silgen_name("UICLabelRealPreferredMaxLayoutWidth")
-private func uic_label_real_preferred_width(_ label: UILabel) -> CGFloat
+@_silgen_name("UICLabelRealPreferredMaxLayoutWidthBits")
+private func uic_label_real_preferred_width_bits(_ label: UILabel) -> UInt32
 
-@_silgen_name("UICLabelSetRealPreferredMaxLayoutWidth")
-private func uic_label_set_real_preferred_width(_ label: UILabel, _ value: CGFloat)
+@_silgen_name("UICLabelSetRealPreferredMaxLayoutWidthBits")
+private func uic_label_set_real_preferred_width_bits(_ label: UILabel, _ bits: UInt32)
 
 extension UILabel {
     /// The preferred maximum width, in points, for a multiline label.
@@ -39,11 +39,11 @@ extension UILabel {
             if let state = LegacyViewState.existing(of: self)?.preferredMaxLayoutWidth {
                 return state
             }
-            return uic_label_real_preferred_width(self)
+            return CGFloat(Float(bitPattern: uic_label_real_preferred_width_bits(self)))
         }
         set {
             LegacyViewState.of(self).preferredMaxLayoutWidth = newValue
-            uic_label_set_real_preferred_width(self, newValue)
+            uic_label_set_real_preferred_width_bits(self, Float(newValue).bitPattern)
             LegacyLayoutMutation.bump()
             legacySetNeedsUpdateConstraints()
         }

@@ -25,6 +25,7 @@
 //  into the extension regardless of method-table registration order.
 
 #import <UIKit/UIKit.h>
+#include <string.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunguarded-availability"
@@ -45,13 +46,17 @@ static BOOL UICAppleProvidesLabelPreferredWidth(void) {
     return sProvides;
 }
 
-CGFloat UICLabelRealPreferredMaxLayoutWidth(UILabel *label) {
-    if (!UICAppleProvidesLabelPreferredWidth() || label == nil) return 0;
-    return label.preferredMaxLayoutWidth;
+// Floats cross the Swift <-> C boundary as raw UInt32 bits: a Swift @_silgen_name float argument is not
+// passed where the C ABI expects it on armv7, so the value arrived as 0 (the app's 240 never reached Apple).
+uint32_t UICLabelRealPreferredMaxLayoutWidthBits(UILabel *label) {
+    float value = 0;
+    if (UICAppleProvidesLabelPreferredWidth() && label != nil) value = (float)label.preferredMaxLayoutWidth;
+    uint32_t bits; memcpy(&bits, &value, sizeof bits); return bits;
 }
 
-void UICLabelSetRealPreferredMaxLayoutWidth(UILabel *label, CGFloat value) {
+void UICLabelSetRealPreferredMaxLayoutWidthBits(UILabel *label, uint32_t bits) {
     if (!UICAppleProvidesLabelPreferredWidth() || label == nil) return;
+    float value; memcpy(&value, &bits, sizeof value);
     label.preferredMaxLayoutWidth = value;
 }
 

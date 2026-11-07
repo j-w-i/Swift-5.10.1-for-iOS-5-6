@@ -53,5 +53,5 @@ void UICAddLayoutGuide(UIView *view, UICLayoutGuide *guide);
 void UICRemoveLayoutGuide(UIView *view, UICLayoutGuide *guide);
 // Real-Apple preferredMaxLayoutWidth bridge (see UICLabelPreferredWidth.m).
 // On iOS 6+ Apple's UILabel implements the property natively; these forward to it.
-CGFloat UICLabelRealPreferredMaxLayoutWidth(UILabel *label);
-void UICLabelSetRealPreferredMaxLayoutWidth(UILabel *label, CGFloat value);
+uint32_t UICLabelRealPreferredMaxLayoutWidthBits(UILabel *label);
+void UICLabelSetRealPreferredMaxLayoutWidthBits(UILabel *label, uint32_t bits);
