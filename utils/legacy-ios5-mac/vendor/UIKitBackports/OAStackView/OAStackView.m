@@ -431,10 +431,12 @@
   if (self.subviews.count == 1) {
     [self.mutableArrangedSubviews removeObject:view];
     [view removeFromSuperview];
+    [self invalidateIntrinsicContentSize];
     return;
   }
 
   [self removeViewFromArrangedViews:view permanently:YES];
+  [self invalidateIntrinsicContentSize];
 }
 
 - (void)insertArrangedSubview:(UIView *)view atIndex:(NSUInteger)stackIndex {
@@ -507,6 +509,10 @@
   [self.alignmentStrategy addConstraintsOnOtherAxis:view];
   [self.distributionStrategy alignView:nextView afterView:view];
   [self.alignmentStrategy alignView:nextView withPreviousView:view];
+  // intrinsicContentSize depends on whether any arranged view is visible (zero when empty). UIKit 6+ caches
+  // content-size constraints from the last answer, so a stack that was empty keeps width/height pinned to 0
+  // (at the stack's hugging/compression priorities) until told the answer changed. UIStackView does this itself.
+  [self invalidateIntrinsicContentSize];
 }
 
 - (void)removeViewFromArrangedViews:(UIView*)view permanently:(BOOL)permanently {
