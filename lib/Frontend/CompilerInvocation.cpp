@@ -196,7 +196,7 @@ static bool shouldIsolateLegacyIOS5SDKSwiftModules(const LangOptions &LangOpts) 
            Triple.isiOS() && !Triple.isTvOS() &&
            !Triple.isSimulatorEnvironment() &&
            !Triple.isMacCatalystEnvironment() && !Triple.isOSVersionLT(5) &&
-           Triple.isOSVersionLT(6);
+           Triple.isOSVersionLT(11);
   };
   const auto &ClangTarget =
       LangOpts.ClangTarget ? *LangOpts.ClangTarget : LangOpts.Target;
