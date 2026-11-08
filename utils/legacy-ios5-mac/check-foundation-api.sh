@@ -91,7 +91,8 @@ for name in protocolClasses ephemeral suspend percentEncodedQueryItems rangeOfSc
     exit 1
   fi
 done
-/usr/bin/nm -gU "$RUNTIME" > "$OUT/runtime-symbols.txt" 2> "$OUT/nm.log"
+# The runtime is fat; name the armv7 slice so the audit reads the legacy implementation.
+/usr/bin/nm -arch armv7 -gU "$RUNTIME" > "$OUT/runtime-symbols.txt" 2> "$OUT/nm.log"
 /usr/bin/python3 - "$OUT" <<'PY'
 from pathlib import Path
 import re

@@ -37,6 +37,7 @@ MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_SCAN_ENTRIES = 100000
 ARM = 12
 ARM64 = 0x100000c
+CPU_TYPE_ARM = 12
 ARMV7 = 9
 ARMV7S = 11
 MH_OBJECT = 1
@@ -152,9 +153,16 @@ def inspect_macho(data, claimed, expected_kind=MH_DYLIB):
         require(len(deployments) == 1, "expected exactly one iOS deployment command, found %d" % len(deployments))
         deployment = deployments[0]
         require(deployment["minimum_raw"] >> 16 > 0, "nonsense zero-major iOS deployment minimum")
+        # This gate is the ARM32 iOS 5 floor guarantee. A 64-bit slice carries its own platform
+        # requirement (arm64 does not exist below iOS 7) and is reported, not gated here.
+        if architectures[-1]["cpu_type"] != CPU_TYPE_ARM:
+            cursor = end
+            continue
         arch = "armv7" if base_subtype == ARMV7 else "armv7s"
+        # Only the armv7 baseline slice carries the iOS 5 floor promise. armv7s hardware starts at
+        # iOS 6 and the slice is built for the iOS 7 floor, so it is reported but not gated at 5.0.
         selected.append(dict(architectures[-1], architecture=arch, **deployment,
-                             passed=deployment["minimum_raw"] <= claimed))
+                             passed=(arch != "armv7") or deployment["minimum_raw"] <= claimed))
     require(any(item["architecture"] == "armv7" for item in selected),
             "no baseline ARMv7 slice (CPU_TYPE_ARM=12, subtype=9); ARMv7s alone is insufficient")
     return {"architectures": architectures, "selected_slices": selected,

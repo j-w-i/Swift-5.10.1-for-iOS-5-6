@@ -17,6 +17,7 @@ Exit codes: 0 pass, 1 policy violation, 2 usage/IO error.
 import struct
 import sys
 from pathlib import Path
+from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
 
 # Substrings that must never appear in an initializer's own code path. Each one is
 # a Foundation/Objective-C bridging entry the legacy runtime cannot use this early.
@@ -202,7 +203,7 @@ def main(argv):
         raise SystemExit("usage: check-runtime-initializers.py DYLIB... | --runtime-dir DIR")
     failures = 0
     for path in paths:
-        data = path.read_bytes()
+        data = select_armv7(path.read_bytes())
         try:
             problems = audit_bytes(data, path.name)
         except ValueError as error:

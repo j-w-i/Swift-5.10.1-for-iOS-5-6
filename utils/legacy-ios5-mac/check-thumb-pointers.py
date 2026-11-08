@@ -18,6 +18,7 @@ compiles every image it links for iOS 5 in ARM mode, which removes the ambiguity
 import struct
 import sys
 from pathlib import Path
+from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
 
 N_ARM_THUMB_DEF = 0x0008
 # Sections that can hold absolute addresses into __text. Relative-offset Swift
@@ -32,7 +33,7 @@ POINTER_SECTIONS = {
 
 
 def load(path):
-    data = Path(path).read_bytes()
+    data = select_armv7(Path(path).read_bytes())
 
     def unpack(fmt, offset):
         size = struct.calcsize(fmt)

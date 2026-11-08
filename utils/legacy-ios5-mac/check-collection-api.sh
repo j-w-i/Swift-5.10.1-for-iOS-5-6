@@ -99,7 +99,9 @@ if 'PSUICollection' in native or 'PSTCollection' in native:
     raise SystemExit('iOS6 incorrectly uses legacy collection implementation')
 if '_OBJC_CLASS_$_UICollectionView' not in native:
     raise SystemExit('iOS6 did not use native UIKit')
-symbols = subprocess.check_output(['/usr/bin/nm', '-gU', str(runtime)], text=True)
+# The runtime is fat (armv7 + armv7s + arm64); nm with no -arch defaults to the host slice,
+# so the armv7 slice must be named explicitly to audit the legacy collection support.
+symbols = subprocess.check_output(['/usr/bin/nm', '-arch', 'armv7', '-gU', str(runtime)], text=True)
 for name in ('PSTCollectionView', 'PSTCollectionViewCell', 'PSTCollectionReusableView',
              'PSTCollectionViewLayout', 'PSTCollectionViewFlowLayout',
              'PSTCollectionViewLayoutAttributes', 'PSTCollectionViewController',

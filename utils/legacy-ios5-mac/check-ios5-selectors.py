@@ -29,6 +29,7 @@ import json
 import struct
 import sys
 from pathlib import Path
+from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
 
 HERE = Path(__file__).resolve().parent
 REFERENCE = HERE / "ios5-reference" / "ios511-selectors.json.gz"
@@ -206,7 +207,7 @@ def main(argv):
     analysed, failures = [], 0
     for path in files:
         try:
-            analysed.append((path, *used_and_defined(path.read_bytes())))
+            analysed.append((path, *used_and_defined(select_armv7(path.read_bytes()))))
         except (OSError, ValueError) as error:
             print("FAIL %s: %s" % (path.name, error))
             failures += 1

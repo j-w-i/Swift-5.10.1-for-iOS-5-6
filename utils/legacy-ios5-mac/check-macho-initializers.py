@@ -9,9 +9,10 @@ Read-only: no Mach-O rewriting, external tools, or installed-output changes.
 import struct
 import sys
 from pathlib import Path
+from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
 
 def audit(path, require_pst=True):
-    audit_bytes(Path(path).read_bytes(), require_pst=require_pst)
+    audit_bytes(select_armv7(Path(path).read_bytes()), require_pst=require_pst)
 
 
 def audit_bytes(data, require_pst=True):

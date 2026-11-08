@@ -21,6 +21,7 @@ Exit codes: 0 pass, 1 mismatch, 2 usage/IO error.
 import struct
 import sys
 from pathlib import Path
+from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
 
 MH_MAGIC = 0xFEEDFACE
 CPU_TYPE_ARM = 12
@@ -191,7 +192,7 @@ def main(argv):
     failures = 0
     for path in paths:
         try:
-            checked, mismatches, problems = audit(path.read_bytes(), path.name)
+            checked, mismatches, problems = audit(select_armv7(path.read_bytes()), path.name)
         except (OSError, ValueError) as error:
             print("FAIL %s: %s" % (path.name, error))
             failures += 1
