@@ -1,0 +1,153 @@
+#!/bin/bash
+# Build the Swift runtime for the non-armv7 legacy slices (armv7s, arm64) and merge everything into
+# one fat per-dylib tree. armv7 comes from the existing legacy build; this stage adds the rest.
+#
+# Usage: build-multiarch-overlays.sh BUILD_ROOT OUT
+#
+#   BUILD_ROOT  a legacy build root that already contains the built compiler and, for each extra
+#               arch, a stdlib resource tree at build/ios-stdlib-<arch>/lib/swift (built by
+#               build-ios-stdlib510.sh with ARCHS="armv7s arm64").
+#   OUT         fresh absolute output directory for the fat runtime tree.
+#
+# Requires (environment): SDK, Xcode 13.4.1 DEVELOPER_DIR, and a Swift 5.1 source checkout
+# (SWIFT51_SOURCE) for the overlay sources the armv7 pipeline borrowed from the old runtime.
+#
+# Everything here is a parameter of an existing single-arch script; this driver only sequences them
+# per architecture and performs the lipo merge, so a change in one place applies to every slice.
+set -euo pipefail
+umask 022
+fail() { printf 'build-multiarch-overlays: %s\n' "$*" >&2; exit 1; }
+
+B=${1:?usage: build-multiarch-overlays.sh BUILD_ROOT OUT}
+OUT=${2:?usage: build-multiarch-overlays.sh BUILD_ROOT OUT}
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+SDK=${SDK:?set SDK to the iPhoneOS SDK used for every slice}
+SWIFT51_SOURCE=${SWIFT51_SOURCE:?set SWIFT51_SOURCE to a Swift 5.1 source checkout}
+EXTRA_ARCHS=${EXTRA_ARCHS:-"armv7s arm64"}
+BASELINE_ARCH=armv7
+BASELINE_DEPLOYMENT=5.0
+EXTRA_DEPLOYMENT=7.0
+
+[[ "$B" = /* && "$OUT" = /* && "$SDK" = /* && "$SWIFT51_SOURCE" = /* ]] || fail 'Use absolute paths.'
+[ -d "$B/build/swift" ] && [ -d "$SDK" ] || fail 'Missing build root or SDK.'
+[ ! -e "$OUT" ] || fail "Refusing existing output: $OUT"
+
+CLANG="$B/build/llvm/bin/clang"
+AR="$B/build/llvm/bin/llvm-ar"
+SWIFT="$B/build/swift/bin/swift-frontend"
+LINKER="$B/build/llvm/bin/clang"
+for tool in "$CLANG" "$AR" "$SWIFT"; do [ -x "$tool" ] || fail "Missing tool: $tool"; done
+
+STAGE="$B/bootstrap"
+[ -d "$STAGE/probes" ] || fail 'Missing prepared overlay stage (bootstrap/probes).'
+LIBCXX="$($CLANG -print-resource-dir 2>/dev/null || true)"
+mkdir -p "$OUT"
+
+# Overlay modules the armv7 pipeline copied from the old runtime instead of building. Their sources
+# live in the Swift 5.1 checkout and they build per arch with the same recipe.
+SUPPLEMENTARY="ObjectiveC CoreFoundation AVFoundation CoreAudio CoreMedia"
+OVERLAYS="Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit"
+
+for ARCH in $EXTRA_ARCHS; do
+  RES="$B/build/ios-stdlib-$ARCH/lib/swift"
+  [ -d "$RES" ] || fail "Missing $ARCH stdlib tree: $RES (build it with ARCHS=\"$EXTRA_ARCHS\")"
+  WORK="$OUT/work-$ARCH"
+  mkdir -p "$WORK"
+
+  echo "== $ARCH: Objective-C backport facades"
+  LEGACY_BACKPORTS_TARGET="$ARCH-apple-ios$EXTRA_DEPLOYMENT" \
+  LEGACY_BACKPORTS_ISET="$([ "$ARCH" = arm64 ] && echo ARM64 || echo ARM)" \
+    bash "$HERE/build-backports-runtime.sh" "$SDK" "$CLANG" "$AR" "$WORK/backports" "$ARCH" \
+    > "$OUT/log-$ARCH-backports.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-backports.log" >&2; fail "$ARCH facades failed"; }
+
+  echo "== $ARCH: overlays"
+  bash "$HERE/build-overlay-stage.sh" "$STAGE" "$SWIFT" "$SDK" "" "$ARCH" "$RES" \
+    > "$OUT/log-$ARCH-overlays.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-overlays.log" >&2; fail "$ARCH overlays failed"; }
+
+  echo "== $ARCH: supplementary overlays ($SUPPLEMENTARY)"
+  for NAME in $SUPPLEMENTARY; do
+    SRC="$SWIFT51_SOURCE/stdlib/public/Darwin/$NAME"
+    [ -d "$SRC" ] || fail "Missing overlay sources: $SRC"
+    /usr/bin/arch -x86_64 "$SWIFT" -parse-as-library -module-name "$NAME" \
+      -autolink-force-load -module-link-name "swift$NAME" \
+      -target "$ARCH-apple-ios$EXTRA_DEPLOYMENT" -sdk "$SDK" -resource-dir "$RES" \
+      -swift-version 5 -O -enable-library-evolution -emit-object -o "$WORK/$NAME.o" \
+      -I "$RES/shims" -I "$STAGE/probes/dispatch-shims" \
+      -Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache" \
+      "$SRC"/*.swift > "$OUT/log-$ARCH-$NAME.log" 2>&1 \
+      || { tail -20 "$OUT/log-$ARCH-$NAME.log" >&2; fail "$ARCH $NAME overlay failed"; }
+  done
+
+  echo "== $ARCH: base runtime (Core, Darwin, ObjectiveC, CoreFoundation)"
+  RT="$WORK/oldruntime/lib/swift/iphoneos"
+  mkdir -p "$RT" "$WORK/modules"
+  cp "$RES/iphoneos/$ARCH/libswiftCore.dylib" "$RES/iphoneos/$ARCH/libswiftDarwin.dylib" "$RT/"
+  link_overlay() { # NAME OBJECT DEPS... [FRAMEWORKS]
+    local NAME="$1" OBJECT="$2"; shift 2
+    local FRAMEWORKS=() LIBARGS=()
+    for dep in "$@"; do [ "${dep#-}" = "$dep" ] && LIBARGS+=("-lswift$dep") || FRAMEWORKS+=("$dep"); done
+    "$LINKER" -target "$ARCH-apple-ios$EXTRA_DEPLOYMENT" -isysroot "$SDK" -dynamiclib \
+      -install_name "@rpath/libswift$NAME.dylib" -o "$RT/libswift$NAME.dylib" "$OBJECT" \
+      -L"$RT" -L"$RES/iphoneos" ${LIBARGS[@]+"${LIBARGS[@]}"} \
+      -lswiftCompatibility50 -lc++ ${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"} \
+      >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswift$NAME.dylib failed"; }
+  }
+  link_overlay ObjectiveC "$WORK/ObjectiveC.o" Core Darwin
+  link_overlay CoreFoundation "$WORK/CoreFoundation.o" Core Darwin ObjectiveC -framework Foundation -framework CoreFoundation
+  link_overlay AVFoundation "$WORK/AVFoundation.o" Core Darwin ObjectiveC -framework AVFoundation -framework CoreMedia
+  link_overlay CoreAudio "$WORK/CoreAudio.o" Core Darwin ObjectiveC -framework CoreAudio
+  link_overlay CoreMedia "$WORK/CoreMedia.o" Core Darwin ObjectiveC -framework CoreMedia
+
+  echo "== $ARCH: linking the seven overlays"
+  LINK_OUTPUT_NAME="linked510-$ARCH" IOS_DEPLOYMENT_TARGET="$EXTRA_DEPLOYMENT" AR="$AR" \
+  SWIFT51_SOURCE="$SWIFT51_SOURCE" \
+  LLVM_CONFIG_INCLUDE_DIR="${LLVM_CONFIG_INCLUDE_DIR:-$B/build/llvm/include}" \
+  LEGACY_UIKIT_BACKPORTS_ARCHIVE="$WORK/backports/libswiftLegacyUIKitBackports.a" \
+    bash "$HERE/link-overlay-stage.sh" "$STAGE" "$SDK" "$WORK/oldruntime" \
+      "$B/build/crt-510-$ARCH-ios70/libclang_rt.builtins_${ARCH}_ios.a" \
+      "$LINKER" "$SDK/usr/include/c++/v1" "$ARCH" \
+    > "$OUT/log-$ARCH-dylibs.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-dylibs.log" >&2; fail "$ARCH overlay link failed"; }
+
+  echo "== $ARCH: collecting modules"
+  for d in "$RES"/*.swiftmodule; do
+    name=$(basename "$d")
+    mkdir -p "$WORK/modules/$name"
+    for f in "$d"/*; do case "$(basename "$f")" in *"$ARCH"*) cp -R "$f" "$WORK/modules/$name/" ;; esac; done
+  done
+  [ -d "$RES/iphoneos/$ARCH" ] && cp -R "$RES/iphoneos/$ARCH" "$WORK/modules/arch-$ARCH"
+done
+
+echo "== merging fat dylibs"
+BASE_TC=${BASELINE_RUNTIME:-}
+[ -n "$BASE_TC" ] || fail 'Set BASELINE_RUNTIME to the armv7 runtime tree (…/swift_ios5/iphoneos) being upgraded.'
+[ -d "$BASE_TC" ] || fail "Missing armv7 runtime tree: $BASE_TC"
+mkdir -p "$OUT/iphoneos"
+for old in "$BASE_TC"/*.dylib; do
+  name=$(basename "$old")
+  parts=("$old")
+  for ARCH in $EXTRA_ARCHS; do
+    RES="$B/build/ios-stdlib-$ARCH/lib/swift"
+    for candidate in "$STAGE/probes/linked510-$ARCH/$name" \
+                     "$OUT/work-$ARCH/oldruntime/lib/swift/iphoneos/$name" \
+                     "$RES/iphoneos/$ARCH/$name" \
+                     "$B/build/ios-stdlib-$ARCH/lib/swift/iphoneos/$name"; do
+      [ -f "$candidate" ] && { parts+=("$candidate"); break; }
+    done
+  done
+  if [ "${#parts[@]}" -lt $(( ${#EXTRA_ARCHS} + 1 )) ]; then
+    echo "  keeping $name armv7-only (no $EXTRA_ARCHS build)" >&2
+    cp "$old" "$OUT/iphoneos/$name"
+  elif [ "$(lipo -archs "${parts[0]}")" = "$(lipo -archs "${parts[1]}" 2>/dev/null)" ] 2>/dev/null; then
+    cp "${parts[0]}" "$OUT/iphoneos/$name"
+  else
+    lipo -create "${parts[@]}" -output "$OUT/iphoneos/$name" 2>/dev/null \
+      || { echo "  merge failed for $name; keeping armv7" >&2; cp "$old" "$OUT/iphoneos/$name"; }
+  fi
+done
+cp -R "$OUT/work-$BASELINE_ARCH/modules"/* "$OUT/iphoneos/" 2>/dev/null || true
+for ARCH in $EXTRA_ARCHS; do
+  cp -R "$OUT/work-$ARCH/modules"/. "$OUT/iphoneos/" 2>/dev/null || true
+  [ -d "$OUT/work-$ARCH/modules/arch-$ARCH" ] && cp -R "$OUT/work-$ARCH/modules/arch-$ARCH" "$OUT/iphoneos/$ARCH"
+done
+fat=$(ls "$OUT/iphoneos"/*.dylib | wc -l | tr -d ' ')
+echo "== $OUT/iphoneos: $fat dylibs merged"

@@ -174,6 +174,21 @@ overlays() { # prepare + build + link the rewritten overlays
   bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \
     "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
 }
+# Non-armv7 legacy slices: build the overlays, facades and runtime for armv7s/arm64 and merge them
+# with the armv7 dylibs into one multi-arch tree. Runs after `overlays` (armv7 objects/modules) and
+# after stdlib-510-ios produced the extra per-arch module trees when EXTRA_ARCHS is set.
+multiarch() {
+  [ -n "${EXTRA_ARCHS:-}" ] || { echo 'multiarch: EXTRA_ARCHS empty, nothing to do'; return 0; }
+  local base
+  base=$(dirname "$(dirname "$ROOT/build/swift/bin/swift-frontend")")/../bootstrap/probes/modules510/iphoneos 2>/dev/null || true
+  BASELINE_RUNTIME="$ROOT/bootstrap/probes/linked510-legacy" \
+  SDK="$ROOT/src/theos-sdks/iPhoneOS13.7.sdk" \
+  SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
+  LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" \
+  EXTRA_ARCHS="$EXTRA_ARCHS" \
+    bash "$HERE/build-multiarch-overlays.sh" "$ROOT" "$ROOT/out/multiarch-runtime"
+}
+
 assemble() {
   # assemble-510-toolchain.sh refuses to reuse an output directory; a re-run rebuilds the derived
   # toolchain from the current stage inputs.
@@ -198,6 +213,7 @@ stage crt-515 crt515
 stage runtime-515 runtime515
 stage runtime-package-515 runtime515package
 stage overlays overlays
+if [ -n "${EXTRA_ARCHS:-}" ]; then stage multiarch multiarch; fi
 stage assemble assemble
 stage qualify-ios5 qualify515
 echo "DONE: $ROOT/out/swift-5.10.1-ios5.xctoolchain"
