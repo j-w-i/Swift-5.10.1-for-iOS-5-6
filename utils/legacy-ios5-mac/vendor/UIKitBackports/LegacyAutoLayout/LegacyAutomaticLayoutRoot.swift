@@ -51,20 +51,35 @@ extension UIView {
         // width/height with no equality pinning that dimension. A view whose size the parent pins
         // with equalities is fully determined locally, and promoting would re-solve (and sometimes
         // collapse) the enclosing container — the channel list pane shrank that way.
-        var sizedByContent = false
-        var pinnedByEquality = false
+        // Decided per axis: a parent that pins only this view's width says nothing about its height. The
+        // typing-bubble host (width pinned to the screen, height left to its content with its own
+        // `height >= 1`) must still promote, or its current 1pt height is pinned at required strength and
+        // the content it holds is compressed away.
+        var sizedByContent = (width: false, height: false)
+        var pinnedByEquality = (width: false, height: false)
+        func record(_ attribute: RRLayoutAttribute, _ relation: RRLayoutRelation, pinning: Bool) {
+            guard attribute == .width || attribute == .height else { return }
+            if relation == .equal {
+                if pinning { if attribute == .width { pinnedByEquality.width = true } else { pinnedByEquality.height = true } }
+            } else if relation == .greaterThanOrEqual || relation == .lessThanOrEqual {
+                if attribute == .width { sizedByContent.width = true } else { sizedByContent.height = true }
+            }
+        }
         for constraint in parent.legacyConstraints {
             let first = constraint.firstItem as? UIView
             let second = constraint.secondItem as? UIView
             guard first === self || second === self else { continue }
             let ownAttribute = first === self ? constraint.firstAttribute : constraint.secondAttribute
-            guard ownAttribute == .width || ownAttribute == .height else { continue }
-            if constraint.relation == .equal { pinnedByEquality = true }
-            else if constraint.relation == .greaterThanOrEqual || constraint.relation == .lessThanOrEqual {
-                sizedByContent = true
-            }
+            record(ownAttribute, constraint.relation, pinning: true)
         }
-        return (sizedByContent && !pinnedByEquality) ? parent : nil
+        // The view's own single-item inequalities (e.g. `height >= 1`) leave that axis to its content too.
+        for constraint in legacyConstraints {
+            guard (constraint.firstItem as? UIView) === self, constraint.secondItem == nil else { continue }
+            record(constraint.firstAttribute, constraint.relation, pinning: false)
+        }
+        let promoteWidth = sizedByContent.width && !pinnedByEquality.width
+        let promoteHeight = sizedByContent.height && !pinnedByEquality.height
+        return (promoteWidth || promoteHeight) ? parent : nil
     }
 
     /// Only the automatic callback path changes root. Explicit
