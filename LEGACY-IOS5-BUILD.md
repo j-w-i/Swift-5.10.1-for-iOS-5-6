@@ -28,7 +28,12 @@ cd utils/legacy-ios5-mac
 # 6. build-ios-stdlib510.sh: Swift 5.10.1 iOS stdlib (armv7/armv7s/arm64) + armv7 compiler-rt
 #    builtins compiled from source (no prebuilt iOS stdlib package)
 # 7. stage-510-baseline.sh: compose the complete toolchain layout from the build products
-# 8. check-class-marking.sh / check-driver-routing.sh, then qualify-ios5.sh (runs every iOS 5
+# 8. sanitize the assembled runtime: strip-system-swift-deps.py removes weak autolinks to modern
+#    SDK overlay dylibs (CoreMIDI, simd, UniformTypeIdentifiers) that do not exist at the iOS 7
+#    floor and would otherwise bind the system Swift runtime beside the embedded stdlib. It refuses
+#    to strip a dependency that is actually referenced. assemble-510-toolchain.sh runs this inline;
+#    build-all.sh also exposes it as a resumable `sanitize` stage for existing build roots.
+# 9. check-class-marking.sh / check-driver-routing.sh, then qualify-ios5.sh (runs every iOS 5
 #    qualification check, writes evidence and publishes the environment profile; the kit does this
 #    automatically at Install Environment too)
 ```

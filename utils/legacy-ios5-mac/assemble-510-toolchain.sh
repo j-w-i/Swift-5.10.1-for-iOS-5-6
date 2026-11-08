@@ -361,6 +361,25 @@ try:
             replace_copy(dylib, ios / dylib.name)
             shipped_extras.append(name)
     replace_copy(backports, ios / 'libswiftLegacyIOS5Backports.a')
+    # Weak autolinks to modern SDK overlay dylibs (CoreMIDI, simd,
+    # UniformTypeIdentifiers) do not exist at the iOS 7 floor; loading them where
+    # they do exist would mix the system Swift runtime with this embedded stdlib.
+    # Strip them from the shipped dylibs and fail closed if anything actually
+    # references one. This keeps a fresh build reproducible; no manual pass needed.
+    helper = Path(os.environ.get('LEGACY_STRIP_SYSTEM_SWIFT',
+                                 str(Path(os.environ['LEGACY_NORMALIZE_DYLIB_VERSIONS']).parent
+                                     / 'strip-system-swift-deps.py')))
+    if not helper.is_file():
+        fail('missing strip-system-swift-deps.py next to assemble-510-toolchain.sh')
+    shipped = sorted(ios.glob('libswift*.dylib'))
+    if shipped:
+        python = shutil.which('python3')
+        if not python:
+            fail('python3 is required for the weak system Swift dependency pass')
+        result = subprocess.run([python, str(helper)] + [str(path) for path in shipped],
+                                text=True)
+        if result.returncode:
+            fail('weak system Swift dependency sanitisation failed')
     # The overlays are linked by a different toolchain than the runtime they sit
     # beside, so the LC_ID_DYLIB versions can be lower than what their consumers
     # require; iOS 5 dyld rejects that ("requires 1.0.0 ... provides 0.0.0").

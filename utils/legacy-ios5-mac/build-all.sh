@@ -199,6 +199,15 @@ assemble() {
     "$ROOT/bootstrap/probes/linked510-legacy/libLegacyRuntimeBackports.a" "$S/theos-sdks/iPhoneOS9.3.sdk/usr/lib/crt1.3.1.o" \
     "$ROOT/out/swift-5.10.1-ios5.xctoolchain"
 }
+sanitize() {
+  local TC="$ROOT/out/swift-5.10.1-ios5.xctoolchain"
+  local LIB="$TC/usr/lib/swift_ios5/iphoneos"
+  [ -d "$LIB" ] || { echo 'sanitize: no assembled iOS 5 toolchain; run the assemble stage first' >&2; exit 1; }
+  # Reproducible pass over an already-assembled toolchain, for build roots whose
+  # assemble stage predates this step. New assemblies already run it inline.
+  /usr/bin/python3 "$HERE/strip-system-swift-deps.py" "$LIB/"libswift*.dylib
+}
+
 stage tools tools
 stage host-toolchain host_toolchain
 stage fetch-510 fetch510
@@ -215,6 +224,7 @@ stage runtime-package-515 runtime515package
 stage overlays overlays
 if [ -n "${EXTRA_ARCHS:-}" ]; then stage multiarch multiarch; fi
 stage assemble assemble
+stage sanitize sanitize
 stage qualify-ios5 qualify515
 echo "DONE: $ROOT/out/swift-5.10.1-ios5.xctoolchain"
 echo "      $ROOT/out/swift-5.1.5-ios6-runtime.xctoolchain.tar.gz (Swift 5.1.5 runtime for the iOS 6 guide route; import it as the environment's 5.1.5 runtime)"
