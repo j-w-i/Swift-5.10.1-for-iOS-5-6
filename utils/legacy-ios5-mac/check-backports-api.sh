@@ -117,6 +117,35 @@ for target in 9.0 10.0; do
     "$OUT/NativeWins.swift" >> "$OUT/ios$target/build.log" 2>&1 \
     || { echo "FAIL: native NSLayoutXAxisAnchor/UILayoutGuide must be the real types at iOS $target" >&2; exit 1; }
 done
+# UICollectionView gating: iOS 5 binds to the backport (PST*) classes and constants, every target
+# from iOS 6 up binds to Apple's own UICollectionView family. Checked on the emitted object file.
+cat > "$OUT/CollectionGate.swift" <<'SWIFT'
+import UIKit
+final class CVGate: UIViewController, UICollectionViewDataSource {
+    func collectionView(_ c: UICollectionView, numberOfItemsInSection s: Int) -> Int { 1 }
+    func collectionView(_ c: UICollectionView, cellForItemAt i: IndexPath) -> UICollectionViewCell { c.dequeueReusableCell(withReuseIdentifier: "x", for: i) }
+    func make() -> UICollectionView {
+        let layout = UICollectionViewFlowLayout()
+        let c = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        c.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "x"); c.dataSource = self
+        _ = UICollectionView.elementKindSectionHeader
+        return c
+    }
+}
+SWIFT
+for target in 5.0 6.0 7.0 8.0 9.0 10.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -emit-object \
+    -o "$OUT/CollectionGate-$target.o" "$OUT/CollectionGate.swift" >> "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: collection client does not compile at iOS $target" >&2; exit 1; }
+  REFS=$(/usr/bin/nm -arch armv7 -u "$OUT/CollectionGate-$target.o" 2>/dev/null | /usr/bin/grep -E 'Collection(View|ElementKind)' || true)
+  if [ "$target" = 5.0 ]; then
+    echo "$REFS" | /usr/bin/grep -q '_OBJC_CLASS_\$_PSTCollectionView' || { echo 'FAIL: iOS 5 must bind UICollectionView to the PST backport' >&2; exit 1; }
+    echo "$REFS" | /usr/bin/grep -q '_OBJC_CLASS_\$_UICollectionView$' && { echo 'FAIL: iOS 5 must not reference Apple UICollectionView' >&2; exit 1; }
+  else
+    echo "$REFS" | /usr/bin/grep -q '_OBJC_CLASS_\$_UICollectionView$' || { echo "FAIL: iOS $target must bind to Apple's UICollectionView" >&2; exit 1; }
+    echo "$REFS" | /usr/bin/grep -q 'PST' && { echo "FAIL: iOS $target must not reference the PST backport" >&2; exit 1; }
+  fi
+done
 # Newer-than-implemented members stay unavailable below their native version.
 # (safeAreaLayoutGuide, iOS 11, IS implemented by the backport at every target.)
 cat > "$OUT/SafeArea.swift" <<'SWIFT'
