@@ -32,6 +32,8 @@ fi
 # systems that also lack the newer UIKit/Foundation/Dispatch declarations. Only
 # the ABI differs, and that is what LEGACY_ARCH (runtime flag, -marm) controls.
 LEGACY_DEFINE=(-D LEGACY_IOS5)
+# Only the armv7 slice sees libdispatch as plain C structs; the others get ARC-managed ObjC objects.
+[ "$LEGACY_ARCH" = 1 ] || LEGACY_DEFINE+=(-D LEGACY_ARC_DISPATCH_OBJECTS)
 mkdir -p "$STAGE/logs"
 # Modules are independent (separate modules, separate objects, separate logs), so they build
 # concurrently. JOBS defaults to 4; the old serial behaviour was the slow path.

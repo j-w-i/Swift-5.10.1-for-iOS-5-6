@@ -20,6 +20,22 @@ public func dispatchMain() -> Never {
 	CDispatch.dispatch_main()
 }
 
+// The armv7 slice is built against the C libdispatch headers, where dispatch objects are plain
+// pointers and the overlay owns their reference counts. The armv7s/arm64 slices import the SDK's
+// Objective-C object types, which ARC retains and releases itself: a manual dispatch_release on top
+// of that over-releases every queue/group/semaphore (observed: objc_release crash in
+// DispatchGroup.deinit on iOS 10). So manual counting exists only in the slice that needs it.
+@inline(__always) internal func _legacyDispatchRetain(_ object: dispatch_object_t) {
+#if !LEGACY_ARC_DISPATCH_OBJECTS
+	_swift_dispatch_retain(object)
+#endif
+}
+@inline(__always) internal func _legacyDispatchRelease(_ object: dispatch_object_t) {
+#if !LEGACY_ARC_DISPATCH_OBJECTS
+	_swift_dispatch_release(object)
+#endif
+}
+
 public class DispatchObject {
 
 	internal func wrapped() -> dispatch_object_t {
@@ -60,7 +76,7 @@ public class DispatchGroup : DispatchObject {
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 
 	public func enter() {
@@ -84,7 +100,7 @@ public class DispatchSemaphore : DispatchObject {
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 }
 
@@ -111,7 +127,7 @@ public class DispatchIO : DispatchObject {
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 
 	public func barrier(execute: @escaping () -> ()) {
@@ -160,7 +176,7 @@ public class DispatchQueue : DispatchObject {
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 
 	public func sync(execute workItem: ()->()) {
@@ -184,7 +200,7 @@ public class DispatchSource : DispatchObject,
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 }
 
@@ -210,12 +226,12 @@ internal class __DispatchData : DispatchObject {
 	internal init(data:dispatch_data_t, owned:Bool) {
 		__wrapped = data
 		if !owned {
-			_swift_dispatch_retain(unsafeBitCast(data, to: dispatch_object_t.self))
+			_legacyDispatchRetain(unsafeBitCast(data, to: dispatch_object_t.self))
 		}
 	}
 
 	deinit {
-		_swift_dispatch_release(wrapped())
+		_legacyDispatchRelease(wrapped())
 	}
 }
 

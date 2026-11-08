@@ -145,12 +145,28 @@ public extension UIView {
         }
         let guide = UILayoutGuide()
         addLayoutGuide(guide)
-        NSLayoutConstraint.activate([
-            guide.topAnchor.constraint(equalTo: topAnchor),
-            guide.bottomAnchor.constraint(equalTo: bottomAnchor),
-            guide.leadingAnchor.constraint(equalTo: leadingAnchor),
-            guide.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
+        // iOS 11+ has real safe areas (notch, home indicator, status bar under extended layout).
+        // The guide must follow the system's own guide, not the view's bounds, or content sits
+        // under the sensor housing. The native guide is reached by selector because this module
+        // is compiled against the lowered backport surface; anchors come back as ordinary
+        // NSLayoutAnchor objects. Below iOS 11 there are no safe areas and bounds are exact.
+        let selector = NSSelectorFromString("safeAreaLayoutGuide")
+        if responds(to: selector), let native = perform(selector)?.takeUnretainedValue() {
+            // Native NSLayoutConstraint accepts the system's own guide as an item, and the factory
+            // shim unwraps the backport guide to its proxy view on this side.
+            let pairs: [(NSLayoutConstraint.Attribute, CGFloat)] = [(.top, 0), (.bottom, 0), (.leading, 0), (.trailing, 0)]
+            NSLayoutConstraint.activate(pairs.map { attribute, constant in
+                NSLayoutConstraint(item: guide, attribute: attribute, relatedBy: .equal,
+                                   toItem: native, attribute: attribute, multiplier: 1, constant: constant)
+            })
+        } else {
+            NSLayoutConstraint.activate([
+                guide.topAnchor.constraint(equalTo: topAnchor),
+                guide.bottomAnchor.constraint(equalTo: bottomAnchor),
+                guide.leadingAnchor.constraint(equalTo: leadingAnchor),
+                guide.trailingAnchor.constraint(equalTo: trailingAnchor)
+            ])
+        }
         objc_setAssociatedObject(self, &safeAreaLayoutGuideKey, guide, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return guide
     }
