@@ -49,10 +49,18 @@ SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 TARGET=$(uname -m)-apple-ios15.0-simulator
 clang -target "$TARGET" -isysroot "$SDK" -c "$WORK/stub.c" -o "$WORK/stub.o"
 clang -target "$TARGET" -isysroot "$SDK" -O2 -ffp-contract=off -c "$VENDOR/CassowaryC/CassowaryC.c" -o "$WORK/CassowaryC.o"
+NSIS_OBJS=()
+clang -target "$TARGET" -isysroot "$SDK" -fobjc-arc -c "$VENDOR/Runtime/UICLabelPreferredWidth.m" -o "$WORK/UICLabelPreferredWidth.o"
+NSIS_OBJS+=("$WORK/UICLabelPreferredWidth.o")
+for src in "$VENDOR"/NSISC/*.c; do
+  o="$WORK/NSISC-$(basename "$src" .c).o"
+  clang -target "$TARGET" -isysroot "$SDK" -O2 -ffp-contract=off -I "$VENDOR/NSISC" -c "$src" -o "$o"
+  NSIS_OBJS+=("$o")
+done
 FILES=$(ls "$WORK"/src/*.swift | grep -v -E "LegacyAutoLayoutIOS5|UILayoutGuideShim|UIViewAnchorShims")
 # shellcheck disable=SC2086
 /usr/bin/xcrun swiftc -swift-version 5 -target "$TARGET" -sdk "$SDK" -O \
-  $FILES "$WORK/tool/main.swift" "$WORK/stub.o" "$WORK/CassowaryC.o" -o "$WORK/simrun"
+  $FILES "$WORK/tool/main.swift" "$WORK/stub.o" "$WORK/CassowaryC.o" "${NSIS_OBJS[@]}" -o "$WORK/simrun"
 UDID=$(xcrun simctl list devices available | grep -m1 "$DEVICE" | sed -E 's/.*\(([0-9A-Fa-f-]+)\).*/\1/')
 [ -n "$UDID" ] || { echo "No available simulator named '$DEVICE'" >&2; exit 1; }
 xcrun simctl boot "$UDID" 2>/dev/null || true
