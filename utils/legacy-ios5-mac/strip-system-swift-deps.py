@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 
+LC_REEXPORT_DYLIB = 0x8000001F
 LC_SYMTAB = 0x2
 LC_LOAD_DYLIB = 0xC
 LC_LOAD_WEAK_DYLIB = 0x80000018
@@ -31,6 +32,7 @@ FAT_MAGIC_64 = 0xCAFEBABF
 FAT_CIGAM_64 = 0xBFBAFECA
 MH_MAGIC = 0xFEEDFACE
 MH_MAGIC_64 = 0xFEEDFACF
+SWIFT_CORE = b"@rpath/libswiftCore.dylib"
 SYSTEM_SWIFT = b"/usr/lib/swift/"
 # @rpath Swift overlay dylibs that the modern SDK autolinks but that neither iOS 7
 # nor the legacy runtime tree provides.
@@ -76,7 +78,7 @@ def slices(data):
     return out
 
 
-def patch_slice(data, offset, size):
+def patch_slice(data, offset, size, reexport_core=False):
     le = struct.unpack("<I", data[offset:offset + 4])[0]
     be = struct.unpack(">I", data[offset:offset + 4])[0]
     if le in (MH_MAGIC, MH_MAGIC_64):
@@ -87,6 +89,7 @@ def patch_slice(data, offset, size):
         is64 = be == MH_MAGIC_64
     else:
         return None
+    filetype = struct.unpack(endian + "I", data[offset + 12:offset + 16])[0]
     ncmds, sizeofcmds = struct.unpack(endian + "II", data[offset + 16:offset + 24])
     limit = 32 if is64 else 28
     start = offset + limit
@@ -97,6 +100,7 @@ def patch_slice(data, offset, size):
     strong = []
     stripped_names = []
     has_symtab = False
+    reexported = 0
     cursor = start
     for _ in range(ncmds):
         if cursor + 8 > stop:
@@ -104,6 +108,17 @@ def patch_slice(data, offset, size):
         cmd, cmdsize = struct.unpack(endian + "II", data[cursor:cursor + 8])
         if cmdsize < 8 or cursor + cmdsize > stop:
             return None
+        # Apple's overlay stubs declare libswiftCore as a *re-export*. A shipped
+        # overlay that merely loads Core makes dyld's two-level lookup fail for
+        # symbols the linker attributed to the overlay (observed on iOS 27 as
+        # "Symbol not found: _$s15_ObjectiveCTypes01_A11CBridgeablePTl").
+        if reexport_core and filetype == 6 and cmd == LC_LOAD_DYLIB and cmdsize >= 24:
+            name_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
+            if name_off < cmdsize:
+                name = cstr(data, cursor + name_off, cmdsize - name_off)
+                if name == SWIFT_CORE:
+                    data[cursor:cursor + 4] = struct.pack(endian + "I", LC_REEXPORT_DYLIB)
+                    reexported += 1
         if cmd == LC_SYMTAB and cmdsize >= 24:
             if struct.unpack(endian + "I", data[cursor + 12:cursor + 16])[0] > 0:
                 has_symtab = True
@@ -122,7 +137,7 @@ def patch_slice(data, offset, size):
                         stripped += 1
                         stripped_names.append(name)
         cursor += cmdsize
-    return stripped, strong, stripped_names, has_symtab
+    return stripped, strong, stripped_names, has_symtab, reexported
 
 
 FORCE_LOAD_PREFIX = b"__swift_FORCE_LOAD_$_"
@@ -164,11 +179,18 @@ def referenced(undefined, dylib_name):
 
 
 def main(argv):
-    if len(argv) < 2:
-        print(__doc__.strip().splitlines()[-3], file=sys.stderr)
+    if len(argv) < 2 or not any(not a.startswith("-") for a in argv[1:]):
+        print("Usage: strip-system-swift-deps.py [--reexport-core] IMAGE [IMAGE...]", file=sys.stderr)
         return 2
     status = 0
-    for path in argv[1:]:
+    reexport_core = False
+    paths = []
+    for argument in argv[1:]:
+        if argument == "--reexport-core":
+            reexport_core = True
+        else:
+            paths.append(argument)
+    for path in paths:
         try:
             with open(path, "rb") as handle:
                 data = bytearray(handle.read())
@@ -185,8 +207,9 @@ def main(argv):
         strong_all = []
         stripped_names = []
         has_symtab = False
+        reexported = 0
         for offset, size in table:
-            result = patch_slice(data, offset, size)
+            result = patch_slice(data, offset, size, reexport_core=reexport_core)
             if result is None:
                 print(f"{path}: malformed load commands", file=sys.stderr)
                 status = 2
@@ -195,6 +218,7 @@ def main(argv):
             stripped_names.extend(result[2])
             strong_all.extend(result[1])
             has_symtab = has_symtab or result[3]
+            reexported += result[4]
         if strong_all:
             for name in strong_all:
                 print(f"{path}: strong system Swift dependency cannot be shipped: {name}", file=sys.stderr)
@@ -222,10 +246,13 @@ def main(argv):
                     break
             if status:
                 continue
-        if total:
+        if total or reexported:
             with open(path, "wb") as handle:
                 handle.write(data)
-            print(f"{path}: neutralised {total} weak system Swift load command(s)")
+            if total:
+                print(f"{path}: neutralised {total} weak system Swift load command(s)")
+            if reexported:
+                print(f"{path}: made libswiftCore a re-export ({reexported} slice(s))")
     return status
 
 

@@ -376,8 +376,8 @@ try:
         python = shutil.which('python3')
         if not python:
             fail('python3 is required for the weak system Swift dependency pass')
-        result = subprocess.run([python, str(helper)] + [str(path) for path in shipped],
-                                text=True)
+        result = subprocess.run([python, str(helper), '--reexport-core']
+                                + [str(path) for path in shipped], text=True)
         if result.returncode:
             fail('weak system Swift dependency sanitisation failed')
     # The overlays are linked by a different toolchain than the runtime they sit
