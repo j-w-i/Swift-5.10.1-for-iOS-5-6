@@ -840,6 +840,7 @@ static void recordShadowedDecls(ArrayRef<ValueDecl *> decls,
   // native declaration must win — even though their types differ (e.g. the
   // shim `Anchor` vs `NSLayoutXAxisAnchor`), so signature matching would never
   // pair them. Pair by name and owning nominal type instead.
+  llvm::SmallVector<ValueDecl *, 4> legacyProtected;
   if (decls.front()->getASTContext().LangOpts.LegacyIOS5ClassMarking) {
     auto &ctx = decls.front()->getASTContext();
     for (auto *shim : decls) {
@@ -853,7 +854,7 @@ static void recordShadowedDecls(ArrayRef<ValueDecl *> decls,
         auto *nativeOwner = native->getDeclContext()->getSelfNominalTypeDecl();
         bool sameOwner = shimOwner == nativeOwner ||
             (!shimOwner && !nativeOwner && isa<TypeDecl>(shim) && isa<TypeDecl>(native));
-        if (sameOwner) { shadowed.insert(shim); break; }
+        if (sameOwner) { shadowed.insert(shim); legacyProtected.push_back(native); break; }
       }
     }
   }
@@ -925,6 +926,11 @@ static void recordShadowedDecls(ArrayRef<ValueDecl *> decls,
     recordShadowedDeclsForImportedInits(importedInitializerCollisions[nominal],
                                         shadowed);
   }
+
+  // The native declaration paired with an obsolete legacy shim must survive
+  // the generic overlay-over-Clang preference.
+  for (auto *native : legacyProtected)
+    shadowed.erase(native);
 }
 
 static void
