@@ -1,6 +1,10 @@
 #!/bin/bash
 # Link isolated overlay objects; this is a link experiment, NOT iOS 5 qualification.
-# Usage: link-overlay-stage.sh STAGE SDK OLD_RUNTIME_DIR CRT_ARCHIVE CLANG [LIBCXX_HEADERS]
+# Usage: link-overlay-stage.sh STAGE SDK OLD_RUNTIME_DIR CRT_ARCHIVE CLANG [LIBCXX_HEADERS] [ARCH]
+#
+# ARCH defaults to armv7 (legacy iOS 5 slice: legacy ABI, ARM-mode objects, the legacy-only native
+# helpers and the force-loaded Foundation archive). armv7s/arm64 link the same overlays at an iOS 7
+# floor without those legacy-only inputs.
 # OLD_RUNTIME_DIR is a runtime build root containing lib/swift/iphoneos, or that
 # library directory itself. Only Core/Darwin/ObjectiveC/CoreFoundation are reused.
 # Native headers come from SWIFT51_SOURCE (defaults to bootstrap-manifest.json),
@@ -14,12 +18,17 @@
 set -euo pipefail
 umask 022
 fail() { printf 'link-overlay-stage: %s\n' "$*" >&2; exit 1; }
-if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
-  echo 'Usage: link-overlay-stage.sh STAGE SDK OLD_RUNTIME_DIR CRT_ARCHIVE CLANG [LIBCXX_HEADERS]' >&2
+if [ "$#" -lt 5 ] || [ "$#" -gt 7 ]; then
+  echo 'Usage: link-overlay-stage.sh STAGE SDK OLD_RUNTIME_DIR CRT_ARCHIVE CLANG [LIBCXX_HEADERS] [ARCH]' >&2
   exit 64
 fi
 STAGE=$1; SDK=$2; OLD_RUNTIME_DIR=$3; CRT_ARCHIVE=$4; CLANG=$5
 LIBCXX_HEADERS=${6:-${LIBCXX_HEADERS:-}}
+ARCH=${7:-armv7}
+case "$ARCH" in armv7|armv7s|arm64) ;; *) fail "Unsupported architecture: $ARCH" ;; esac
+LEGACY_SLICE=0; [ "$ARCH" = armv7 ] && LEGACY_SLICE=1
+# Non-legacy slices name their objects per arch so they never collide with the armv7 stage.
+OBJECT_SUFFIX=""; [ "$LEGACY_SLICE" = 1 ] || OBJECT_SUFFIX="-$ARCH"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 for path in "$STAGE" "$SDK" "$OLD_RUNTIME_DIR" "$CRT_ARCHIVE" "$CLANG"; do
   [[ "$path" = /* ]] || fail "Use absolute input paths: $path"
@@ -39,7 +48,7 @@ for name in Core Darwin ObjectiveC CoreFoundation; do
   [ -s "$OLD_LIB/libswift$name.dylib" ] || fail "Missing old runtime dependency: $OLD_LIB/libswift$name.dylib"
 done
 for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
-  [ -s "$STAGE/probes/${name}510.o" ] || fail "Missing built overlay: ${name}510.o"
+  [ -s "$STAGE/probes/${name}510${OBJECT_SUFFIX}.o" ] || fail "Missing built overlay: ${name}510${OBJECT_SUFFIX}.o"
 done
 for file in Foundation/BundleLookup.mm Foundation/DataThunks.m Foundation/NSError.mm Foundation/NSError.h Foundation/CheckClass.mm UIKit/DesignatedInitializers.mm; do
   [ -s "$SRC/$file" ] || fail "Missing staged native source: $file"
@@ -139,7 +148,10 @@ run() {
 DEPLOYMENT=${IOS_DEPLOYMENT_TARGET:-7.0}
 case "$DEPLOYMENT" in 5.0|5.1|5.1.1|7.0) ;; *) fail 'Unsupported IOS_DEPLOYMENT_TARGET; use 5.0/5.1/5.1.1 or probe7.0.' ;; esac
 COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionView.a"
-BACKPORTS_ARCHIVE="$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a"
+# The UIKit overlay always links the Objective-C backport facades. A non-legacy slice uses the
+# archive built for its own architecture (LEGACY_UIKIT_BACKPORTS_ARCHIVE), because the staged armv7
+# archive cannot satisfy an arm64/armv7s link.
+BACKPORTS_ARCHIVE="${LEGACY_UIKIT_BACKPORTS_ARCHIVE:-$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a}"
 COMPOSITIONAL_ARCHIVE="$STAGE/probes/compositional-layout-runtime/libswiftLegacyCompositionalLayout.a"
 FOUNDATION_ARCHIVE="$STAGE/probes/foundation-runtime/libswiftLegacyFoundationBackports.a"
 NATIVE_UIKIT="$STAGE/probes/native-uikit-runtime/UIKitGlobals.o"
@@ -155,7 +167,7 @@ case "$DEPLOYMENT" in
     done
     ;;
 esac
-COMMON=(-target "armv7-apple-ios$DEPLOYMENT" -isysroot "$SDK")
+COMMON=(-target "$ARCH-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 # Legacy iOS 5 linking loses ARM/Thumb interworking bits on local relocations.
 # Native ObjC method lists and block helper pointers therefore must be ARM code,
 # like the Swift overlays and collection runtime compiled by the other stages.
@@ -193,14 +205,18 @@ for file in BundleLookup.mm DataThunks.m NSError.mm CheckClass.mm; do
 done
 run DesignatedInitializers.mm "$CLANG" "${COMMON[@]}" "${NATIVE[@]}" -std=c++14 -stdlib=libc++ \
   ${CXX_HEADERS[@]+"${CXX_HEADERS[@]}"} -c "$SRC/UIKit/DesignatedInitializers.mm" -o "$OUT/native/DesignatedInitializers.mm.o"
-run LegacyRuntimeBackports "$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -O2 -std=c11 \
-  -c "$SCRIPT_DIR/LegacyRuntimeBackports.c" -o "$OUT/native/LegacyRuntimeBackports.o"
+# The legacy helper objects exist to patch the iOS 5 runtime/overlay split; the newer slices link
+# against a current stdlib whose Core already carries those entries.
 API_OBJECTS=()
-case "$DEPLOYMENT" in
-  5.*) API_OBJECTS=("$NATIVE_UIKIT" "$NATIVE_NUMERIC/NativeNumeric.o" "$NATIVE_NUMERIC/NumericParsing.o") ;;
-esac
-run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/LegacyRuntimeBackports.o" \
-  ${API_OBJECTS[@]+"${API_OBJECTS[@]}"}
+if [ "$LEGACY_SLICE" = 1 ]; then
+  run LegacyRuntimeBackports "$CLANG" -target "armv7-apple-ios5.0" -isysroot "$SDK" -O2 -std=c11 \
+    -c "$SCRIPT_DIR/LegacyRuntimeBackports.c" -o "$OUT/native/LegacyRuntimeBackports.o"
+  API_OBJECTS=("$NATIVE_UIKIT" "$NATIVE_NUMERIC/NativeNumeric.o" "$NATIVE_NUMERIC/NumericParsing.o")
+  run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/LegacyRuntimeBackports.o" \
+    ${API_OBJECTS[@]+"${API_OBJECTS[@]}"}
+else
+  run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a"
+fi
 
 # Explicit dependency paths ensure no old overlay (especially CoreGraphics) can
 # silently satisfy a rebuilt overlay dependency. Rebuild CG before Foundation.
@@ -218,10 +234,25 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
       EXTRA=(-framework CoreGraphics) ;;
     Foundation)
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib")
-      EXTRA=("${FOUNDATION_OBJECTS[@]}" -framework Foundation -framework CoreFoundation -framework CoreGraphics -lc++)
-      case "$DEPLOYMENT" in
-        5.*) EXTRA+=(-Xlinker -force_load -Xlinker "$FOUNDATION_ARCHIVE") ;;
-      esac ;;
+      EXTRA=(-framework Foundation -framework CoreFoundation -framework CoreGraphics -lc++)
+      # The churn objects patch the iOS 5/6 Foundation overlay against a 5.1-era core (they use
+      # __swift_classIsSwiftMask and friends). The newer slices link a current stdlib that already
+      # provides that behaviour, so they take only the Swift overlay itself.
+      if [ "$LEGACY_SLICE" = 1 ]; then
+        EXTRA=("${FOUNDATION_OBJECTS[@]}" "${EXTRA[@]}")
+        case "$DEPLOYMENT" in
+          5.*) EXTRA+=(-Xlinker -force_load -Xlinker "$FOUNDATION_ARCHIVE") ;;
+        esac
+      else
+        # The newer slices still need the churn objects that provide C entry points the Swift
+        # overlay calls (NSData bridging, bundle lookup, NSError). CheckClass.mm is excluded: it
+        # reads the legacy __swift_classIsSwiftMask, which a current core no longer exports.
+        for object in "${FOUNDATION_OBJECTS[@]}"; do
+          case "$object" in *CheckClass.mm.o) continue ;; esac
+          EXTRA+=("$object")
+        done
+        EXTRA=("${EXTRA[@]}")
+      fi ;;
     *)
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib" "$OUT/libswiftFoundation.dylib")
       EXTRA=(-framework "$name" -lc++)
@@ -239,13 +270,18 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
                       -Xlinker -force_load -Xlinker "$BACKPORTS_ARCHIVE"
                       -Xlinker -force_load -Xlinker "$COMPOSITIONAL_ARCHIVE"
                       -framework QuartzCore) ;;
+            *)
+              # armv7s/arm64 legacy devices (iOS 7/8 on 64-bit hardware) still need the backported
+              # UIKit APIs, so the facade archive is force-loaded for them too. Collection and
+              # compositional backports are iOS 5 concerns and stay out.
+              EXTRA+=(-Xlinker -force_load -Xlinker "$BACKPORTS_ARCHIVE" -framework QuartzCore) ;;
           esac ;;
       esac ;;
   esac
   # Backports is an ordinary lazy archive, deliberately NOT force_load/all_load.
   # Compiler-rt builtins are force-loaded for each overlay; the collection archive
   # is force-loaded only into UIKit above. No undefined suppression/dynamic lookup.
-  run "link-$name" "$CLANG" "${COMMON[@]}" -dynamiclib "$STAGE/probes/${name}510.o" \
+  run "link-$name" "$CLANG" "${COMMON[@]}" -dynamiclib "$STAGE/probes/${name}510${OBJECT_SUFFIX}.o" \
     -L "$OUT" -L "$OLD_LIB" ${EXTRA[@]+"${EXTRA[@]}"} "${DEPS[@]}" "$OUT/libLegacyRuntimeBackports.a" -lobjc -lSystem \
     -Xlinker -install_name -Xlinker "@rpath/libswift$name.dylib" \
     -Xlinker -force_load -Xlinker "$CRT_ARCHIVE" -o "$OUT/libswift$name.dylib"
