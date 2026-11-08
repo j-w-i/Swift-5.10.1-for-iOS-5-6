@@ -293,6 +293,36 @@ static void UICInstallFullScreenLayoutDefault(void) {
     method_setImplementation(setter, (IMP)UICSetWantsFullScreenLayout);
 }
 
+// iOS 7-10 inset the first scroll view of a view controller by the bars
+// (`automaticallyAdjustsScrollViewInsets` defaults to YES). iOS 11 replaced that with
+// `contentInsetAdjustmentBehavior`, which only insets a scroll view that really overlaps a safe
+// area. Source written for iOS 11+ (nested collection views inside styled containers) therefore
+// gets a spurious extra status-bar/nav-bar inset on iOS 7-10: sidebar icons start 20pt too low.
+// The default is NO below iOS 11 so layout matches the native iOS 11+ result; an explicit
+// assignment by the app is always honoured.
+static const void *UICAutoAdjustKey = &UICAutoAdjustKey;
+static BOOL UICAutoAdjustGetter(id self, SEL _cmd) {
+    NSNumber *explicitValue = objc_getAssociatedObject(self, UICAutoAdjustKey);
+    return explicitValue ? [explicitValue boolValue] : NO;
+}
+static void (*UICOriginalSetAutoAdjust)(id, SEL, BOOL);
+static void UICSetAutoAdjust(id self, SEL _cmd, BOOL value) {
+    objc_setAssociatedObject(self, UICAutoAdjustKey, [NSNumber numberWithBool:value], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (UICOriginalSetAutoAdjust) UICOriginalSetAutoAdjust(self, _cmd, value);
+}
+static void UICInstallAutoAdjustDefault(void) {
+    if (kCFCoreFoundationVersionNumber >= 1443.00) return;   // iOS 11+: property is inert
+    Class controller = objc_getClass("UIViewController");
+    SEL getterSel = sel_registerName("automaticallyAdjustsScrollViewInsets");
+    SEL setterSel = sel_registerName("setAutomaticallyAdjustsScrollViewInsets:");
+    Method getter = controller ? class_getInstanceMethod(controller, getterSel) : NULL;
+    Method setter = controller ? class_getInstanceMethod(controller, setterSel) : NULL;
+    if (!getter || !setter) return;                           // iOS < 7 has no such behaviour
+    UICOriginalSetAutoAdjust = (void (*)(id, SEL, BOOL))method_getImplementation(setter);
+    method_setImplementation(getter, (IMP)UICAutoAdjustGetter);
+    method_setImplementation(setter, (IMP)UICSetAutoAdjust);
+}
+
 // iOS 11 `UIView.safeAreaLayoutGuide` on systems that have Apple's own UILayoutGuide (iOS 9, 10).
 // No armv7 system implements safe areas, and there the safe area equals the view's bounds, so the
 // guide is Apple's native guide pinned to the view's edges with native anchors. Below iOS 9 the
@@ -334,6 +364,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallMissingMethods([UIScrollView class], [UICScrollAdditions class]);
         UICInstallMissingMethods([NSString class], [UICStringDrawingAdditions class]);
         UICInstallFullScreenLayoutDefault();
+        UICInstallAutoAdjustDefault();
         UICInstallNativeSafeAreaGuide();
         UICInstallConstraintItemUnwrapping();
     }

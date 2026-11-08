@@ -141,6 +141,20 @@
 
 /// Which bits in the class metadata are used to distinguish Swift classes
 /// from ObjC classes?
+///
+/// A runtime embedded in an app that deploys below iOS 12.2 must work on both sides of that
+/// boundary: objc on iOS <= 12.1 recognises only the legacy bit (1), later systems prefer the
+/// stable bit (2). With SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK the value is chosen at load time from
+/// the running OS (see _swift_classIsSwiftMask in SwiftNativeNSXXXBase.mm.gyb).
+#if defined(SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK) && !defined(SWIFT_CLASS_IS_SWIFT_MASK)
+#  include <stdint.h>
+#  ifdef __cplusplus
+extern "C" uintptr_t _swift_classIsSwiftMask;
+#  else
+extern uintptr_t _swift_classIsSwiftMask;
+#  endif
+#  define SWIFT_CLASS_IS_SWIFT_MASK ((unsigned long long)_swift_classIsSwiftMask)
+#endif
 #ifndef SWIFT_CLASS_IS_SWIFT_MASK
 
 // Compatibility hook libraries cannot rely on the "is swift" bit being either

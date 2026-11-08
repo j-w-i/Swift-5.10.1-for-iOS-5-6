@@ -835,6 +835,11 @@ struct TargetAnyClassMetadataObjCInterop
   }
 
   /// Runtime construction must use the same class-data ABI as IRGen.
+#if defined(SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK)
+  static StoredSize initialDataWord() {
+    return SWIFT_CLASS_IS_SWIFT_MASK;
+  }
+#else
   static constexpr StoredSize initialDataWord() {
 #if defined(SWIFT_LEGACY_IOS5_CLASS_MARKING)
     return 0;
@@ -842,6 +847,7 @@ struct TargetAnyClassMetadataObjCInterop
     return SWIFT_CLASS_IS_SWIFT_MASK;
 #endif
   }
+#endif
 
   static StoredSize makeDataWord(const void *ro) {
     return reinterpret_cast<StoredSize>(ro) | initialDataWord();

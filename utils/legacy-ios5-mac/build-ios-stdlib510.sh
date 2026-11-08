@@ -86,11 +86,10 @@ done
 # 2. the standard library itself, one build directory per arch.
 for ARCH in $ARCHS; do
   # The compiler targets an iOS 7.0 floor, so IRGen marks Swift classes with the *pre-stable* bit (1)
-  # (UseDarwinPreStableABIBit, iOS < 12.2). The runtime must test the same bit: a stable-bit (2) runtime
-  # works only where objc accepts both (iOS 12.2+) and mistakes every Swift class for an ObjC class on
-  # older systems (null metadata description in isCanonicalStaticallySpecializedGenericMetadata).
-  # Newer objc runtimes still honour the legacy bit, so one binary serves iOS 7 through current.
-  WIDE_MASK=""; [ "$ARCH" = armv7 ] || WIDE_MASK="-DSWIFT_CLASS_IS_SWIFT_MASK=1ULL"
+  # (UseDarwinPreStableABIBit, iOS < 12.2). objc on iOS <= 12.1 recognises only that bit, while
+  # later systems want bit 2, so the runtime picks its mask at load time from the running OS
+  # (SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK) instead of fixing one value for every system.
+  WIDE_MASK=""; [ "$ARCH" = armv7 ] || WIDE_MASK="-DSWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK=1"
   O="$B/build/ios-stdlib-$ARCH"; [ "$ARCH" = armv7 ] && O="$B/build/ios-stdlib"
   [ -d "$O/lib/swift/iphoneos/$ARCH" ] && { echo "stdlib $ARCH: present"; continue; }
   echo "== Swift stdlib $ARCH"

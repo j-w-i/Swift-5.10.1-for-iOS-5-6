@@ -132,7 +132,14 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
             if path_off < cmdsize:
                 path = cstr(data, cursor + path_off, cmdsize - path_off)
                 if path == SYSTEM_SWIFT_RPATH:
-                    data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
+                    # Keep a *valid* LC_RPATH (pointing nowhere) rather than retyping the command:
+                    # a retyped command makes install_name_tool/lipo-style tools reject the image.
+                    room = cmdsize - path_off
+                    if room > len(UNAVAILABLE):
+                        data[cursor + path_off:cursor + cmdsize] = b"\0" * room
+                        data[cursor + path_off:cursor + path_off + len(UNAVAILABLE)] = UNAVAILABLE
+                    else:
+                        data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
                     dropped_rpaths += 1
         if cmd == LC_SYMTAB and cmdsize >= 24:
             if struct.unpack(endian + "I", data[cursor + 12:cursor + 16])[0] > 0:
