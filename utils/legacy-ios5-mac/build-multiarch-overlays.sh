@@ -38,7 +38,7 @@ SWIFT="$B/build/swift/bin/swift-frontend"
 LINKER="$B/build/llvm/bin/clang"
 for tool in "$CLANG" "$AR" "$SWIFT"; do [ -x "$tool" ] || fail "Missing tool: $tool"; done
 
-STAGE="$B/bootstrap"
+STAGE=$(CDPATH= cd -- "$B/bootstrap" && pwd -P)   # resolve symlinks: clang bakes absolute cache paths into PCHs
 [ -d "$STAGE/probes" ] || fail 'Missing prepared overlay stage (bootstrap/probes).'
 LIBCXX="$($CLANG -print-resource-dir 2>/dev/null || true)"
 mkdir -p "$OUT"
@@ -61,7 +61,7 @@ for ARCH in $EXTRA_ARCHS; do
     > "$OUT/log-$ARCH-backports.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-backports.log" >&2; fail "$ARCH facades failed"; }
 
   echo "== $ARCH: overlays"
-  bash "$HERE/build-overlay-stage.sh" "$STAGE" "$SWIFT" "$SDK" "" "$ARCH" "$RES" \
+    bash "$HERE/build-overlay-stage.sh" "$STAGE" "$SWIFT" "$SDK" "" "$ARCH" "$RES" \
     > "$OUT/log-$ARCH-overlays.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-overlays.log" >&2; fail "$ARCH overlays failed"; }
 
   echo "== $ARCH: supplementary overlays ($SUPPLEMENTARY)"
@@ -82,26 +82,32 @@ for ARCH in $EXTRA_ARCHS; do
   RT="$WORK/oldruntime/lib/swift/iphoneos"
   mkdir -p "$RT" "$WORK/modules"
   cp "$RES/iphoneos/$ARCH/libswiftCore.dylib" "$RES/iphoneos/$ARCH/libswiftDarwin.dylib" "$RT/"
-  link_overlay() { # NAME OBJECT DEPS... [FRAMEWORKS]
+  link_overlay() { # NAME OBJECT SWIFT-DEPS... -- FRAMEWORK-NAMES...
     local NAME="$1" OBJECT="$2"; shift 2
-    local FRAMEWORKS=() LIBARGS=()
-    for dep in "$@"; do [ "${dep#-}" = "$dep" ] && LIBARGS+=("-lswift$dep") || FRAMEWORKS+=("$dep"); done
+    local FRAMEWORKS=() LIBARGS=() seen_separator=0
+    for dep in "$@"; do
+      if [ "$dep" = "--" ]; then seen_separator=1; continue; fi
+      if [ "$seen_separator" = 1 ]; then FRAMEWORKS+=(-framework "$dep"); else LIBARGS+=("-lswift$dep"); fi
+    done
     "$LINKER" -target "$ARCH-apple-ios$EXTRA_DEPLOYMENT" -isysroot "$SDK" -dynamiclib \
       -install_name "@rpath/libswift$NAME.dylib" -o "$RT/libswift$NAME.dylib" "$OBJECT" \
       -L"$RT" -L"$RES/iphoneos" ${LIBARGS[@]+"${LIBARGS[@]}"} \
       -lswiftCompatibility50 -lc++ ${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"} \
       >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswift$NAME.dylib failed"; }
   }
-  link_overlay ObjectiveC "$WORK/ObjectiveC.o" Core Darwin
-  link_overlay CoreFoundation "$WORK/CoreFoundation.o" Core Darwin ObjectiveC -framework Foundation -framework CoreFoundation
-  link_overlay AVFoundation "$WORK/AVFoundation.o" Core Darwin ObjectiveC -framework AVFoundation -framework CoreMedia
-  link_overlay CoreAudio "$WORK/CoreAudio.o" Core Darwin ObjectiveC -framework CoreAudio
-  link_overlay CoreMedia "$WORK/CoreMedia.o" Core Darwin ObjectiveC -framework CoreMedia
+  link_overlay ObjectiveC "$WORK/ObjectiveC.o" Core Darwin --
+  link_overlay CoreFoundation "$WORK/CoreFoundation.o" Core Darwin ObjectiveC -- Foundation CoreFoundation
+  link_overlay AVFoundation "$WORK/AVFoundation.o" Core Darwin ObjectiveC -- AVFoundation CoreMedia
+  link_overlay CoreAudio "$WORK/CoreAudio.o" Core Darwin ObjectiveC -- CoreAudio
+  link_overlay CoreMedia "$WORK/CoreMedia.o" Core Darwin ObjectiveC -- CoreMedia
 
   echo "== $ARCH: linking the seven overlays"
+  # link-overlay-stage refuses to reuse an output directory; that directory is this stage's product.
+  rm -rf "$STAGE/probes/linked510-$ARCH"
   LINK_OUTPUT_NAME="linked510-$ARCH" IOS_DEPLOYMENT_TARGET="$EXTRA_DEPLOYMENT" AR="$AR" \
   SWIFT51_SOURCE="$SWIFT51_SOURCE" \
   LLVM_CONFIG_INCLUDE_DIR="${LLVM_CONFIG_INCLUDE_DIR:-$B/build/llvm/include}" \
+  LLVM_INCLUDE_DIR="${LLVM_INCLUDE_DIR:-$(dirname "$SWIFT51_SOURCE")/llvm/include}" \
   LEGACY_UIKIT_BACKPORTS_ARCHIVE="$WORK/backports/libswiftLegacyUIKitBackports.a" \
     bash "$HERE/link-overlay-stage.sh" "$STAGE" "$SDK" "$WORK/oldruntime" \
       "$B/build/crt-510-$ARCH-ios70/libclang_rt.builtins_${ARCH}_ios.a" \

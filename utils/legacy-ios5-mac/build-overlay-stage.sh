@@ -46,7 +46,8 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # clang reports dispatch_object_t as two incompatible module definitions.
   # A per-stage Clang module cache keeps builds reproducible and avoids stale
   # dispatch/os_object modules built under different macro state.
-  CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache")
+  # A per-invocation module cache keeps slices from sharing PCMs built under another target.
+  CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="${CLANG_MODULE_CACHE:-$STAGE/probes/cc-modcache}")
   if [ "$NAME" = Dispatch ]; then CC_FLAGS+=(-Xcc -DSWIFT_LEGACY_IOS5_CDISPATCH=1); fi
   # The legacy iOS 5 linker drops ARM/Thumb interworking bits from local
   # relocations, so Thumb code in these dylibs produces pointers that enter
