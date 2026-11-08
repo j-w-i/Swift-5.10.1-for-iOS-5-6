@@ -21,6 +21,9 @@ import struct
 import subprocess
 import sys
 
+LC_VERSION_MIN_IPHONEOS = 0x25
+LC_BUILD_VERSION = 0x32
+MH_EXECUTE = 2
 LC_REEXPORT_DYLIB = 0x8000001F
 LC_RPATH = 0x8000001C
 LC_SYMTAB = 0x2
@@ -81,7 +84,7 @@ def slices(data):
     return out
 
 
-def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False):
+def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False, linked_sdk=None):
     le = struct.unpack("<I", data[offset:offset + 4])[0]
     be = struct.unpack(">I", data[offset:offset + 4])[0]
     if le in (MH_MAGIC, MH_MAGIC_64):
@@ -105,6 +108,8 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
     has_symtab = False
     reexported = 0
     dropped_rpaths = 0
+    seen_rpaths = set()
+    sdk_retagged = 0
     cursor = start
     for _ in range(ncmds):
         if cursor + 8 > stop:
@@ -127,6 +132,21 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
         # the system Swift runtime, which shadows the stdlib embedded in this app and
         # breaks five-year-old ABI (observed on iOS 27: protocol descriptor missing).
         # Neutralise the entry so @rpath resolves only to the app's Frameworks.
+        # dyld on current iOS aborts a launch whose image lists the same LC_RPATH twice
+        # ("duplicate LC_RPATH"). Both the driver and the project's runpath setting add
+        # @executable_path/Frameworks, so repoint every repeat at an unusable path.
+        if cmd == LC_RPATH and cmdsize >= 12:
+            dup_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
+            if dup_off < cmdsize:
+                dup_path = bytes(cstr(data, cursor + dup_off, cmdsize - dup_off))
+                if dup_path in seen_rpaths and dup_path != UNAVAILABLE:
+                    room = cmdsize - dup_off
+                    if room > len(UNAVAILABLE):
+                        data[cursor + dup_off:cursor + cmdsize] = b"\0" * room
+                        data[cursor + dup_off:cursor + dup_off + len(UNAVAILABLE)] = UNAVAILABLE
+                        dropped_rpaths += 1
+                elif dup_path != UNAVAILABLE:
+                    seen_rpaths.add(dup_path)
         if drop_system_rpath and cmd == LC_RPATH and cmdsize >= 12:
             path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
             if path_off < cmdsize:
@@ -141,6 +161,18 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
                     else:
                         data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
                     dropped_rpaths += 1
+        # UIKit chooses between its compatibility layout and the current one from the SDK the
+        # main executable was *linked* against. Source written for modern iOS (safe areas, bar
+        # metrics) expects the current layout, which an iOS 7+ slice built with an old SDK never
+        # gets on a new system. 64-bit executables are retagged; 32-bit slices run on the systems
+        # they were built for and are left alone.
+        if (linked_sdk is not None and is64 and filetype == MH_EXECUTE and
+                cmd in (LC_VERSION_MIN_IPHONEOS, LC_BUILD_VERSION)):
+            sdk_off = cursor + (12 if cmd == LC_VERSION_MIN_IPHONEOS else 16)
+            current = struct.unpack(endian + "I", data[sdk_off:sdk_off + 4])[0]
+            if current < linked_sdk:
+                data[sdk_off:sdk_off + 4] = struct.pack(endian + "I", linked_sdk)
+                sdk_retagged += 1
         if cmd == LC_SYMTAB and cmdsize >= 24:
             if struct.unpack(endian + "I", data[cursor + 12:cursor + 16])[0] > 0:
                 has_symtab = True
@@ -169,7 +201,7 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
                         stripped += 1
                         stripped_names.append(name)
         cursor += cmdsize
-    return stripped, strong, stripped_names, has_symtab, reexported, dropped_rpaths
+    return stripped, strong, stripped_names, has_symtab, reexported, dropped_rpaths, sdk_retagged
 
 
 FORCE_LOAD_PREFIX = b"__swift_FORCE_LOAD_$_"
@@ -212,17 +244,21 @@ def referenced(undefined, dylib_name):
 
 def main(argv):
     if len(argv) < 2 or not any(not a.startswith("-") for a in argv[1:]):
-        print("Usage: strip-system-swift-deps.py [--reexport-core] [--drop-system-swift-rpath] IMAGE [IMAGE...]", file=sys.stderr)
+        print("Usage: strip-system-swift-deps.py [--reexport-core] [--drop-system-swift-rpath] [--linked-sdk=N.M] IMAGE [IMAGE...]", file=sys.stderr)
         return 2
     status = 0
     reexport_core = False
     drop_rpath = False
+    linked_sdk = None
     paths = []
     for argument in argv[1:]:
         if argument == "--reexport-core":
             reexport_core = True
         elif argument == "--drop-system-swift-rpath":
             drop_rpath = True
+        elif argument.startswith("--linked-sdk="):
+            major, _, minor = argument.split("=", 1)[1].partition(".")
+            linked_sdk = (int(major) << 16) | (int(minor or 0) << 8)
         else:
             paths.append(argument)
     for path in paths:
@@ -244,8 +280,9 @@ def main(argv):
         has_symtab = False
         reexported = 0
         dropped_rpaths = 0
+        retagged = 0
         for offset, size in table:
-            result = patch_slice(data, offset, size, reexport_core=reexport_core, drop_system_rpath=drop_rpath)
+            result = patch_slice(data, offset, size, reexport_core=reexport_core, drop_system_rpath=drop_rpath, linked_sdk=linked_sdk)
             if result is None:
                 print(f"{path}: malformed load commands", file=sys.stderr)
                 status = 2
@@ -256,6 +293,7 @@ def main(argv):
             has_symtab = has_symtab or result[3]
             reexported += result[4]
             dropped_rpaths += result[5]
+            retagged += result[6]
         if strong_all:
             for name in strong_all:
                 print(f"{path}: strong system Swift dependency cannot be shipped: {name}", file=sys.stderr)
@@ -283,7 +321,7 @@ def main(argv):
                     break
             if status:
                 continue
-        if total or reexported or dropped_rpaths:
+        if total or reexported or dropped_rpaths or retagged:
             with open(path, "wb") as handle:
                 handle.write(data)
             if total:
@@ -292,6 +330,8 @@ def main(argv):
                 print(f"{path}: made libswiftCore a re-export ({reexported} slice(s))")
             if dropped_rpaths:
                 print(f"{path}: dropped /usr/lib/swift from the rpath search order ({dropped_rpaths} slice(s))")
+            if retagged:
+                print(f"{path}: linked-SDK tag raised for {retagged} executable slice(s)")
     return status
 
 

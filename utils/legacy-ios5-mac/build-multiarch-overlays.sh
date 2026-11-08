@@ -153,6 +153,12 @@ for old in "$BASE_TC"/*.dylib; do
   parts=("$old")
   for ARCH in $EXTRA_ARCHS; do
     RES="$B/build/ios-stdlib-$ARCH/lib/swift"
+    # The stdlib trees are rebuilt independently of this script (for example when the runtime
+    # changes), so Core/Darwin always come from the freshly built per-arch tree, never from the
+    # copy this script staged earlier into work-$ARCH/oldruntime.
+    case "$name" in libswiftCore.dylib|libswiftDarwin.dylib|libswiftSwiftOnoneSupport.dylib)
+      [ -f "$RES/iphoneos/$ARCH/$name" ] && { parts+=("$RES/iphoneos/$ARCH/$name"); continue; } ;;
+    esac
     for candidate in "$STAGE/probes/linked510-$ARCH/$name" \
                      "$OUT/work-$ARCH/oldruntime/lib/swift/iphoneos/$name" \
                      "$RES/iphoneos/$ARCH/$name" \
