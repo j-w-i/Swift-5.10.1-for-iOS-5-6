@@ -117,7 +117,7 @@ public extension UIView {
 
 private var safeAreaLayoutGuideKey: UInt8 = 0
 
-@available(iOS 11.0, *)
+@available(iOS, introduced: 5.0, obsoleted: 9.0)
 public extension UIView {
     /// Genuine UIKit API (iOS 11) for the legacy configuration. No armv7 system
     /// that can run this binary implements safe areas, and on those systems the

@@ -187,6 +187,15 @@ void ModuleNameLookup<LookupStrategy>::lookupInModule(
 
   bool canReturnEarly = (initialCount != decls.size() &&
                          getDerived()->canReturnEarly());
+  // Legacy backport tiers: an overlay type that is unavailable at the
+  // deployment target must not end the search; Apple's same-named class lives
+  // in the Clang half of this very module / its re-exports.
+  if (canReturnEarly && ctx.LangOpts.LegacyIOS5ClassMarking &&
+      std::any_of(decls.begin() + initialCount, decls.end(), [](ValueDecl *d) {
+        return !d->hasClangNode() && isa<TypeDecl>(d) &&
+               AvailableAttr::isUnavailable(d);
+      }))
+    canReturnEarly = false;
   if (canReturnEarly &&
       resolutionKind == ResolutionKind::Overloadable) {
     // If we only found top-level functions or macros, keep looking, since
@@ -261,6 +270,25 @@ void ModuleNameLookup<LookupStrategy>::lookupInModule(
                                return !knownDecls.insert(d).second;
                              }),
               decls.end());
+
+  // Legacy backport tiers: a top-level overlay type that is unavailable at the
+  // deployment target (obsoleted at the version where Apple's own type of the
+  // same name appears) yields to the native Clang declaration, so that both
+  // `UILayoutGuide` and `UIKit.UILayoutGuide` resolve to Apple's class.
+  if (ctx.LangOpts.LegacyIOS5ClassMarking && decls.size() - initialCount > 1) {
+    bool nativeAvailable = false;
+    for (auto it = decls.begin() + initialCount; it != decls.end(); ++it)
+      if ((*it)->hasClangNode() && isa<TypeDecl>(*it) &&
+          !AvailableAttr::isUnavailable(*it))
+        nativeAvailable = true;
+    if (nativeAvailable)
+      decls.erase(std::remove_if(decls.begin() + initialCount, decls.end(),
+                                 [&](ValueDecl *d) -> bool {
+                                   return !d->hasClangNode() && isa<TypeDecl>(d) &&
+                                          AvailableAttr::isUnavailable(d);
+                                 }),
+                  decls.end());
+  }
 }
 
 QualifiedLookupResult

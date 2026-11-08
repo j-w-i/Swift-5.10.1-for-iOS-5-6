@@ -272,6 +272,38 @@ static void UICInstallFullScreenLayoutDefault(void) {
     method_setImplementation(setter, (IMP)UICSetWantsFullScreenLayout);
 }
 
+// iOS 11 `UIView.safeAreaLayoutGuide` on systems that have Apple's own UILayoutGuide (iOS 9, 10).
+// No armv7 system implements safe areas, and there the safe area equals the view's bounds, so the
+// guide is Apple's native guide pinned to the view's edges with native anchors. Below iOS 9 the
+// backport guide class provides the same property (Swift overlay), so this is only installed when
+// the native guide class exists but the property does not.
+static const void *UICSafeAreaGuideKey = &UICSafeAreaGuideKey;
+static id UICNativeSafeAreaLayoutGuide(id self, SEL _cmd) {
+    id guide = objc_getAssociatedObject(self, UICSafeAreaGuideKey);
+    if (guide) return guide;
+    Class guideClass = objc_getClass("UILayoutGuide");
+    guide = [[guideClass alloc] init];
+    ((void (*)(id, SEL, id))objc_msgSend)(self, sel_registerName("addLayoutGuide:"), guide);
+    id (*anchor)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    void (*pin)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))objc_msgSend;
+    const char *names[] = {"topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor"};
+    for (int i = 0; i < 4; i++) {
+        id mine = anchor(guide, sel_registerName(names[i]));
+        id theirs = anchor(self, sel_registerName(names[i]));
+        id constraint = ((id (*)(id, SEL, id))objc_msgSend)(mine, sel_registerName("constraintEqualToAnchor:"), theirs);
+        pin(constraint, sel_registerName("setActive:"), YES);
+    }
+    objc_setAssociatedObject(self, UICSafeAreaGuideKey, guide, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return guide;
+}
+static void UICInstallNativeSafeAreaGuide(void) {
+    Class view = objc_getClass("UIView");
+    if (!objc_getClass("UILayoutGuide") || !view) return;           // below iOS 9: Swift overlay provides it
+    SEL selector = sel_registerName("safeAreaLayoutGuide");
+    if (class_getInstanceMethod(view, selector)) return;            // iOS 11+: Apple's own
+    class_addMethod(view, selector, (IMP)UICNativeSafeAreaLayoutGuide, "@@:");
+}
+
 __attribute__((constructor)) static void UICInstallBackportMethods(void) {
     @autoreleasepool {
         // Constructor work is limited to Objective-C runtime registration: no
@@ -281,5 +313,6 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallMissingMethods([UIScrollView class], [UICScrollAdditions class]);
         UICInstallMissingMethods([NSString class], [UICStringDrawingAdditions class]);
         UICInstallFullScreenLayoutDefault();
+        UICInstallNativeSafeAreaGuide();
     }
 }

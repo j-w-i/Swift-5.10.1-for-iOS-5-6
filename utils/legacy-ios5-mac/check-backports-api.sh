@@ -118,14 +118,24 @@ for target in 9.0 10.0; do
     || { echo "FAIL: native NSLayoutXAxisAnchor/UILayoutGuide must be the real types at iOS $target" >&2; exit 1; }
 done
 # Newer-than-implemented members stay unavailable below their native version.
+# (safeAreaLayoutGuide, iOS 11, IS implemented by the backport at every target.)
+cat > "$OUT/SafeArea.swift" <<'SWIFT'
+import UIKit
+func safeArea(_ v: UIView, _ w: UIView) { v.topAnchor.constraint(equalTo: w.safeAreaLayoutGuide.topAnchor).isActive = true }
+SWIFT
+for target in 5.0 6.0 7.0 8.0 9.0 10.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+    "$OUT/SafeArea.swift" >> "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: view.safeAreaLayoutGuide anchors must typecheck at iOS $target" >&2; exit 1; }
+done
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit
-func useLaterFamily(_ v: UIView) { _ = v.safeAreaLayoutGuide }
+func useLaterFamily(_ v: UIView) { _ = v.keyboardLayoutGuide }
 SWIFT
 for target in 6.0 9.0; do
   if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
        "$OUT/LaterFamily.swift" >> "$OUT/ios$target/build.log" 2>&1; then
-    echo "FAIL: safeAreaLayoutGuide (iOS 11) must stay unavailable at iOS $target" >&2
+    echo "FAIL: keyboardLayoutGuide (iOS 15) must stay unavailable at iOS $target" >&2
     exit 1
   fi
 done

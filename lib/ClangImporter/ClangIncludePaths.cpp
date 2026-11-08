@@ -174,7 +174,7 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
     // legacy configuration surfaces the backport guide instead. Preprocessor
     // guards hide that one declaration so the overlay can provide the same API
     // name and availability with the backport's own guide type.
-    if (backportFacades && name == "safeAreaLayoutGuide") {
+    if (backportFacades && deploymentMajor < 9 && name == "safeAreaLayoutGuide") {
       size_t attribute = i;
       while (attribute > 0 &&
              !(tokens[attribute].is(clang::tok::at) &&

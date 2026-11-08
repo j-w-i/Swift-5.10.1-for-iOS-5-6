@@ -232,7 +232,10 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
           .Cases("addLayoutGuide", "layoutMarginsGuide", 9)
           .Cases("topAnchor", "bottomAnchor", "leadingAnchor", "trailingAnchor", 9)
           .Cases("leftAnchor", "rightAnchor", "widthAnchor", "heightAnchor", 9)
-          .Cases("centerXAnchor", "centerYAnchor", 9).Default(0);
+          .Cases("centerXAnchor", "centerYAnchor", 9)
+          // iOS 11 safe-area guide: the backport returns the target-appropriate
+          // guide (backport class below 9, Apple's UILayoutGuide at 9..10).
+          .Case("safeAreaLayoutGuide", 11).Default(0);
     if (owner == "UIActivityViewController")
       return llvm::StringSwitch<unsigned>(member)
           .Case("initWithActivityItems", 6)
