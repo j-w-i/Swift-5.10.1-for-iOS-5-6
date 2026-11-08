@@ -127,7 +127,9 @@ enum LegacyAutoLayout {
         // the iOS 5 name shims. Reaching it means the backport types are bound, so
         // the backport engine must run even when the OS has Auto Layout (that is
         // what makes the simulator stress test execute the iOS 5 path).
-        let installBlock = {
+        // Swift 5.6 requires the closure to be @Sendable to satisfy DispatchQueue.main.sync's
+        // signature; Swift 5.10 infers it. Annotating is valid on both.
+        let installBlock: @Sendable () -> Void = {
             registerNativeAutoLayoutAPI()
             LegacyAutoLayoutInstaller.install(force: true)
         }
