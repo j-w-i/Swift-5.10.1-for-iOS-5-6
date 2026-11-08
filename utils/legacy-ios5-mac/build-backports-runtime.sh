@@ -1,12 +1,23 @@
 #!/bin/bash
 # Build ObjC support and stage Swift engine/overlay sources; no network/prebuilt input.
-# Usage: build-backports-runtime.sh SDK CLANG AR OUT (fresh absolute output)
+# Usage: build-backports-runtime.sh SDK CLANG AR OUT [ARCH]
+#
+# ARCH defaults to armv7: the legacy iOS 5 slice (iOS 5.0 floor, ARM mode, AAPCS soft-float calls).
+# armv7s builds the same sources at an iOS 7.0 floor; arm64 builds them for AAPCS64 with no ARM-mode
+# flags. Each arch needs its own OUT directory.
 # Swift sources are compiled as part of the UIKit overlay, not a client package.
 set -euo pipefail
 umask 022
 fail() { printf 'build-backports-runtime: %s\n' "$*" >&2; exit 1; }
-[ "$#" = 4 ] || fail 'Usage: build-backports-runtime.sh SDK CLANG AR OUT'
-SDK=$1; CLANG=$2; AR=$3; OUT=$4
+[ "$#" = 4 ] || [ "$#" = 5 ] || fail 'Usage: build-backports-runtime.sh SDK CLANG AR OUT [ARCH]'
+SDK=$1; CLANG=$2; AR=$3; OUT=$4; ARCH=${5:-armv7}
+case "$ARCH" in
+  armv7)  TARGET_VERSION=5.0; ARCH_FLAGS=(-marm);            FLOAT_FLAGS=(-marm -mfloat-abi=softfp) ;;
+  armv7s) TARGET_VERSION=7.0; ARCH_FLAGS=(-marm);            FLOAT_FLAGS=(-marm -mfloat-abi=softfp) ;;
+  arm64)  TARGET_VERSION=7.0; ARCH_FLAGS=();                 FLOAT_FLAGS=() ;;
+  *) fail "Unsupported architecture: $ARCH" ;;
+esac
+TARGET_FLAGS=(-target "$ARCH-apple-ios$TARGET_VERSION")
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 # Test/reproduction builds can select a small source snapshot without swapping
 # files in the live checkout (for example, isolate engine changes from text work).
@@ -67,7 +78,7 @@ OBJECTS=()
 for source in "$OUT/Native/"*.m "$SRC/Runtime/"*.m; do
   name=$(basename -- "$source" .m)
   case "$name" in *Tests) continue ;; esac
-  command=("$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" -O2 -g0
+  command=("$CLANG" "${TARGET_FLAGS[@]}" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} -isysroot "$SDK" -O2 -g0
     -fobjc-arc -fblocks -fno-modules -fvisibility=default "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac"
     "-ffile-prefix-map=$OUT=utils/legacy-ios5-mac/generated-backports" -include "$SRC/Runtime/UICObjCCompatibility.h"
     -Wunguarded-availability -Wunguarded-availability-new
@@ -80,7 +91,7 @@ for source in "$OUT/Native/"*.m "$SRC/Runtime/"*.m; do
 done
 # The C solver core: plain C (no ObjC prefix header, no ARC). -ffp-contract=off keeps every double identical to the
 # host differential test (Tests/run-cassowary-c-diff.sh); ARM mode like every other backport object.
-command=("$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
+command=("$CLANG" "${TARGET_FLAGS[@]}" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
   "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" -I "$SRC/CassowaryC"
   -c "$SRC/CassowaryC/CassowaryC.c" -o "$OUT/objects/CassowaryC.o")
 (printf '%q ' "${command[@]}"; printf '\n') > "$OUT/logs/CassowaryC.command"
@@ -94,22 +105,30 @@ for source in "$SRC/NSISC/"*.c; do
   # The legacy Swift frontend emits AAPCS soft-float argument marshalling for its C
   # declarations, so this C side must use the same convention or mixed int/float calls
   # arrive corrupted (verified on device: a -3787 probe returned 213.49).
-  command=("$CLANG" -target armv7-apple-ios5.0 -marm -mfloat-abi=softfp -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
+  command=("$CLANG" "${TARGET_FLAGS[@]}" ${FLOAT_FLAGS[@]+"${FLOAT_FLAGS[@]}"} -isysroot "$SDK" -O2 -g0 -ffp-contract=off -fvisibility=default
     "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" -I "$SRC/NSISC"
     -c "$source" -o "$OUT/objects/NSISC-$name.o")
   (printf '%q ' "${command[@]}"; printf '\n') > "$OUT/logs/NSISC-$name.command"
   /usr/bin/nice -n 15 "${command[@]}" > "$OUT/logs/NSISC-$name.log" 2>&1 || { tail -50 "$OUT/logs/NSISC-$name.log" >&2; fail "NSISC $name compilation failed"; }
   OBJECTS+=("$OUT/objects/NSISC-$name.o")
 done
-"${PYTHON:-python3}" - "$OUT" "${OBJECTS[@]}" <<'PY'
+"${PYTHON:-python3}" - "$OUT" "$ARCH" "${OBJECTS[@]}" <<'PY'
 from pathlib import Path
 import json, struct, sys
-out = Path(sys.argv[1]); audited = []
-for raw in sys.argv[2:]:
+out = Path(sys.argv[1]); arch = sys.argv[2]; audited = []
+# ARM32 objects are 0xfeedface/CPU_TYPE_ARM with 12-byte nlist entries; arm64 objects are
+# 0xfeedfacf/CPU_TYPE_ARM64 with 16-byte nlist_64 entries. The Thumb-interworking and
+# subscript-selector audits below are ARM32 concerns, so arm64 objects are only format-checked.
+ARM32 = arch != 'arm64'
+for raw in sys.argv[3:]:
     path = Path(raw); data = path.read_bytes()
     magic, cpu, subtype, kind, count, size, flags = struct.unpack_from('<7I', data)
-    if magic != 0xfeedface or cpu != 12 or kind != 1:
-        raise SystemExit('Expected ARM32 Mach-O object: ' + str(path))
+    expected = (0xfeedface, 12) if ARM32 else (0xfeedfacf, 0x0100000c)
+    if (magic, cpu) != expected or kind != 1:
+        raise SystemExit(f'Expected {arch} Mach-O object: ' + str(path))
+    if not ARM32:
+        audited.append(path.name)
+        continue
     cursor = 28; symtab = None
     for _ in range(count):
         command, length = struct.unpack_from('<2I', data, cursor)
@@ -138,10 +157,10 @@ PY
 "$AR" rcs "$OUT/libswiftLegacyUIKitBackports.a" "${OBJECTS[@]}" > "$OUT/logs/archive.log" 2>&1
 "${PYTHON:-python3}" - "$SRC" "$SDK" "$CLANG" "$AR" "$OUT" <<'PY'
 from pathlib import Path
-import hashlib, json, subprocess, sys
+import hashlib, json, os, subprocess, sys
 src, sdk, clang, ar, out = map(Path, sys.argv[1:])
 hashfile = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
-manifest = {'target': 'armv7-apple-ios5.0', 'instructionSet': 'ARM', 'swiftPayload': 'compiled in UIKit overlay',
+manifest = {'target': os.environ.get('LEGACY_BACKPORTS_TARGET', 'armv7-apple-ios5.0'), 'instructionSet': os.environ.get('LEGACY_BACKPORTS_ISET', 'ARM'), 'swiftPayload': 'compiled in UIKit overlay',
             'sourceRoot': str(src.resolve()),
             'sdk': str(sdk.resolve()), 'clang': str(clang.resolve()), 'ar': str(ar.resolve()),
             'clangVersion': subprocess.check_output([str(clang), '--version'], text=True),
