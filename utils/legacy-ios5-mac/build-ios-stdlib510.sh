@@ -91,6 +91,13 @@ for ARCH in $ARCHS; do
   # (SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK) instead of fixing one value for every system.
   WIDE_MASK=""; [ "$ARCH" = armv7 ] || WIDE_MASK="-DSWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK=1"
   O="$B/build/ios-stdlib-$ARCH"; [ "$ARCH" = armv7 ] && O="$B/build/ios-stdlib"
+  # A tree configured with a different class-bit mask is stale: reusing it would ship the wrong
+  # runtime without any error. Rebuild when the recorded flags differ from the intended ones.
+  if [ -d "$O/lib/swift/iphoneos/$ARCH" ] && [ -f "$O/CMakeCache.txt" ]; then
+    HAVE_DYN=0; grep -q 'SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK' "$O/CMakeCache.txt" && HAVE_DYN=1
+    WANT_DYN=0; [ -n "$WIDE_MASK" ] && WANT_DYN=1
+    if [ "$HAVE_DYN" != "$WANT_DYN" ]; then echo "stdlib $ARCH: class-bit configuration changed; rebuilding"; rm -rf "$O"; fi
+  fi
   [ -d "$O/lib/swift/iphoneos/$ARCH" ] && { echo "stdlib $ARCH: present"; continue; }
   echo "== Swift stdlib $ARCH"
   mkdir -p "$O"
