@@ -1,17 +1,32 @@
 #!/bin/bash
-# Build real legacy Swift overlays from a prepared isolated stage, serially.
-# Usage: build-overlay-stage.sh STAGE SWIFTC SDK [--legacy-marking]
+# Build real Swift overlays from a prepared isolated stage, serially.
+# Usage: build-overlay-stage.sh STAGE SWIFTC SDK [--legacy-marking] [ARCH] [RESOURCE_DIR]
+#
+# ARCH defaults to armv7, the legacy iOS 5 target: legacy ABI flag, ARM mode and the backport
+# sources. Any other architecture (armv7s, arm64) is built without the legacy ABI flag at an
+# iOS 7.0 floor, because those slices run on systems that have Apple's own runtime, and it may
+# use a different resource tree (RESOURCE_DIR) so it compiles against that arch's stdlib.
 set -euo pipefail
 STAGE=${1:?stage}; SWIFTC=${2:?swiftc}; SDK=${3:?sdk}; MODE=${4:-}
+ARCH=${5:-armv7}
+RESOURCE_OVERRIDE=${6:-}
 [[ "$STAGE" = /* && "$SWIFTC" = /* && "$SDK" = /* ]] || { echo 'Use absolute paths.' >&2; exit 64; }
 [ -d "$STAGE/probes/modules510" ] && [ -x "$SWIFTC" ] && [ -d "$SDK" ] || { echo 'Missing prepared stage/compiler/SDK.' >&2; exit 1; }
 [ -z "$MODE" ] || [ "$MODE" = --legacy-marking ] || { echo 'Unknown mode.' >&2; exit 64; }
-R="$STAGE/probes/modules510"
+R="${RESOURCE_OVERRIDE:-$STAGE/probes/modules510}"
 EXTRA=(); TARGET=7.0
-if [ "$MODE" = --legacy-marking ]; then
+LEGACY_ARCH=0
+case "$ARCH" in
+  armv7|armv7s) if [ "$MODE" = --legacy-marking ] && [ "$ARCH" = armv7 ]; then LEGACY_ARCH=1; fi ;;
+  arm64) LEGACY_ARCH=0 ;;
+  *) echo "Unsupported overlay architecture: $ARCH" >&2; exit 64 ;;
+esac
+if [ "$LEGACY_ARCH" = 1 ]; then
   [ -s "$R/legacy-collection/Headers/UIKitLegacyCollection.h" ] || { echo 'Missing source-built legacy UIKit collection declarations.' >&2; exit 1; }
   EXTRA=(-enable-legacy-ios5-runtime); TARGET=5.0
 fi
+LEGACY_DEFINE=(-D LEGACY_IOS5)
+[ "$LEGACY_ARCH" = 1 ] || LEGACY_DEFINE=()
 mkdir -p "$STAGE/logs"
 for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
   lower=$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')
@@ -36,7 +51,7 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # The legacy iOS 5 linker drops ARM/Thumb interworking bits from local
   # relocations, so Thumb code in these dylibs produces pointers that enter
   # Thumb instructions in ARM mode. Build every legacy overlay in ARM mode.
-  if [ "$MODE" = --legacy-marking ]; then CC_FLAGS+=(-Xcc -marm); fi
+  if [ "$LEGACY_ARCH" = 1 ] && [ "$MODE" = --legacy-marking ]; then CC_FLAGS+=(-Xcc -marm); fi
   # Backported UIKit API that is Swift-only (anchors, activate/deactivate,
   # layout-guide conveniences) belongs to the UIKit overlay module, so client
   # code sees it from `import UIKit` alone. The backport builder stages those
@@ -61,13 +76,13 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   fi
   /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" ${JOB_FLAGS[@]+"${JOB_FLAGS[@]}"} \
     -parse-as-library -module-name "$NAME" -autolink-force-load \
-    -target "armv7-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" -D LEGACY_IOS5 \
+    -target "$ARCH-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" ${LEGACY_DEFINE:-} \
     -I "$STAGE/probes/dispatch-shims" \
     -runtime-compatibility-version none -disable-autolinking-runtime-compatibility-dynamic-replacements \
-    -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510.o" \
-    -emit-module -emit-module-path "$R/iphoneos/$NAME.swiftmodule/armv7.swiftmodule" \
+    -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510-$ARCH.o" \
+    -emit-module -emit-module-path "$R/iphoneos/$NAME.swiftmodule/$ARCH.swiftmodule" \
     -module-link-name "swift$NAME" -swift-version 5 \
     ${EXTRA[@]+"${EXTRA[@]}"} ${CC_FLAGS[@]+"${CC_FLAGS[@]}"} @"$SOURCES_FILE" \
     > "$STAGE/logs/${NAME}.log" 2>&1 || { tail -40 "$STAGE/logs/${NAME}.log" >&2; exit 1; }
-  echo "$NAME module/object built (not runtime-qualified)"
+  echo "$NAME module/object built for $ARCH (not runtime-qualified)"
 done
