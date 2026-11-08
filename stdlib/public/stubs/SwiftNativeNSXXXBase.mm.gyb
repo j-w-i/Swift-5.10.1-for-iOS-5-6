@@ -87,13 +87,33 @@ swift_stdlib_NSObject_isEqual(id lhs,
   return (lhs == rhs) || [lhs isEqual:rhs];
 }
 
+// +newTaggedNSStringWithASCIIBytes_:length_: exists only where Foundation/CoreFoundation grew
+// tagged-pointer strings (iOS 7+ in practice, and not even every iOS 7-11 release). The runtime
+// asks instead of assuming, so one binary works from its deployment floor to current systems.
+SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
+bool
+swift_stdlib_hasTaggedNSStringConstructor() {
+  static int cached = -1;
+  if (cached < 0) {
+    Class cls = objc_lookUpClass("__StringStorage");
+    cached = (cls && class_getClassMethod(cls,
+        sel_registerName("newTaggedNSStringWithASCIIBytes_:length_:"))) ? 1 : 0;
+  }
+  return cached == 1;
+}
+
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI
 bool
 swift_stdlib_connectNSBaseClasses() {
 % for Class in ('Array', 'MutableArray', 'Dictionary', 'Set', 'String', 'Enumerator'):
   Class NS${Class}Super = objc_lookUpClass("NS${Class}");
   if (!NS${Class}Super) return false;
-  Class NS${Class}OurClass = objc_lookUpClass("__SwiftNativeNS${Class}Base");
+  // Bind to the class defined by *this* image, not a name lookup. An app that embeds this runtime
+  // on an OS that already ships its own libswiftCore (iOS 12.2+) has two images defining the same
+  // class name; the lookup returns the system's class, so this image's base would never be
+  // re-parented to NS${Class} (observed: "-[Swift.__StringStorage boundingRectWithSize:...]
+  // unrecognized selector" on iOS 27).
+  Class NS${Class}OurClass = [__SwiftNativeNS${Class}Base class];
   if (!NS${Class}OurClass) return false;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"

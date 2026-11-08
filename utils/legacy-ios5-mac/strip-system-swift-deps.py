@@ -22,10 +22,12 @@ import subprocess
 import sys
 
 LC_REEXPORT_DYLIB = 0x8000001F
+LC_RPATH = 0x8000001C
 LC_SYMTAB = 0x2
 LC_LOAD_DYLIB = 0xC
 LC_LOAD_WEAK_DYLIB = 0x80000018
 UNUSED_CMD = 0x1F01
+UNAVAILABLE = b"/.unavailable"
 FAT_MAGIC = 0xCAFEBABE
 FAT_CIGAM = 0xBEBAFECA
 FAT_MAGIC_64 = 0xCAFEBABF
@@ -34,6 +36,7 @@ MH_MAGIC = 0xFEEDFACE
 MH_MAGIC_64 = 0xFEEDFACF
 SWIFT_CORE = b"@rpath/libswiftCore.dylib"
 SYSTEM_SWIFT = b"/usr/lib/swift/"
+SYSTEM_SWIFT_RPATH = b"/usr/lib/swift"
 # @rpath Swift overlay dylibs that the modern SDK autolinks but that neither iOS 7
 # nor the legacy runtime tree provides.
 SYSTEM_SWIFT_NAMES = ("libswiftsimd.dylib", "libswiftUniformTypeIdentifiers.dylib",
@@ -78,7 +81,7 @@ def slices(data):
     return out
 
 
-def patch_slice(data, offset, size, reexport_core=False):
+def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False):
     le = struct.unpack("<I", data[offset:offset + 4])[0]
     be = struct.unpack(">I", data[offset:offset + 4])[0]
     if le in (MH_MAGIC, MH_MAGIC_64):
@@ -101,6 +104,7 @@ def patch_slice(data, offset, size, reexport_core=False):
     stripped_names = []
     has_symtab = False
     reexported = 0
+    dropped_rpaths = 0
     cursor = start
     for _ in range(ncmds):
         if cursor + 8 > stop:
@@ -119,6 +123,17 @@ def patch_slice(data, offset, size, reexport_core=False):
                 if name == SWIFT_CORE:
                     data[cursor:cursor + 4] = struct.pack(endian + "I", LC_REEXPORT_DYLIB)
                     reexported += 1
+        # The Swift driver emits `-rpath /usr/lib/swift`. On iOS 12+ that path holds
+        # the system Swift runtime, which shadows the stdlib embedded in this app and
+        # breaks five-year-old ABI (observed on iOS 27: protocol descriptor missing).
+        # Neutralise the entry so @rpath resolves only to the app's Frameworks.
+        if drop_system_rpath and cmd == LC_RPATH and cmdsize >= 12:
+            path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
+            if path_off < cmdsize:
+                path = cstr(data, cursor + path_off, cmdsize - path_off)
+                if path == SYSTEM_SWIFT_RPATH:
+                    data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
+                    dropped_rpaths += 1
         if cmd == LC_SYMTAB and cmdsize >= 24:
             if struct.unpack(endian + "I", data[cursor + 12:cursor + 16])[0] > 0:
                 has_symtab = True
@@ -133,11 +148,21 @@ def patch_slice(data, offset, size, reexport_core=False):
                     if cmd == LC_LOAD_DYLIB:
                         strong.append(name.decode("utf-8", "replace"))
                     else:
-                        data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
+                        # Keep the command a *weak* dylib so its two-level-namespace ordinal slot
+                        # survives (retyping it removed the slot, and binds past the end of the list
+                        # make dyld reject the image: "library ordinal (28) too big (max 27)" on
+                        # iOS 10). Pointing it at a path that cannot exist makes the weak load a no-op
+                        # on every OS, including those that ship the real system overlay.
+                        room = cmdsize - name_off
+                        if room > len(UNAVAILABLE):
+                            data[cursor + name_off:cursor + cmdsize] = b"\0" * room
+                            data[cursor + name_off:cursor + name_off + len(UNAVAILABLE)] = UNAVAILABLE
+                        else:
+                            data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
                         stripped += 1
                         stripped_names.append(name)
         cursor += cmdsize
-    return stripped, strong, stripped_names, has_symtab, reexported
+    return stripped, strong, stripped_names, has_symtab, reexported, dropped_rpaths
 
 
 FORCE_LOAD_PREFIX = b"__swift_FORCE_LOAD_$_"
@@ -180,14 +205,17 @@ def referenced(undefined, dylib_name):
 
 def main(argv):
     if len(argv) < 2 or not any(not a.startswith("-") for a in argv[1:]):
-        print("Usage: strip-system-swift-deps.py [--reexport-core] IMAGE [IMAGE...]", file=sys.stderr)
+        print("Usage: strip-system-swift-deps.py [--reexport-core] [--drop-system-swift-rpath] IMAGE [IMAGE...]", file=sys.stderr)
         return 2
     status = 0
     reexport_core = False
+    drop_rpath = False
     paths = []
     for argument in argv[1:]:
         if argument == "--reexport-core":
             reexport_core = True
+        elif argument == "--drop-system-swift-rpath":
+            drop_rpath = True
         else:
             paths.append(argument)
     for path in paths:
@@ -208,8 +236,9 @@ def main(argv):
         stripped_names = []
         has_symtab = False
         reexported = 0
+        dropped_rpaths = 0
         for offset, size in table:
-            result = patch_slice(data, offset, size, reexport_core=reexport_core)
+            result = patch_slice(data, offset, size, reexport_core=reexport_core, drop_system_rpath=drop_rpath)
             if result is None:
                 print(f"{path}: malformed load commands", file=sys.stderr)
                 status = 2
@@ -219,6 +248,7 @@ def main(argv):
             strong_all.extend(result[1])
             has_symtab = has_symtab or result[3]
             reexported += result[4]
+            dropped_rpaths += result[5]
         if strong_all:
             for name in strong_all:
                 print(f"{path}: strong system Swift dependency cannot be shipped: {name}", file=sys.stderr)
@@ -246,13 +276,15 @@ def main(argv):
                     break
             if status:
                 continue
-        if total or reexported:
+        if total or reexported or dropped_rpaths:
             with open(path, "wb") as handle:
                 handle.write(data)
             if total:
                 print(f"{path}: neutralised {total} weak system Swift load command(s)")
             if reexported:
                 print(f"{path}: made libswiftCore a re-export ({reexported} slice(s))")
+            if dropped_rpaths:
+                print(f"{path}: dropped /usr/lib/swift from the rpath search order ({dropped_rpaths} slice(s))")
     return status
 
 

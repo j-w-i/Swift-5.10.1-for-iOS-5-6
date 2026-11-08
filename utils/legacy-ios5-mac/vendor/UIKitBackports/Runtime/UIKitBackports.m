@@ -21,7 +21,12 @@ NSDictionary *UICDictionaryOfVariableBindings(NSString *names, id firstValue, ..
     va_end(arguments); return result;
 }
 
+extern id UICLegacyGuideProxyView(id item);
 static UIView *UICConstraintItem(id item) {
+    if (item && ![item isKindOfClass:[UIView class]] && ![item isKindOfClass:[UICLayoutGuide class]]) {
+        id proxy = UICLegacyGuideProxyView(item);
+        if (proxy) return proxy;
+    }
     return [item isKindOfClass:[UICLayoutGuide class]] ? [(UICLayoutGuide *)item proxyView] : item;
 }
 id UICMakeConstraint(id first, NSInteger attribute, NSInteger relation, id second, NSInteger secondAttribute, CGFloat multiplier, CGFloat constant) {
@@ -37,8 +42,23 @@ id UICMakeConstraint(id first, NSInteger attribute, NSInteger relation, id secon
 static id UICConstraintFactory(id cls, SEL command, id first, NSInteger attribute, NSInteger relation, id second, NSInteger secondAttribute, CGFloat multiplier, CGFloat constant) {
     return UICMakeConstraint(first, attribute, relation, second, secondAttribute, multiplier, constant);
 }
+static id (*UICNativeConstraintFactory)(id, SEL, id, NSInteger, NSInteger, id, NSInteger, CGFloat, CGFloat);
+static id UICUnwrappingConstraintFactory(id cls, SEL command, id first, NSInteger attribute, NSInteger relation, id second, NSInteger secondAttribute, CGFloat multiplier, CGFloat constant) {
+    return UICNativeConstraintFactory(cls, command, UICConstraintItem(first), attribute, relation, UICConstraintItem(second), secondAttribute, multiplier, constant);
+}
 static id UICVisualFormatFactory(id cls, SEL command, NSString *format, NSUInteger options, NSDictionary *metrics, NSDictionary *views) {
     return UICConstraintsWithVisualFormat(format, options, metrics, views);
+}
+// The native factory (iOS 6+) rejects the backport guide object ("Constraint items must each be a
+// view or layout guide"); route it through the guide's proxy view. Pure Objective-C runtime work, so
+// it is safe from the image constructor and runs before any Swift code can build a constraint.
+static void UICInstallConstraintItemUnwrapping(void) {
+    Class cls = NSClassFromString(@"NSLayoutConstraint");
+    SEL factory = @selector(constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:);
+    Method native = cls ? class_getClassMethod(cls, factory) : NULL;
+    if (!native || UICNativeConstraintFactory) return;
+    UICNativeConstraintFactory = (id (*)(id, SEL, id, NSInteger, NSInteger, id, NSInteger, CGFloat, CGFloat))method_getImplementation(native);
+    method_setImplementation(native, (IMP)UICUnwrappingConstraintFactory);
 }
 void UICInstallConstraintClassMethods(void) {
     Class cls = NSClassFromString(@"NSLayoutConstraint");
@@ -47,6 +67,7 @@ void UICInstallConstraintClassMethods(void) {
     SEL factory = @selector(constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:);
     SEL vfl = @selector(constraintsWithVisualFormat:options:metrics:views:);
     if (!class_getClassMethod(cls, factory)) class_addMethod(object_getClass(cls), factory, (IMP)UICConstraintFactory, "@@:@ii@iff");
+    else UICInstallConstraintItemUnwrapping();
     if (!class_getClassMethod(cls, vfl)) class_addMethod(object_getClass(cls), vfl, (IMP)UICVisualFormatFactory, "@@:@I@@");
 }
 
@@ -314,5 +335,6 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallMissingMethods([NSString class], [UICStringDrawingAdditions class]);
         UICInstallFullScreenLayoutDefault();
         UICInstallNativeSafeAreaGuide();
+        UICInstallConstraintItemUnwrapping();
     }
 }

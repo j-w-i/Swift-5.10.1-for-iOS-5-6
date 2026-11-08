@@ -650,6 +650,9 @@ private func _createNSString(
   return receiver.createTaggedString(bytes: ptr, count: count)
 }
 
+@_silgen_name("swift_stdlib_hasTaggedNSStringConstructor")
+internal func _swift_stdlib_hasTaggedNSStringConstructor() -> Bool
+
 @_effects(releasenone)
 private func _createCFString(
   _ ptr: UnsafePointer<UInt8>,
@@ -677,7 +680,7 @@ extension String {
     // constructor used here) do not exist before iOS 7, so the legacy iOS 5 runtime
     // never takes this path: small strings are grown to a native string below.
 #if !LEGACY_IOS5
-    if _guts.isSmallASCII {
+    if _guts.isSmallASCII && _swift_stdlib_hasTaggedNSStringConstructor() {
       let maybeTagged = _guts.asSmall.withUTF8 { bufPtr in
         return _createCFString(
           bufPtr.baseAddress._unsafelyUnwrappedUnchecked,

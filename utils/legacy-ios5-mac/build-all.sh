@@ -205,7 +205,7 @@ sanitize() {
   [ -d "$LIB" ] || { echo 'sanitize: no assembled iOS 5 toolchain; run the assemble stage first' >&2; exit 1; }
   # Reproducible pass over an already-assembled toolchain, for build roots whose
   # assemble stage predates this step. New assemblies already run it inline.
-  /usr/bin/python3 "$HERE/strip-system-swift-deps.py" --reexport-core "$LIB/"libswift*.dylib
+  /usr/bin/python3 "$HERE/strip-system-swift-deps.py" --reexport-core --drop-system-swift-rpath "$LIB/"libswift*.dylib
 }
 
 stage tools tools

@@ -153,7 +153,8 @@ COLLECTION_ARCHIVE="$STAGE/probes/collection-runtime/libswiftLegacyCollectionVie
 # archive cannot satisfy an arm64/armv7s link.
 BACKPORTS_ARCHIVE="${LEGACY_UIKIT_BACKPORTS_ARCHIVE:-$STAGE/probes/backports-runtime/libswiftLegacyUIKitBackports.a}"
 COMPOSITIONAL_ARCHIVE="$STAGE/probes/compositional-layout-runtime/libswiftLegacyCompositionalLayout.a"
-FOUNDATION_ARCHIVE="$STAGE/probes/foundation-runtime/libswiftLegacyFoundationBackports.a"
+# Per-architecture archive for the wide slices (the staged one is armv7 only).
+FOUNDATION_ARCHIVE="${LEGACY_FOUNDATION_BACKPORTS_ARCHIVE:-$STAGE/probes/foundation-runtime/libswiftLegacyFoundationBackports.a}"
 NATIVE_UIKIT="$STAGE/probes/native-uikit-runtime/UIKitGlobals.o"
 NATIVE_NUMERIC="$STAGE/probes/native-numeric-runtime/objects"
 case "$DEPLOYMENT" in

@@ -376,7 +376,7 @@ try:
         python = shutil.which('python3')
         if not python:
             fail('python3 is required for the weak system Swift dependency pass')
-        result = subprocess.run([python, str(helper), '--reexport-core']
+        result = subprocess.run([python, str(helper), '--reexport-core', '--drop-system-swift-rpath']
                                 + [str(path) for path in shipped], text=True)
         if result.returncode:
             fail('weak system Swift dependency sanitisation failed')

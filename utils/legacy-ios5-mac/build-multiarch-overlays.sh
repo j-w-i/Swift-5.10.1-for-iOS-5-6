@@ -60,6 +60,10 @@ for ARCH in $EXTRA_ARCHS; do
     bash "$HERE/build-backports-runtime.sh" "$SDK" "$CLANG" "$AR" "$WORK/backports" "$ARCH" \
     > "$OUT/log-$ARCH-backports.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-backports.log" >&2; fail "$ARCH facades failed"; }
 
+  echo "== $ARCH: Foundation backports"
+  bash "$HERE/build-foundation-runtime.sh" "$SDK" "$CLANG" "$AR" "$WORK/foundation" "$ARCH" \
+    > "$OUT/log-$ARCH-foundation.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-foundation.log" >&2; fail "$ARCH Foundation backports failed"; }
+
   echo "== $ARCH: overlays"
     bash "$HERE/build-overlay-stage.sh" "$STAGE" "$SWIFT" "$SDK" "" "$ARCH" "$RES" \
     > "$OUT/log-$ARCH-overlays.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-overlays.log" >&2; fail "$ARCH overlays failed"; }
@@ -91,13 +95,16 @@ for ARCH in $EXTRA_ARCHS; do
     done
     "$LINKER" -target "$ARCH-apple-ios$EXTRA_DEPLOYMENT" -isysroot "$SDK" -dynamiclib \
       -install_name "@rpath/libswift$NAME.dylib" -o "$RT/libswift$NAME.dylib" "$OBJECT" \
-      -L"$RT" -L"$RES/iphoneos" ${LIBARGS[@]+"${LIBARGS[@]}"} \
+      -L"$RT" -L"$RES/iphoneos" -L"$STAGE/probes/linked510-$ARCH" ${BOOTSTRAP_DISPATCH_DIR:+-L"$BOOTSTRAP_DISPATCH_DIR"} ${LIBARGS[@]+"${LIBARGS[@]}"} \
       -lswiftCompatibility50 -lc++ ${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"} \
       >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswift$NAME.dylib failed"; }
   }
   link_overlay ObjectiveC "$WORK/ObjectiveC.o" Core Darwin --
   link_overlay CoreFoundation "$WORK/CoreFoundation.o" Core Darwin ObjectiveC -- Foundation CoreFoundation
-  link_overlay AVFoundation "$WORK/AVFoundation.o" Core Darwin ObjectiveC -- AVFoundation CoreMedia
+  # AVFoundation is linked after the seven overlays so its Foundation/CoreGraphics/Dispatch/QuartzCore
+  # symbols bind to the overlays that really define them; searching only the base runtime lets the
+  # linker attribute them to whichever shipped dylib it happened to see first (a launch-time dyld
+  # failure on iOS 27: "Symbol not found: CGFloat metadata, expected in libswiftDispatch").
   link_overlay CoreAudio "$WORK/CoreAudio.o" Core Darwin ObjectiveC -- CoreAudio
   link_overlay CoreMedia "$WORK/CoreMedia.o" Core Darwin ObjectiveC -- CoreMedia
 
@@ -109,10 +116,23 @@ for ARCH in $EXTRA_ARCHS; do
   LLVM_CONFIG_INCLUDE_DIR="${LLVM_CONFIG_INCLUDE_DIR:-$B/build/llvm/include}" \
   LLVM_INCLUDE_DIR="${LLVM_INCLUDE_DIR:-$(dirname "$SWIFT51_SOURCE")/llvm/include}" \
   LEGACY_UIKIT_BACKPORTS_ARCHIVE="$WORK/backports/libswiftLegacyUIKitBackports.a" \
+  LEGACY_FOUNDATION_BACKPORTS_ARCHIVE="$WORK/foundation/libswiftLegacyFoundationBackports.a" \
     bash "$HERE/link-overlay-stage.sh" "$STAGE" "$SDK" "$WORK/oldruntime" \
       "$B/build/crt-510-$ARCH-ios70/libclang_rt.builtins_${ARCH}_ios.a" \
       "$LINKER" "$SDK/usr/include/c++/v1" "$ARCH" \
     > "$OUT/log-$ARCH-dylibs.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-dylibs.log" >&2; fail "$ARCH overlay link failed"; }
+
+  echo "== $ARCH: AVFoundation overlay"
+  RES_LINK="$STAGE/probes/linked510-$ARCH"
+  "$LINKER" -target "$ARCH-apple-ios$EXTRA_DEPLOYMENT" -isysroot "$SDK" -dynamiclib \
+    -install_name "@rpath/libswiftAVFoundation.dylib" -o "$RT/libswiftAVFoundation.dylib" "$WORK/AVFoundation.o" \
+    -L"$RES_LINK" -L"$RT" -L"$RES/iphoneos" -lswiftCore -lswiftDarwin -lswiftObjectiveC -lswiftCoreFoundation \
+    -lswiftDispatch -lswiftCoreGraphics -lswiftFoundation -lswiftMetal -lswiftQuartzCore \
+    -lswiftCompatibility50 -lc++ -framework AVFoundation -framework CoreMedia \
+    -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftCoreMIDI' \
+    -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftUniformTypeIdentifiers' \
+    -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftsimd' \
+    >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswiftAVFoundation.dylib failed"; }
 
   echo "== $ARCH: collecting modules"
   for d in "$RES"/*.swiftmodule; do
@@ -140,7 +160,7 @@ for old in "$BASE_TC"/*.dylib; do
       [ -f "$candidate" ] && { parts+=("$candidate"); break; }
     done
   done
-  if [ "${#parts[@]}" -lt $(( ${#EXTRA_ARCHS} + 1 )) ]; then
+  if [ "${#parts[@]}" -lt $(( $(echo $EXTRA_ARCHS | wc -w) + 1 )) ]; then
     echo "  keeping $name armv7-only (no $EXTRA_ARCHS build)" >&2
     cp "$old" "$OUT/iphoneos/$name"
   elif [ "$(lipo -archs "${parts[0]}")" = "$(lipo -archs "${parts[1]}" 2>/dev/null)" ] 2>/dev/null; then

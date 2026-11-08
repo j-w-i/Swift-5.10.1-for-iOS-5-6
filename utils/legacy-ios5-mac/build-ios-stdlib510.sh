@@ -85,6 +85,12 @@ done
 
 # 2. the standard library itself, one build directory per arch.
 for ARCH in $ARCHS; do
+  # The compiler targets an iOS 7.0 floor, so IRGen marks Swift classes with the *pre-stable* bit (1)
+  # (UseDarwinPreStableABIBit, iOS < 12.2). The runtime must test the same bit: a stable-bit (2) runtime
+  # works only where objc accepts both (iOS 12.2+) and mistakes every Swift class for an ObjC class on
+  # older systems (null metadata description in isCanonicalStaticallySpecializedGenericMetadata).
+  # Newer objc runtimes still honour the legacy bit, so one binary serves iOS 7 through current.
+  WIDE_MASK=""; [ "$ARCH" = armv7 ] || WIDE_MASK="-DSWIFT_CLASS_IS_SWIFT_MASK=1ULL"
   O="$B/build/ios-stdlib-$ARCH"; [ "$ARCH" = armv7 ] && O="$B/build/ios-stdlib"
   [ -d "$O/lib/swift/iphoneos/$ARCH" ] && { echo "stdlib $ARCH: present"; continue; }
   echo "== Swift stdlib $ARCH"
@@ -94,7 +100,7 @@ for ARCH in $ARCHS; do
     -DCMAKE_C_COMPILER="$W/clang" -DCMAKE_CXX_COMPILER="$W/clang++" -DCMAKE_Swift_COMPILER="$HOST_SWIFT" \
     -DCMAKE_OSX_SYSROOT="$SDKROOT" -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
     -DCMAKE_SHARED_LINKER_FLAGS="-L$B/build/crt-510-$ARCH-ios70 -lclang_rt.builtins_${ARCH}_ios -Wl,-U,_objc_setHook_lazyClassNamer -Wl,-U,__dyld_is_objc_constant" \
-    -DCMAKE_CXX_FLAGS=-DSWIFT_STDLIB_LEGACY_SDK_OBJC_HOOK=1 -DCMAKE_C_FLAGS=-DSWIFT_STDLIB_LEGACY_SDK_OBJC_HOOK=1 \
+    -DCMAKE_CXX_FLAGS="-DSWIFT_STDLIB_LEGACY_SDK_OBJC_HOOK=1 $WIDE_MASK" -DCMAKE_C_FLAGS="-DSWIFT_STDLIB_LEGACY_SDK_OBJC_HOOK=1 $WIDE_MASK" \
     -DSWIFT_BUILD_SWIFT_SYNTAX=OFF -DSWIFT_INCLUDE_TOOLS=OFF -DSWIFT_INCLUDE_TEST_BINARIES=OFF \
     -DSWIFT_DARWIN_STDLIB_INSTALL_NAME_DIR=@rpath -DSWIFT_DARWIN_STDLIB_PRIVATE_INSTALL_NAME_DIR=@rpath \
     -DSWIFT_SDKS=IOS -DSWIFT_SDK_IOS_PATH="$SDK" -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=7.0 \

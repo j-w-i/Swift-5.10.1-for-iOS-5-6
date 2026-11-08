@@ -17,6 +17,13 @@ import ObjectiveC
 private var layoutGuidesKey: UInt8 = 0
 private var guideLayoutFrameKey: UInt8 = 0
 
+/// Native NSLayoutConstraint accepts only views and native guides, so the Objective-C factory shim
+/// asks this helper to turn a backport guide into its proxy view before calling UIKit.
+@_cdecl("UICLegacyGuideProxyView")
+public func _uicLegacyGuideProxyView(_ item: AnyObject?) -> AnyObject? {
+    (item as? UILayoutGuide)?.proxyViewForConstraints
+}
+
 /// Ordinary `UILayoutGuide` spelling for systems without the native class.
 @available(iOS, introduced: 5.0, obsoleted: 9.0)
 public final class UILayoutGuide {
@@ -25,6 +32,7 @@ public final class UILayoutGuide {
 
     /// Hidden proxy view used as the layout item for this guide's anchors.
     fileprivate let proxy = UIView()
+    fileprivate var proxyViewForConstraints: UIView { proxy }
 
     public init() {
         proxy.translatesAutoresizingMaskIntoConstraints = false
