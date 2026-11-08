@@ -8546,7 +8546,8 @@ void ClangImporter::Implementation::importAttributes(
       // actual Clang target and explicit runtime mode are all mandatory.
       bool legacyUIKit = legacyUIKitDecl && Platform == "ios";
       // These constraint selectors intentionally remain owned by Swift shims.
-      if (legacyUIKit && introduced == llvm::VersionTuple(6, 0)) {
+      if (legacyUIKit && introduced == llvm::VersionTuple(6, 0) &&
+          legacyDeploymentMajor(C) < 6) {
         const clang::ObjCInterfaceDecl *owner = nullptr;
         StringRef memberName;
         if (auto interface = dyn_cast<clang::ObjCInterfaceDecl>(ClangDecl))
@@ -8583,8 +8584,14 @@ void ClangImporter::Implementation::importAttributes(
 
       if (legacyUIKit && introduced > llvm::VersionTuple(5, 0)) {
         unsigned ceiling = legacyUIKitDeclarationCeiling(ClangDecl);
-        if (ceiling && introduced <= llvm::VersionTuple(ceiling, 0))
-          introduced = llvm::VersionTuple(5, 0);
+        // Lower to the deployment target N (never below the declaration's own
+        // introduction): the backport serves it at N, and it is native from its
+        // real version on. At target >= its introduction nothing is lowered, so
+        // Apple's own declaration applies (no shim shadowing).
+        unsigned deployment = legacyDeploymentMajor(C);
+        if (ceiling && introduced <= llvm::VersionTuple(ceiling, 0) &&
+            introduced > llvm::VersionTuple(deployment, 0))
+          introduced = llvm::VersionTuple(deployment, 0);
       }
 
       if (legacyFoundationDecl && Platform == "ios" &&

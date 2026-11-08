@@ -161,7 +161,7 @@ ModuleDependencyVector ClangImporter::bridgeClangModuleDependencies(
     // use extra clang options alone.
     swiftArgs.push_back("-only-use-extra-clang-opts");
 
-    if (usesLegacyCollectionDeclarations(ctx)) {
+    if (usesLegacyUIKitBackportDeclarations(ctx)) {
       // Explicit PCM builds reconstruct the same importer VFS even though their
       // Clang options are replayed verbatim. The VFS hook runs before the
       // ExtraArgsOnly invocation, and needs the Swift-side target/SDK/resources.

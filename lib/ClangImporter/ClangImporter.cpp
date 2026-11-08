@@ -877,8 +877,11 @@ importer::addCommonInvocationArguments(
   // default without changing any other target's SDK configuration.
   if (ctx.LangOpts.LegacyIOS5ClassMarking && triple.isiOS() &&
       !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
-      !triple.isMacCatalystEnvironment() && triple.isOSVersionLT(6)) {
-    invocationArgStrs.push_back("-DOS_OBJECT_SWIFT3=0");
+      !triple.isMacCatalystEnvironment() && triple.isOSVersionLT(11)) {
+    // os/object.h only needs the override below iOS 6; -marm applies to every
+    // armv7 legacy target (same instruction-mode reasoning as iOS 5).
+    if (triple.isOSVersionLT(6))
+      invocationArgStrs.push_back("-DOS_OBJECT_SWIFT3=0");
     // IRGen obtains its target features from this Clang invocation. Use ARM
     // instructions for the legacy 32-bit runtime: old device link/load paths
     // do not reliably preserve Thumb's mode bit in indirect function pointers
@@ -892,7 +895,7 @@ importer::addCommonInvocationArguments(
   // The legacy UIKit Swift overlay imports a build-only C module that backs the
   // backported Objective-C facades. Ship its headers inside the iOS 5 resource
   // tree and add them here so client compilations need no extra flags.
-  if (usesLegacyCollectionDeclarations(ctx) &&
+  if (usesLegacyUIKitBackportDeclarations(ctx) &&
       !ctx.SearchPathOpts.RuntimeResourcePath.empty()) {
     llvm::SmallString<256> backports(ctx.SearchPathOpts.RuntimeResourcePath);
     llvm::sys::path::append(backports, "legacy-backports", "include");
@@ -902,8 +905,13 @@ importer::addCommonInvocationArguments(
 
   // Discriminate these PCMs from native UIKit and earlier importer mappings.
   // Bump this value if the declaration/linkage transformation changes.
-  if (usesLegacyCollectionDeclarations(ctx))
-    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=6");
+  if (usesLegacyUIKitBackportDeclarations(ctx))
+    // The deployment major is part of the PCM identity: the header rewrites
+    // differ per tier, so a module built for 5 must not be reused at 6..10.
+    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_COLLECTIONS=7");
+  if (usesLegacyUIKitBackportDeclarations(ctx))
+    invocationArgStrs.push_back("-D__SWIFT_LEGACY_UIKIT_TIER=" +
+                                std::to_string(legacyDeploymentMajor(ctx)));
 
   for (auto extraArg : importerOpts.ExtraArgs) {
     invocationArgStrs.push_back(extraArg);

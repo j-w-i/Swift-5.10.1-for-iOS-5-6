@@ -27,23 +27,37 @@ using namespace swift;
 
 using Path = SmallString<128>;
 
+/// Highest armv7 iOS deployment major the legacy backport tree serves. The
+/// toolchain cannot emit armv7 at iOS 11+, and every backported family is
+/// native by iOS 9 (anchors/guides/stack) or 10, so 5..10 is the useful range.
+static const unsigned LegacyMaxDeploymentMajor = 10;
+
+static bool isLegacyArmDevice(const llvm::Triple &triple) {
+  return triple.isiOS() && !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
+         !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5) &&
+         triple.isOSVersionLT(LegacyMaxDeploymentMajor + 1);
+}
+
+unsigned swift::legacyDeploymentMajor(const ASTContext &ctx) {
+  return ctx.LangOpts.Target.getiOSVersion().getMajor();
+}
+
+/// iOS 5 only: PSTCollectionView stands in for the (iOS 6) UICollectionView.
 bool swift::usesLegacyCollectionDeclarations(const ASTContext &ctx) {
   const auto &triple = ctx.LangOpts.ClangTarget
                            ? *ctx.LangOpts.ClangTarget : ctx.LangOpts.Target;
-  return ctx.LangOpts.LegacyIOS5ClassMarking && triple.isiOS() &&
-         !triple.isTvOS() && !triple.isSimulatorEnvironment() &&
-         !triple.isMacCatalystEnvironment() && !triple.isOSVersionLT(5) &&
+  return ctx.LangOpts.LegacyIOS5ClassMarking && isLegacyArmDevice(triple) &&
          triple.isOSVersionLT(6);
 }
 
+/// armv7 iOS 5..10 with the explicit legacy opt-in: UIKit declarations newer
+/// than the deployment target are served by the backport tree.
 bool swift::usesLegacyUIKitBackportDeclarations(const ASTContext &ctx) {
   const auto &deployment = ctx.LangOpts.Target;
   const auto &target = ctx.LangOpts.ClangTarget
       ? *ctx.LangOpts.ClangTarget : deployment;
-  return usesLegacyCollectionDeclarations(ctx) && deployment.isiOS() &&
-      !deployment.isTvOS() && !deployment.isSimulatorEnvironment() &&
-      !deployment.isMacCatalystEnvironment() && !deployment.isOSVersionLT(5) &&
-      deployment.isOSVersionLT(6) &&
+  return ctx.LangOpts.LegacyIOS5ClassMarking && isLegacyArmDevice(deployment) &&
+      isLegacyArmDevice(target) &&
       (target.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
        target.getSubArch() == llvm::Triple::ARMSubArch_v7s);
 }
@@ -52,7 +66,10 @@ bool swift::usesLegacyUIKitBackportDeclarations(const ASTContext &ctx) {
 /// Raw lexing skips comments/strings and distinguishes definitions from forward
 /// declarations and categories. Apply edits backwards to retain token offsets.
 static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
-                                          bool foundationFacades = false) {
+                                          bool foundationFacades = false,
+                                          unsigned deploymentMajor = 5) {
+  // Rewrites apply only below the version at which the SDK's own class is real.
+  const bool collections = deploymentMajor < 6;
   struct Edit { size_t offset; std::string text; };
   SmallVector<Edit, 16> edits;
   clang::LangOptions opts;
@@ -100,14 +117,14 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
               "__attribute__((objc_runtime_name(\"" + runtime.str() + "\"))) "});
         continue;
       }
-      bool supported = interface
+      bool supported = collections && (interface
           ? (name == "UICollectionView" || name == "UICollectionViewCell" ||
              name == "UICollectionReusableView" || name == "UICollectionViewLayout" ||
              name == "UICollectionViewFlowLayout" ||
              name == "UICollectionViewLayoutAttributes" ||
              name == "UICollectionViewController" || name == "UICollectionViewUpdateItem")
           : (name == "UICollectionViewDataSource" || name == "UICollectionViewDelegate" ||
-             name == "UICollectionViewDelegateFlowLayout");
+             name == "UICollectionViewDelegateFlowLayout"));
       if (supported) {
         std::string runtime = "PST" + name.drop_front(2).str();
         edits.push_back({tokens[i].getLocation().getRawEncoding() - 1,
@@ -115,14 +132,16 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
       } else if (backportFacades) {
         // Static facade symbols shipped by UIKitBackports. NSLayoutConstraint
         // deliberately retains its existing runtime registration contract.
+        // A class is bound to its backport facade only while the deployment
+        // target predates the version that introduced it natively.
         StringRef runtime = llvm::StringSwitch<StringRef>(name)
-            .Case("UILayoutGuide", "UICLayoutGuide")
-            .Case("NSLayoutAnchor", "UICLayoutAnchor")
-            .Case("NSLayoutXAxisAnchor", "UICXAxisAnchor")
-            .Case("NSLayoutYAxisAnchor", "UICYAxisAnchor")
-            .Case("NSLayoutDimension", "UICLayoutDimension")
-            .Case("UIRefreshControl", "UICRefreshControl")
-            .Case("UIStackView", "UICStackView")
+            .Case("UILayoutGuide", deploymentMajor < 9 ? "UICLayoutGuide" : "")
+            .Case("NSLayoutAnchor", deploymentMajor < 9 ? "UICLayoutAnchor" : "")
+            .Case("NSLayoutXAxisAnchor", deploymentMajor < 9 ? "UICXAxisAnchor" : "")
+            .Case("NSLayoutYAxisAnchor", deploymentMajor < 9 ? "UICYAxisAnchor" : "")
+            .Case("NSLayoutDimension", deploymentMajor < 9 ? "UICLayoutDimension" : "")
+            .Case("UIRefreshControl", deploymentMajor < 6 ? "UICRefreshControl" : "")
+            .Case("UIStackView", deploymentMajor < 9 ? "UICStackView" : "")
             .Default("");
         std::string runtimeName = interface ? runtime.str() : std::string();
         // Verified IBP capability contract: fourteen public interfaces and
@@ -147,7 +166,7 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
       }
     }
     auto name = spelling(tokens[i]);
-    if (backportFacades && name == "UIViewNoIntrinsicMetric" && i &&
+    if (backportFacades && deploymentMajor < 6 && name == "UIViewNoIntrinsicMetric" && i &&
         spelling(tokens[i - 1]) == "CGFloat")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
           " __asm__(\"_SwiftLegacyUIViewNoIntrinsicMetric\")"});
@@ -175,7 +194,7 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
     }
     // Genuine UIKit attribute-name constants (iOS 6) with the identical CoreText
     // string values, provided by the SDK runtime on iOS 5.
-    if (backportFacades && i && spelling(tokens[i - 1]) == "const" &&
+    if (backportFacades && deploymentMajor < 6 && i && spelling(tokens[i - 1]) == "const" &&
         (name == "NSFontAttributeName" ||
          name == "NSForegroundColorAttributeName" ||
          name == "NSUnderlineStyleAttributeName"))
@@ -694,9 +713,11 @@ SmallVector<std::pair<std::string, std::string>, 2> GetWindowsFileMappings(
 static void getLegacyCollectionFileMapping(
     ClangInvocationFileMapping &result, ASTContext &ctx,
     const llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> &vfs) {
-  if (!usesLegacyCollectionDeclarations(ctx) ||
-      ctx.SearchPathOpts.getSDKPath().empty())
+  const bool collections = usesLegacyCollectionDeclarations(ctx);   // iOS 5 only
+  const bool backports = usesLegacyUIKitBackportDeclarations(ctx);  // iOS 5..10
+  if ((!collections && !backports) || ctx.SearchPathOpts.getSDKPath().empty())
     return;
+  const unsigned deploymentMajor = legacyDeploymentMajor(ctx);
 
   Path headers(ctx.SearchPathOpts.getSDKPath());
   llvm::sys::path::append(headers, "System", "Library", "Frameworks");
@@ -710,9 +731,6 @@ static void getLegacyCollectionFileMapping(
   Path resource(ctx.SearchPathOpts.RuntimeResourcePath);
   llvm::sys::path::append(resource, "legacy-collection", "Headers",
                           "UIKitLegacyCollection.h");
-  // A missing resource must fail when UIKit is imported, not silently restore
-  // iOS 6 declarations in an iOS 5 compilation. In particular, do not test for
-  // the header's existence here. Let Clang diagnose the missing include.
   std::string include =
       "\n// Swift legacy iOS 5 UIKit module augmentation.\n#include \"";
   for (char c : resource) {
@@ -724,9 +742,10 @@ static void getLegacyCollectionFileMapping(
   Path nativeCollection(headers);
   llvm::sys::path::append(nativeCollection, "UICollectionView.h");
   if (vfs->exists(nativeCollection)) {
-    bool backportFacades = usesLegacyUIKitBackportDeclarations(ctx);
     // Keep native signatures, modern declarations, and API-notes associations.
     // Change only supported Objective-C/C linkage, inside the real UIKit module.
+    // Each rewrite is gated per deployment version inside legacyCollectionHeader,
+    // so a class the SDK already provides at the target keeps its native identity.
     for (StringRef file : {"UICollectionView.h", "UICollectionViewCell.h",
                           "UICollectionViewLayout.h", "UICollectionViewFlowLayout.h",
                           "UICollectionViewController.h", "UICollectionViewUpdateItem.h",
@@ -737,20 +756,26 @@ static void getLegacyCollectionFileMapping(
       llvm::sys::path::append(path, file);
       if (auto source = vfs->getBufferForFile(path))
         result.overridenFiles.emplace_back(path.str().str(),
-            legacyCollectionHeader(source.get()->getBuffer(), backportFacades));
+            legacyCollectionHeader(source.get()->getBuffer(), backports,
+                                   /*foundationFacades=*/false, deploymentMajor));
     }
-    // Fail closed on incomplete toolchain packaging, without including duplicate
-    // fallback declarations into a contemporary SDK.
-    std::string augmented(contents.get()->getBuffer());
-    augmented += "\n#if !__has_include(\"";
-    for (char c : resource) {
-      if (c == '\\' || c == '"') augmented += '\\';
-      augmented += c;
+    // The supplemental collection header exists only for iOS 5 SDK-less cases.
+    if (collections) {
+      // Fail closed on incomplete toolchain packaging, without including
+      // duplicate fallback declarations into a contemporary SDK.
+      std::string augmented(contents.get()->getBuffer());
+      augmented += "\n#if !__has_include(\"";
+      for (char c : resource) {
+        if (c == '\\' || c == '"') augmented += '\\';
+        augmented += c;
+      }
+      augmented += "\")\n" + include + "#endif\n";
+      result.overridenFiles.emplace_back(umbrella.str().str(), std::move(augmented));
     }
-    augmented += "\")\n" + include + "#endif\n";
-    result.overridenFiles.emplace_back(umbrella.str().str(), std::move(augmented));
     return;
   }
+  if (!collections)
+    return;
   std::string augmented(contents.get()->getBuffer());
   augmented += include;
   result.overridenFiles.emplace_back(umbrella.str().str(), std::move(augmented));
