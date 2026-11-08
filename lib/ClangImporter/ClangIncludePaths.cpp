@@ -204,7 +204,7 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
         spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
           " __asm__(\"_IBPNSDirectionalEdgeInsetsZero\")"});
-    if ((name == "UICollectionElementKindSectionHeader" ||
+    if (collections && (name == "UICollectionElementKindSectionHeader" ||
          name == "UICollectionElementKindSectionFooter") && i &&
         spelling(tokens[i - 1]) == "const") {
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
