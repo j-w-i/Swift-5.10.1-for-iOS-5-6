@@ -1,12 +1,26 @@
 #!/bin/bash
 # Source-only Swift 5.10 Float/Double Substring entries. No installation.
-# Usage: SDK CLANG AR SWIFTC_OR_FRONTEND RES OUT [CORE] (absolute paths, OUT new)
+# Usage: ARCH SDK CLANG AR SWIFTC_OR_FRONTEND RES OUT [CORE] (absolute paths, OUT new)
+#
+# ARCH selects the slice: armv7 keeps the legacy iOS 5.0 floor in ARM mode, armv7s/arm64 build the
+# same Swift/C sources at an iOS 7.0 floor (arm64 additionally drops the 32-bit ARM-mode flags).
 set -euo pipefail
 umask 022
 fail() { printf 'build-native-numeric-runtime: %s\n' "$*" >&2; exit 1; }
-[ "$#" -eq 6 ] || [ "$#" -eq 7 ] || fail 'Usage: SDK CLANG AR SWIFTC_OR_FRONTEND RES OUT [CORE]'
-SDK=$1; CLANG=$2; AR=$3; SWIFTC=$4; RES=$5; OUT=$6
-CORE=${7:-$RES/iphoneos/libswiftCore.dylib}
+[ "$#" -eq 7 ] || [ "$#" -eq 8 ] || fail 'Usage: ARCH SDK CLANG AR SWIFTC_OR_FRONTEND RES OUT [CORE]'
+ARCH=$1; SDK=$2; CLANG=$3; AR=$4; SWIFTC=$5; RES=$6; OUT=$7
+CORE=${8:-$RES/iphoneos/libswiftCore.dylib}
+case "$ARCH" in
+  armv7)  TARGET_SUFFIX=apple-ios5.0; ARCH_FLAGS=(-marm); ISET='ARM' ;;
+  armv7s) TARGET_SUFFIX=apple-ios7.0; ARCH_FLAGS=(-marm); ISET='ARM' ;;
+  arm64)  TARGET_SUFFIX=apple-ios7.0; ARCH_FLAGS=();      ISET='ARM64' ;;
+  *) fail "Unsupported architecture: $ARCH" ;;
+esac
+TARGET="$ARCH-$TARGET_SUFFIX"
+# The legacy ABI/runtime flag only exists for the armv7 iOS 5 slice; newer slices use the normal
+# Swift 5 ABI so they must not enable it.
+LEGACY_RUNTIME_FLAGS=()
+[ "$ARCH" = armv7 ] && LEGACY_RUNTIME_FLAGS=(-enable-legacy-ios5-runtime)
 [ -f "$CORE" ] || fail 'Missing selected legacy Core for ABI validation'
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 SRC="$HERE/native-numeric-runtime"
@@ -27,7 +41,7 @@ run() {
     tail -60 "$OUT/logs/$name.log" >&2; fail "Failed: $name"
   fi
 }
-run cxx "$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" \
+run cxx "$CLANG" -target "$TARGET" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} -isysroot "$SDK" \
   -std=c++11 -stdlib=libc++ -O2 -g0 -fno-exceptions -fno-rtti -fvisibility=hidden \
   "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" \
   -Werror=unguarded-availability -Werror=unguarded-availability-new \
@@ -38,8 +52,8 @@ AUTOLINK_FLAGS=(-Xfrontend -disable-all-autolinking)
 if [[ "$(basename "$SWIFTC")" = swift-frontend ]]; then
   AUTOLINK_FLAGS=(-disable-all-autolinking)
 fi
-run swift "$SWIFTC" -O -parse-as-library -target armv7-apple-ios5.0 \
-  -sdk "$SDK" -resource-dir "$RES" -enable-legacy-ios5-runtime \
+run swift "$SWIFTC" -O -parse-as-library -target "$TARGET" \
+  -sdk "$SDK" -resource-dir "$RES" ${LEGACY_RUNTIME_FLAGS[@]+"${LEGACY_RUNTIME_FLAGS[@]}"} \
   -runtime-compatibility-version none -module-name SwiftLegacyNativeNumeric \
   -module-cache-path "$OUT/cache" -I "$SRC/private" \
   -file-prefix-map "$HERE=utils/legacy-ios5-mac" \
@@ -49,11 +63,11 @@ run archive "$AR" rcs "$OUT/libswiftLegacyNativeNumeric.a" \
   "$OUT/objects/NativeNumeric.o" "$OUT/objects/NumericParsing.o"
 "${PYTHON:-python3}" "$SRC/tests/audit-archive.py" "$SRC" "$OUT" "$CORE"
 "${PYTHON:-python3}" - "$SRC" "$SDK" "$CLANG" "$AR" "$SWIFTC" "$RES" "$OUT" "$CORE" <<'PY'
-import hashlib,json,pathlib,subprocess,sys
+import hashlib, os,json,pathlib,subprocess,sys
 src,sdk,clang,ar,swiftc,res,out,core=map(pathlib.Path,sys.argv[1:])
 h=lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 manifest={
- 'target':'armv7-apple-ios5.0','instructionSetC':'ARM','swiftOptimization':'-O',
+ 'target':os.environ.get('NUMERIC_TARGET','armv7-apple-ios5.0'),'instructionSetC':os.environ.get('NUMERIC_ISET','ARM'),'swiftOptimization':'-O',
  'sdk':str(sdk),'resourceDir':str(res),'clang':str(clang),'ar':str(ar),'swiftc':str(swiftc),
  'clangVersion':subprocess.check_output([str(clang),'--version'],text=True),
  'swiftVersion':subprocess.check_output([str(swiftc),'--version'],text=True),
