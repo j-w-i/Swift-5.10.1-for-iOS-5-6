@@ -106,21 +106,24 @@ shutil.copytree(cdispatch / 'cdispatch', shims / 'cdispatch')
 # python2.7 shebang and never generated files from a previous build directory.
 env = dict(os.environ)
 env['PYTHONDONTWRITEBYTECODE'] = '1'  # Never mutate the original source checkout.
+# Sources are generated once per pointer width: armv7/armv7s are 32-bit, arm64 is 64-bit, and
+# the gyb templates bake that decision in (CGFloat.NativeType is Float on 32-bit, Double on 64-bit).
 for name, files in source_lists.items():
-    response = []
-    for filename in files:
-        path = out / 'src/legacy-overlays' / name / filename
-        if filename.endswith('.gyb'):
-            generated = out / 'generated' / name / filename[:-4]
-            generated.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run([sys.executable, str(old / 'utils/gyb'), '--line-directive=',
-                            '-DCMAKE_SIZEOF_VOID_P=4', str(path), '-o', str(generated)],
-                           env=env, check=True)
-            require(generated.stat().st_size > 0, 'GYB generated an empty source: ' + str(generated))
-            path = generated
-        # Swift response files accept double quoted paths with escaped quotes.
-        response.append('"' + str(path).replace('\\', '\\\\').replace('"', '\\"') + '"')
-    (probes / (name.lower() + '510-sources.txt')).write_text('\n'.join(response) + '\n')
+    for width, generated_dir, suffix in ((4, 'generated', ''), (8, 'generated-64', '-64')):
+        response = []
+        for filename in files:
+            path = out / 'src/legacy-overlays' / name / filename
+            if filename.endswith('.gyb'):
+                generated = out / generated_dir / name / filename[:-4]
+                generated.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run([sys.executable, str(old / 'utils/gyb'), '--line-directive=',
+                                '-DCMAKE_SIZEOF_VOID_P=' + str(width), str(path), '-o', str(generated)],
+                               env=env, check=True)
+                require(generated.stat().st_size > 0, 'GYB generated an empty source: ' + str(generated))
+                path = generated
+            # Swift response files accept double quoted paths with escaped quotes.
+            response.append('"' + str(path).replace('\\', '\\\\').replace('"', '\\"') + '"')
+        (probes / (name.lower() + '510-sources' + suffix + '.txt')).write_text('\n'.join(response) + '\n')
 
 # Content manifest allows comparing preparation runs without relying on mtimes.
 manifest = {}

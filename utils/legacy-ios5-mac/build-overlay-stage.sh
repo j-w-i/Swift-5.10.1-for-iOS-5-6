@@ -58,6 +58,10 @@ for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
   # sources and, when its Objective-C facades need a build-only module, a
   # module map; both are optional so older stages keep building.
   SOURCES_FILE="$STAGE/probes/${lower}510-sources.txt"
+  # 64-bit slices need the sources generated with 64-bit pointer assumptions.
+  if [ "$ARCH" = arm64 ] && [ -s "$STAGE/probes/${lower}510-sources-64.txt" ]; then
+    SOURCES_FILE="$STAGE/probes/${lower}510-sources-64.txt"
+  fi
   if [ "$NAME" = UIKit ] && [ -s "$STAGE/probes/backports-runtime/swift-sources.txt" ]; then
     # Appending must be idempotent: a re-run restores the prepared base list so
     # backport sources are never listed twice.

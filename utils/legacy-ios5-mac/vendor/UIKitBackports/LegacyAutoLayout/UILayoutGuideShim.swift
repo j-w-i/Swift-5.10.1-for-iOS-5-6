@@ -103,12 +103,20 @@ public extension UIView {
         }
         let guide = UILayoutGuide()
         addLayoutGuide(guide)
-        // Pin the guide to the owning view's layout margins.
+        // Pin the guide to the owning view's layout margins. `layoutMargins` is an iOS 8 API, so it must be
+        // availability-checked here: the legacy slice compiles with availability lowered to 5.0 and never
+        // takes the else branch, while an armv7s/arm64 slice built at an iOS 7 floor uses the default insets.
+        let insets: UIEdgeInsets
+        if #available(iOS 8.0, *) {
+            insets = layoutMargins
+        } else {
+            insets = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        }
         NSLayoutConstraint.activate([
-            guide.topAnchor.constraint(equalTo: topAnchor, constant: layoutMargins.top),
-            guide.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -layoutMargins.bottom),
-            guide.leadingAnchor.constraint(equalTo: leadingAnchor, constant: layoutMargins.left),
-            guide.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -layoutMargins.right)
+            guide.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
+            guide.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -insets.bottom),
+            guide.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.left),
+            guide.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right)
         ])
         objc_setAssociatedObject(self, &layoutMarginsGuideKey, guide, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return guide
