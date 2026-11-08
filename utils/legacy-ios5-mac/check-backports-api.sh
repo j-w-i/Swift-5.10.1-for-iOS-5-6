@@ -80,26 +80,55 @@ mkdir -p "$OUT/ios5.0"
 "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-library -typecheck \
   "$OUT/BackportsClient.swift" > "$OUT/ios5.0/build.log" 2>&1
 
-# iOS 6 keeps native availability: Auto Layout exists, later families do not.
-mkdir -p "$OUT/ios6.0"
-cat > "$OUT/NativeAutoLayout.swift" <<'SWIFT'
+# Multi-target contract (iOS 5..10, armv7): at deployment target N every API is usable
+# with ordinary spelling — Apple's own declaration when it is native at N, the backport
+# shim when it is newer. Members NEWER than what the backport implements stay unavailable.
+# Native introduction versions come from the SDK headers: constraints/preferredMaxLayoutWidth
+# 6, layoutMargins + activate/deactivate/isActive 8, anchors/UILayoutGuide/UIStackView 9.
+cat > "$OUT/Matrix.swift" <<'SWIFT'
 import UIKit
-func useAutoLayout(_ view: UIView, _ other: UIView) {
-    let constraint = view.leadingAnchor.constraint(equalTo: other.leadingAnchor)
-    constraint.isActive = true
+func matrix(_ v: UIView, _ w: UIView) {
+    v.addConstraint(NSLayoutConstraint(item: v, attribute: .top, relatedBy: .equal, toItem: w,
+                                       attribute: .top, multiplier: 1, constant: 0))
+    let label = UILabel(); label.preferredMaxLayoutWidth = 120
+    _ = UIRefreshControl()
+    let c = v.leadingAnchor.constraint(equalTo: w.leadingAnchor)
+    c.isActive = true
+    NSLayoutConstraint.activate([c]); NSLayoutConstraint.deactivate([c])
+    _ = v.layoutMargins
+    let stack = UIStackView(arrangedSubviews: [v]); stack.axis = .vertical
+    let guide = UILayoutGuide(); v.addLayoutGuide(guide)
+    _ = guide.leadingAnchor.constraint(equalTo: v.leadingAnchor)
 }
 SWIFT
-"$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios6.0 -parse-as-library -typecheck \
-  "$OUT/NativeAutoLayout.swift" > "$OUT/ios6.0/build.log" 2>&1
+for target in 5.0 6.0 7.0 8.0 9.0 10.0; do
+  mkdir -p "$OUT/ios$target"
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+    "$OUT/Matrix.swift" > "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: backport matrix does not compile at iOS $target" >&2; exit 1; }
+done
+# Native-API names must not be shadowed by an obsolete shim at a target where Apple's exists.
+cat > "$OUT/NativeWins.swift" <<'SWIFT'
+import UIKit
+func nativeWins(_ v: UIView) { let a: NSLayoutXAxisAnchor = v.leadingAnchor; _ = a; let g: UILayoutGuide = UILayoutGuide(); _ = g }
+SWIFT
+for target in 9.0 10.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+    "$OUT/NativeWins.swift" >> "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: native NSLayoutXAxisAnchor/UILayoutGuide must be the real types at iOS $target" >&2; exit 1; }
+done
+# Newer-than-implemented members stay unavailable below their native version.
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit
-func useLaterFamily() { _ = UIStackView() }
+func useLaterFamily(_ v: UIView) { _ = v.safeAreaLayoutGuide }
 SWIFT
-if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios6.0 -parse-as-library -typecheck \
-     "$OUT/LaterFamily.swift" >> "$OUT/ios6.0/build.log" 2>&1; then
-  echo 'FAIL: UIStackView must stay unavailable when compiling for iOS 6' >&2
-  exit 1
-fi
+for target in 6.0 9.0; do
+  if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+       "$OUT/LaterFamily.swift" >> "$OUT/ios$target/build.log" 2>&1; then
+    echo "FAIL: safeAreaLayoutGuide (iOS 11) must stay unavailable at iOS $target" >&2
+    exit 1
+  fi
+done
 
 # A member introduced after the backported family floor stays unavailable at iOS 5.
 mkdir -p "$OUT/ios5.0-negative"
@@ -125,4 +154,4 @@ if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-libr
   echo 'FAIL: UIVisualEffectView must stay unavailable (excluded from the backport set)' >&2
   exit 1
 fi
-echo 'PASS: UIKit backports available at an iOS 5 target, version-gated for later targets and members'
+echo 'PASS: UIKit backports usable at every armv7 target iOS 5..10 (native where available, shimmed below), later members gated'
