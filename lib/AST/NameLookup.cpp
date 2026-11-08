@@ -834,6 +834,30 @@ static void recordShadowedDecls(ArrayRef<ValueDecl *> decls,
   if (decls.size() < 2)
     return;
 
+  // Legacy backport tiers (armv7 iOS 5..10): a Swift overlay shim is marked
+  // obsoleted at the iOS version where the SDK's own API appears. Once the
+  // deployment target reaches that version the shim is unavailable and the
+  // native declaration must win — even though their types differ (e.g. the
+  // shim `Anchor` vs `NSLayoutXAxisAnchor`), so signature matching would never
+  // pair them. Pair by name and owning nominal type instead.
+  if (decls.front()->getASTContext().LangOpts.LegacyIOS5ClassMarking) {
+    auto &ctx = decls.front()->getASTContext();
+    for (auto *shim : decls) {
+      if (shim->hasClangNode() || !AvailableAttr::isUnavailable(shim))
+        continue;
+      auto *shimOwner = shim->getDeclContext()->getSelfNominalTypeDecl();
+      for (auto *native : decls) {
+        if (native == shim || !native->hasClangNode() ||
+            AvailableAttr::isUnavailable(native))
+          continue;
+        auto *nativeOwner = native->getDeclContext()->getSelfNominalTypeDecl();
+        bool sameOwner = shimOwner == nativeOwner ||
+            (!shimOwner && !nativeOwner && isa<TypeDecl>(shim) && isa<TypeDecl>(native));
+        if (sameOwner) { shadowed.insert(shim); break; }
+      }
+    }
+  }
+
   llvm::TinyPtrVector<ValueDecl *> typeDecls;
 
   // Categorize all of the declarations based on their overload signatures.
