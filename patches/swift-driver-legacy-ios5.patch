@@ -229,10 +229,10 @@ index 5b2cb48..0ec94ef 100644
                                     workingDirectory: workingDirectory,
 diff --git a/Sources/SwiftDriver/Driver/LegacyIOS5.swift b/Sources/SwiftDriver/Driver/LegacyIOS5.swift
 new file mode 100644
-index 0000000..129e238
+index 0000000..91205c6
 --- /dev/null
 +++ b/Sources/SwiftDriver/Driver/LegacyIOS5.swift
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,81 @@
 +//===--------------- LegacyIOS5.swift - Explicit legacy runtime ------------===//
 +//
 +// Licensed under Apache License v2.0 with Runtime Library Exception
@@ -249,6 +249,8 @@ index 0000000..129e238
 +enum LegacyIOS5 {
 +  enum ValidationError: Error, DiagnosticData {
 +    case unsupportedTarget
++    case unsupportedClassMarking
++    case unsupportedDeploymentTarget(String)
 +    case disabledClassMarking
 +    case staticMode
 +    case missingCRT(String)
@@ -257,7 +259,11 @@ index 0000000..129e238
 +    var description: String {
 +      switch self {
 +      case .unsupportedTarget:
-+        return "legacy iOS 5 modes require an armv7 Apple iOS device target without a target variant"
++        return "legacy iOS 5 modes require an armv7, armv7s or arm64 Apple iOS device target without a target variant"
++      case .unsupportedClassMarking:
++        return "legacy iOS 5 class marking is an armv7 Objective-C class-ABI bridge; armv7s and arm64 use the backported declaration surface only"
++      case .unsupportedDeploymentTarget(let arch):
++        return "legacy \(arch) backports require an iOS 7.0 or newer deployment target; 64-bit devices never ran iOS 5/6"
 +      case .disabledClassMarking:
 +        return "-enable-legacy-ios5-runtime requires legacy iOS 5 class marking; remove -disable-legacy-ios5-class-marking"
 +      case .staticMode:
@@ -272,17 +278,33 @@ index 0000000..129e238
 +
 +  static func validate(_ options: inout ParsedOptions, target: Triple?, targetVariant: Triple?) throws {
 +    let runtime = options.hasArgument(.enableLegacyIos5Runtime)
++    let markingRequested = options.hasArgument(.enableLegacyIos5ClassMarking)
 +    let marking = options.hasFlag(positive: .enableLegacyIos5ClassMarking,
 +                                  negative: .disableLegacyIos5ClassMarking,
 +                                  default: runtime)
-+    if runtime && !marking {
-+      throw ValidationError.disabledClassMarking
-+    }
 +    guard runtime || marking else { return }
 +    guard let target = target, target.vendor == .apple,
-+          target.archName == "armv7", target.darwinPlatform == .iOS(.device),
++          target.darwinPlatform == .iOS(.device),
 +          targetVariant == nil else {
 +      throw ValidationError.unsupportedTarget
++    }
++    let arch = target.archName
++    guard arch == "armv7" || arch == "armv7s" || arch == "arm64" else {
++      throw ValidationError.unsupportedTarget
++    }
++    if arch == "armv7" {
++      // The 32-bit class-marking bridge is what serves iOS 5/6 at the ObjC ABI level.
++      if runtime && !marking {
++        throw ValidationError.disabledClassMarking
++      }
++    } else {
++      if markingRequested && marking {
++        throw ValidationError.unsupportedClassMarking
++      }
++      guard runtime else { throw ValidationError.unsupportedTarget }
++      guard target.osVersion.major >= 7 else {
++        throw ValidationError.unsupportedDeploymentTarget(arch)
++      }
 +    }
 +    if runtime && (options.hasArgument(.static) ||
 +        options.hasFlag(positive: .staticStdlib, negative: .noStaticStdlib, default: false) ||
@@ -310,17 +332,22 @@ index dd9a7e3..86ed9ce 100644
         // which is different from "default" CMO.
         !parsedOptions.hasArgument(.CrossModuleOptimization) {
 diff --git a/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift b/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
-index 0fae4a2..1cde808 100644
+index 0fae4a2..fc17e44 100644
 --- a/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
 +++ b/Sources/SwiftDriver/Jobs/DarwinToolchain+LinkerSupport.swift
-@@ -237,6 +237,30 @@ extension DarwinToolchain {
+@@ -237,6 +237,37 @@ extension DarwinToolchain {
        commandLine.appendFlag("-darwin-target-variant=\(variantTriple.triple)")
      }
  
 +    if parsedOptions.hasArgument(.enableLegacyIos5Runtime) {
++      // The iOS 5 helper objects patch the 32-bit runtime/overlay split. armv7s
++      // and arm64 link a current stdlib whose Core and SDK already carry those
++      // entries, so only the armv7 slice takes the crt and helpers.
++      let legacy32 = targetTriple.archName == "armv7"
 +      // Clang must not synthesize an LC_MAIN startup (iOS 6+). Supply the
-+      // legacy crt explicitly, even when building the stdlib at a newer floor.
-+      if linkerOutputType == .executable {
++      // legacy crt explicitly. Only iOS 5 needs it: iOS 6 and newer load
++      // LC_MAIN, and crt1.3.1.o is a 32-bit armv7 object.
++      if legacy32 && linkerOutputType == .executable && targetTriple.osVersion.major < 6 {
 +        let crt = VirtualPath.lookup(targetInfo.runtimeResourcePath.path)
 +          .appending(components: "iphoneos", "crt1.3.1.o")
 +        guard try fileSystem.exists(crt) else {
@@ -329,14 +356,16 @@ index 0fae4a2..1cde808 100644
 +        commandLine.appendFlag("-Wl,-no_new_main")
 +        commandLine.appendPath(crt)
 +      }
-+      let backports = VirtualPath.lookup(targetInfo.runtimeResourcePath.path)
-+        .appending(components: "iphoneos", "libswiftLegacyIOS5Backports.a")
-+      guard try fileSystem.exists(backports) else {
-+        throw LegacyIOS5.ValidationError.missingBackports(backports.description)
++      if legacy32 {
++        let backports = VirtualPath.lookup(targetInfo.runtimeResourcePath.path)
++          .appending(components: "iphoneos", "libswiftLegacyIOS5Backports.a")
++        guard try fileSystem.exists(backports) else {
++          throw LegacyIOS5.ValidationError.missingBackports(backports.description)
++        }
++        // A normal archive input, not -force_load: extract only referenced
++        // backports, and permit newer runtimes to satisfy symbols themselves.
++        commandLine.appendPath(backports)
 +      }
-+      // A normal archive input, not -force_load: extract only referenced
-+      // backports, and permit newer runtimes to satisfy symbols themselves.
-+      commandLine.appendPath(backports)
 +      commandLine.appendFlag("-lobjc")
 +      commandLine.appendFlag("-lSystem")
 +    }
@@ -345,10 +374,10 @@ index 0fae4a2..1cde808 100644
      var cxxCompatEnabled = parsedOptions.hasArgument(.enableExperimentalCxxInterop)
      if let cxxInteropMode = parsedOptions.getLastArgument(.cxxInteroperabilityMode) {
 diff --git a/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift b/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
-index 21cdc65..20b37e3 100644
+index 21cdc65..ddfad49 100644
 --- a/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
 +++ b/Sources/SwiftDriver/Jobs/FrontendJobHelpers.swift
-@@ -309,6 +309,12 @@ extension Driver {
+@@ -309,6 +309,17 @@ extension Driver {
        commandLine.appendPath(.absolute(workingDirectory))
      }
  
@@ -356,6 +385,11 @@ index 21cdc65..20b37e3 100644
 +    try commandLine.appendLast(.enableLegacyIos5Runtime, from: &parsedOptions)
 +    if let marking = parsedOptions.arguments(for: .enableLegacyIos5ClassMarking, .disableLegacyIos5ClassMarking).last {
 +      commandLine.appendFlag(marking.option.spelling)
++    } else if parsedOptions.hasArgument(.enableLegacyIos5Runtime),
++              targetTriple.archName != "armv7" {
++      // The frontend defaults class marking to the runtime flag; armv7s/arm64
++      // keep the standard ABI and only take the backported declarations.
++      commandLine.appendFlag("-disable-legacy-ios5-class-marking")
 +    }
 +
      // Resource directory.

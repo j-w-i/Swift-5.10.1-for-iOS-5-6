@@ -159,8 +159,16 @@ try:
                                   [*flags, '-resource-dir', str(fixture)])
             require(resource == fixture and fixture / 'iphoneos' in libs,
                     f'{backend}: explicit resource directory was replaced')
+        # armv7s/arm64 serve the same backported declarations on their iOS 7.0
+        # floor; they must route to swift_ios5 like armv7 does.
+        for wide in ('armv7s', 'arm64'):
+            wide_info, _ = info(backend + '-legacy-' + wide, backend,
+                                wide + '-apple-ios7.0', [legacy])
+            require(wide_info == old, f'{backend}: legacy {wide} must select lib/swift_ios5')
         invalid = (
-            ('arm64', 'arm64-apple-ios7.0', [legacy]),
+            ('arm64-ios6', 'arm64-apple-ios6.0', [legacy]),
+            ('arm64-class-marking', 'arm64-apple-ios7.0',
+             [legacy, '-enable-legacy-ios5-class-marking']),
             ('simulator', 'i386-apple-ios7.0-simulator', [legacy]),
             ('conflicting-marker', 'armv7-apple-ios7.0',
              [legacy, '-disable-legacy-ios5-class-marking']),

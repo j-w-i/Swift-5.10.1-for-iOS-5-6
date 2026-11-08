@@ -1126,25 +1126,51 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
   }
 
   // Class marking is an ABI choice, never inferred from deployment version.
+  const bool legacyRuntime = Args.hasArg(OPT_enable_legacy_ios5_runtime);
+  const bool legacyArmv7 = Target.getArch() == llvm::Triple::arm &&
+                           Target.getSubArch() == llvm::Triple::ARMSubArch_v7;
+  const bool legacyArmv7s = Target.getArch() == llvm::Triple::arm &&
+                            Target.getSubArch() == llvm::Triple::ARMSubArch_v7s;
+  const bool legacyArm64 = Target.getArch() == llvm::Triple::aarch64;
+
+  // Class marking defaults to the runtime opt-in only for the armv7 slice it
+  // belongs to; armv7s/arm64 keep the standard ABI unless it is asked for
+  // explicitly (which is then rejected below).
   Opts.LegacyIOS5ClassMarking = Args.hasFlag(
       OPT_enable_legacy_ios5_class_marking,
       OPT_disable_legacy_ios5_class_marking,
-      Args.hasArg(OPT_enable_legacy_ios5_runtime));
-  if (Args.hasArg(OPT_enable_legacy_ios5_runtime) &&
-      !Opts.LegacyIOS5ClassMarking) {
+      legacyRuntime && legacyArmv7);
+  // The backported declaration surface follows either opt-in: it is what makes
+  // newer UIKit/Foundation declarations usable at the slice's own floor.
+  Opts.LegacyIOS5Backports = legacyRuntime || Opts.LegacyIOS5ClassMarking;
+
+  if (legacyRuntime && !Opts.LegacyIOS5ClassMarking && legacyArmv7) {
     Diags.diagnose(SourceLoc(), diag::error_argument_not_allowed_with,
                    "-disable-legacy-ios5-class-marking",
                    "-enable-legacy-ios5-runtime");
     return true;
   }
-  if ((Opts.LegacyIOS5ClassMarking ||
-       Args.hasArg(OPT_enable_legacy_ios5_runtime)) &&
-      (Target.getArch() != llvm::Triple::arm ||
-       Target.getSubArch() != llvm::Triple::ARMSubArch_v7 ||
-       !Target.isiOS() || Target.isTvOS() ||
-       Target.isSimulatorEnvironment() || Target.isMacCatalystEnvironment())) {
+  // Bare class marking changes the 32-bit Objective-C class ABI, so it remains
+  // armv7-only. armv7s/arm64 use the standard ABI and only the backported
+  // declaration surface.
+  if (Opts.LegacyIOS5ClassMarking && !legacyArmv7) {
     Diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
                    "-enable-legacy-ios5-class-marking", Target.str());
+    return true;
+  }
+  if (Opts.LegacyIOS5Backports &&
+      (!Target.isiOS() || Target.isTvOS() ||
+       Target.isSimulatorEnvironment() || Target.isMacCatalystEnvironment() ||
+       !(legacyArmv7 || legacyArmv7s || legacyArm64))) {
+    Diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
+                   "-enable-legacy-ios5-runtime", Target.str());
+    return true;
+  }
+  // 64-bit devices never ran iOS 5/6; their backport floor is iOS 7.0.
+  if (Opts.LegacyIOS5Backports && !legacyArmv7 &&
+      Target.getiOSVersion().getMajor() < 7) {
+    Diags.diagnose(SourceLoc(), diag::error_unsupported_opt_for_target,
+                   "-enable-legacy-ios5-runtime", Target.str());
     return true;
   }
 

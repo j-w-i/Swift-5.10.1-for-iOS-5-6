@@ -171,7 +171,8 @@ COMMON=(-target "$ARCH-apple-ios$DEPLOYMENT" -isysroot "$SDK")
 # Legacy iOS 5 linking loses ARM/Thumb interworking bits on local relocations.
 # Native ObjC method lists and block helper pointers therefore must be ARM code,
 # like the Swift overlays and collection runtime compiled by the other stages.
-NATIVE=(-marm -O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
+NATIVE_MODE=(); [ "$LEGACY_SLICE" = 1 ] && NATIVE_MODE=(-marm)
+NATIVE=(${NATIVE_MODE[@]+"${NATIVE_MODE[@]}"} -O2 -fblocks -fno-objc-arc -fno-modules -fmodules-cache-path="$OUT/module-cache"
   -DSWIFT_RUNTIME -DSWIFT_STDLIB_BUILDING_OVERLAY -DOS_OBJECT_USE_OBJC=0 -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
   -I "$OUT/include" -I "$SWIFT51_SOURCE/include"
   -I "$LLVM_CONFIG_INCLUDE_DIR" -I "$LLVM_INCLUDE_DIR")
@@ -183,8 +184,12 @@ if [ "$RUNTIME_GEN" = 510 ]; then
   # 5.10 tree does not provide next to the overlay sources, so give it a mirror.
   mkdir -p "$OUT/include510/stdlib/public/Darwin/Foundation"
   ln -s "$SWIFT51_SOURCE/stdlib/public/runtime" "$OUT/include510/stdlib/public/runtime"
-  NATIVE+=(-DSWIFT_LEGACY_IOS5=1 -DSWIFT_LEGACY_IOS5_CLASS_MARKING=1
-           -I "$SWIFT51_SOURCE/stdlib/public" -I "$SWIFT51_SOURCE/stdlib/public/SwiftShims")
+  NATIVE+=(-I "$SWIFT51_SOURCE/stdlib/public" -I "$SWIFT51_SOURCE/stdlib/public/SwiftShims")
+  # Only the 32-bit slice uses the class-marking ABI; wide slices keep the
+  # standard Swift 5.10 ABI while taking the same backported declarations.
+  if [ "$LEGACY_SLICE" = 1 ]; then
+    NATIVE+=(-DSWIFT_LEGACY_IOS5=1 -DSWIFT_LEGACY_IOS5_CLASS_MARKING=1)
+  fi
   cp "$SRC/Foundation/NSError.h" "$OUT/include510/stdlib/public/Darwin/Foundation/NSError.h"
   NATIVE+=(-I "$OUT/include510/stdlib/public/Darwin/Foundation")
 else
@@ -215,7 +220,10 @@ if [ "$LEGACY_SLICE" = 1 ]; then
   run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/LegacyRuntimeBackports.o" \
     ${API_OBJECTS[@]+"${API_OBJECTS[@]}"}
 else
-  run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a"
+  # Wide slices need no legacy helper objects, but the archive must still be a
+  # valid archive: an empty member keeps it linkable and adds no symbols.
+  run EmptyBackports "$CLANG" "${COMMON[@]}" -x c -c /dev/null -o "$OUT/native/EmptyBackports.o"
+  run archive "$AR" rcs "$OUT/libLegacyRuntimeBackports.a" "$OUT/native/EmptyBackports.o"
 fi
 
 # Explicit dependency paths ensure no old overlay (especially CoreGraphics) can
@@ -252,6 +260,11 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
           EXTRA+=("$object")
         done
         EXTRA=("${EXTRA[@]}")
+        # The rebuilt Foundation overlay references the vendored FBP* facades for
+        # APIs the OS lacks, so the backport archive is part of every slice.
+        if [ -s "$FOUNDATION_ARCHIVE" ]; then
+          EXTRA+=(-Xlinker -force_load -Xlinker "$FOUNDATION_ARCHIVE")
+        fi
       fi ;;
     *)
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib" "$OUT/libswiftFoundation.dylib")

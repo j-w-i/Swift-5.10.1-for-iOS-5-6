@@ -194,7 +194,15 @@ namespace swift {
 
     /// Emit bare Objective-C class data pointers and the legacy RO-flags
     /// Swift marker. Opt-in only: deployment targets do not select this ABI.
+    /// This is a 32-bit Objective-C runtime ABI bridge, so it stays armv7-only.
     bool LegacyIOS5ClassMarking = false;
+
+    /// Serve the backported UIKit/Foundation declaration surface: declarations
+    /// introduced after the deployment target are lowered to it when a backport
+    /// family implements them. This is separate from class marking so the
+    /// armv7s/arm64 slices can use the same source surface on their own iOS 7+
+    /// floor while keeping the standard 64-bit ABI.
+    bool LegacyIOS5Backports = false;
 
     /// Disable API availability checking.
     bool DisableAvailabilityChecking = false;

@@ -841,7 +841,7 @@ static void recordShadowedDecls(ArrayRef<ValueDecl *> decls,
   // shim `Anchor` vs `NSLayoutXAxisAnchor`), so signature matching would never
   // pair them. Pair by name and owning nominal type instead.
   llvm::SmallVector<ValueDecl *, 4> legacyProtected;
-  if (decls.front()->getASTContext().LangOpts.LegacyIOS5ClassMarking) {
+  if (decls.front()->getASTContext().LangOpts.LegacyIOS5Backports) {
     auto &ctx = decls.front()->getASTContext();
     for (auto *shim : decls) {
       if (shim->hasClangNode() || !AvailableAttr::isUnavailable(shim))

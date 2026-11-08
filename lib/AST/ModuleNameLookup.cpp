@@ -190,7 +190,7 @@ void ModuleNameLookup<LookupStrategy>::lookupInModule(
   // Legacy backport tiers: an overlay type that is unavailable at the
   // deployment target must not end the search; Apple's same-named class lives
   // in the Clang half of this very module / its re-exports.
-  if (canReturnEarly && ctx.LangOpts.LegacyIOS5ClassMarking &&
+  if (canReturnEarly && ctx.LangOpts.LegacyIOS5Backports &&
       std::any_of(decls.begin() + initialCount, decls.end(), [](ValueDecl *d) {
         return !d->hasClangNode() && isa<TypeDecl>(d) &&
                AvailableAttr::isUnavailable(d);
@@ -275,7 +275,7 @@ void ModuleNameLookup<LookupStrategy>::lookupInModule(
   // deployment target (obsoleted at the version where Apple's own type of the
   // same name appears) yields to the native Clang declaration, so that both
   // `UILayoutGuide` and `UIKit.UILayoutGuide` resolve to Apple's class.
-  if (ctx.LangOpts.LegacyIOS5ClassMarking && decls.size() - initialCount > 1) {
+  if (ctx.LangOpts.LegacyIOS5Backports && decls.size() - initialCount > 1) {
     bool nativeAvailable = false;
     for (auto it = decls.begin() + initialCount; it != decls.end(); ++it)
       if ((*it)->hasClangNode() && isa<TypeDecl>(*it) &&

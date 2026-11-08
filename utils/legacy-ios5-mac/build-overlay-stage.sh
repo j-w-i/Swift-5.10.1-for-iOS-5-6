@@ -25,8 +25,13 @@ if [ "$LEGACY_ARCH" = 1 ]; then
   [ -s "$R/legacy-collection/Headers/UIKitLegacyCollection.h" ] || { echo 'Missing source-built legacy UIKit collection declarations.' >&2; exit 1; }
   EXTRA=(-enable-legacy-ios5-runtime); TARGET=5.0
 fi
+# Wide slices take the same backported declarations (they no longer use the
+# 32-bit ABI, so no -marm and no iOS 5 floor).
+[ "$LEGACY_ARCH" = 1 ] || EXTRA=(-enable-legacy-ios5-runtime)
+# Every slice ships the same backported declaration surface: armv7s/arm64 run on
+# systems that also lack the newer UIKit/Foundation/Dispatch declarations. Only
+# the ABI differs, and that is what LEGACY_ARCH (runtime flag, -marm) controls.
 LEGACY_DEFINE=(-D LEGACY_IOS5)
-[ "$LEGACY_ARCH" = 1 ] || LEGACY_DEFINE=()
 mkdir -p "$STAGE/logs"
 # Modules are independent (separate modules, separate objects, separate logs), so they build
 # concurrently. JOBS defaults to 4; the old serial behaviour was the slow path.
@@ -85,7 +90,7 @@ build_one() {
     fi
     /usr/bin/nice -n 15 /usr/bin/arch -x86_64 "$SWIFTC" ${JOB_FLAGS[@]+"${JOB_FLAGS[@]}"} \
       -parse-as-library -module-name "$NAME" -autolink-force-load \
-      -target "$ARCH-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" ${LEGACY_DEFINE:-} \
+      -target "$ARCH-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" ${LEGACY_DEFINE[@]+"${LEGACY_DEFINE[@]}"} \
       -I "$STAGE/probes/dispatch-shims" \
       -runtime-compatibility-version none -disable-autolinking-runtime-compatibility-dynamic-replacements \
       -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510-$ARCH.o" \

@@ -23,11 +23,18 @@ version gating works.
 
 ## Gating rule
 
-For a declaration introduced in iOS `N`, availability is relaxed to 5.0 only when:
+For a declaration introduced in iOS `N`, availability is relaxed to the slice's
+deployment floor only when:
 
-1. the invocation is a legacy iOS 5 native armv7 device compilation
-   (`-enable-legacy-ios5-runtime`, real Clang target below iOS 6), **and**
+1. the invocation opts into the legacy runtime (`-enable-legacy-ios5-runtime` on a
+   native iOS device target), **and**
 2. `N` is at or below the version that family's backport implements.
+
+The floor is iOS 5 for the armv7 slice (which also uses the 32-bit class-marking
+ABI) and iOS 7.0 for armv7s/arm64, since 64-bit hardware never ran iOS 5/6 and
+keeps the standard Swift ABI. Declarations above a family's ceiling stay
+unavailable on every slice, so a program cannot use an API the backport does not
+implement.
 
 Members introduced after the family's implemented version stay unavailable, so a
 program cannot accidentally use an API the backport does not provide. Compiling for

@@ -52,14 +52,21 @@ bool swift::usesLegacyCollectionDeclarations(const ASTContext &ctx) {
 
 /// armv7 iOS 5..10 with the explicit legacy opt-in: UIKit declarations newer
 /// than the deployment target are served by the backport tree.
+///
+/// armv7s/arm64 use the same declaration surface on an iOS 7.0 floor (64-bit
+/// hardware never ran iOS 5/6), so the arch test includes aarch64 here. The
+/// class-marking ABI stays armv7-only and is checked separately.
 bool swift::usesLegacyUIKitBackportDeclarations(const ASTContext &ctx) {
   const auto &deployment = ctx.LangOpts.Target;
   const auto &target = ctx.LangOpts.ClangTarget
       ? *ctx.LangOpts.ClangTarget : deployment;
-  return ctx.LangOpts.LegacyIOS5ClassMarking && isLegacyArmDevice(deployment) &&
-      isLegacyArmDevice(target) &&
-      (target.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
-       target.getSubArch() == llvm::Triple::ARMSubArch_v7s);
+  const bool arch =
+      (target.getArch() == llvm::Triple::arm &&
+       (target.getSubArch() == llvm::Triple::ARMSubArch_v7 ||
+        target.getSubArch() == llvm::Triple::ARMSubArch_v7s)) ||
+      target.getArch() == llvm::Triple::aarch64;
+  return ctx.LangOpts.LegacyIOS5Backports && isLegacyArmDevice(deployment) &&
+      isLegacyArmDevice(target) && arch;
 }
 
 /// Modify only declaration linkage, never SDK signatures or availability.

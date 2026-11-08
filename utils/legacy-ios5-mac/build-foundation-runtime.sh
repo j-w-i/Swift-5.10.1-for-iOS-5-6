@@ -1,10 +1,20 @@
 #!/bin/bash
-# Source-only iOS 5 Foundation backports. Usage: SDK CLANG AR OUT
+# Source-only Foundation backports. Usage: SDK CLANG AR OUT [ARCH]
+#
+# ARCH defaults to armv7 (iOS 5.0 floor, ARM mode). armv7s/arm64 build the same
+# sources at an iOS 7.0 floor, where the native classes they emulate exist, so
+# their audit does not treat those imports as prohibited.
 set -euo pipefail
 umask 022
 fail() { printf 'build-foundation-runtime: %s\n' "$*" >&2; exit 1; }
-[ "$#" = 4 ] || fail 'Usage: SDK CLANG AR OUT'
-SDK=$1; CLANG=$2; AR=$3; OUT=$4
+[ "$#" = 4 ] || [ "$#" = 5 ] || fail 'Usage: SDK CLANG AR OUT [ARCH]'
+SDK=$1; CLANG=$2; AR=$3; OUT=$4; ARCH=${5:-armv7}
+case "$ARCH" in
+  armv7)  TARGET=armv7-apple-ios5.0; ARCH_FLAGS=(-marm) ;;
+  armv7s) TARGET=armv7s-apple-ios7.0; ARCH_FLAGS=(-marm) ;;
+  arm64)  TARGET=arm64-apple-ios7.0;  ARCH_FLAGS=() ;;
+  *) fail "Unsupported architecture: $ARCH" ;;
+esac
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 SRC="$HERE/vendor/FoundationBackports"
 for path in "$SDK" "$CLANG" "$AR" "$OUT"; do [[ "$path" = /* ]] || fail "Use absolute paths: $path"; done
@@ -25,7 +35,7 @@ for source in "$SRC"/Core/*.m "$SRC"/Extras/*.m "$SRC"/Networking/FBPURLSession.
   # and owns its slot objects manually, so it is compiled without ARC.
   ARC_FLAG=-fobjc-arc
   case "$name" in FBPHashTable) ARC_FLAG=-fno-objc-arc ;; esac
-  command=("$CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$SDK" -O2 -g0
+  command=("$CLANG" -target "$TARGET" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} -isysroot "$SDK" -O2 -g0
     $ARC_FLAG -fblocks -fno-modules -fvisibility=default
     "-ffile-prefix-map=$HERE=utils/legacy-ios5-mac" -Wno-deprecated-declarations
     -Werror=unguarded-availability -Werror=unguarded-availability-new
@@ -38,9 +48,9 @@ for source in "$SRC"/Core/*.m "$SRC"/Extras/*.m "$SRC"/Networking/FBPURLSession.
 done
 [ "${#OBJECTS[@]}" -gt 0 ] || fail 'No source files found'
 "$AR" rcs "$OUT/libswiftLegacyFoundationBackports.a" "${OBJECTS[@]}" > "$OUT/logs/archive.log" 2>&1
-"${PYTHON:-python3}" - "$SRC" "$SDK" "$CLANG" "$OUT" <<'PY'
+"${PYTHON:-python3}" - "$SRC" "$SDK" "$CLANG" "$OUT" "$ARCH" "$TARGET" <<'PY'
 import hashlib,json,pathlib,subprocess,sys
-src,sdk,clang,out=map(pathlib.Path,sys.argv[1:])
+src,sdk,clang,out=map(pathlib.Path,sys.argv[1:5]); arch=sys.argv[5]; target=sys.argv[6]
 h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 archive=out/'libswiftLegacyFoundationBackports.a'
 undefined=subprocess.check_output(['/usr/bin/nm','-u',str(archive)],text=True)
@@ -53,15 +63,15 @@ weak_names=('objc_storeWeak','objc_loadWeak','objc_initWeak','objc_destroyWeak',
 for name in weak_names:
     if '_'+name in undefined and '_'+name not in weak_in_table:
         raise SystemExit('Prohibited modern runtime import: '+name)
-for forbidden in ('_OBJC_CLASS_$_NSURLSession','_OBJC_CLASS_$_NSURLComponents',
+for forbidden in (() if arch != 'armv7' else ('_OBJC_CLASS_$_NSURLSession','_OBJC_CLASS_$_NSURLComponents',
                   '_OBJC_CLASS_$_NSURLQueryItem','_OBJC_CLASS_$_NSISO8601DateFormatter',
-                  '_OBJC_CLASS_$_NSHashTable','_OBJC_CLASS_$_NSPointerFunctions'):
+                  '_OBJC_CLASS_$_NSHashTable','_OBJC_CLASS_$_NSPointerFunctions')):
     if forbidden in undefined: raise SystemExit('Prohibited modern runtime import: '+forbidden)
 symbols=subprocess.check_output(['/usr/bin/nm',str(archive)],text=True)
 for cls in ('FBPURLSession','FBPURLSessionConfiguration','FBPURLSessionTask','FBPURLSessionDataTask','FBPURLSessionUploadTask','FBPURLSessionDownloadTask','FBPURLComponents','FBPURLQueryItem','FBPISO8601DateFormatter'):
     if '_OBJC_CLASS_$_'+cls not in symbols: raise SystemExit('Missing class export: '+cls)
 (out/'logs/symbol-audit.txt').write_text('PASS required class symbols; zeroing-weak runtime only in the object table; no modern Foundation class imports\n')
-m={'target':'armv7-apple-ios5.0','instructionSet':'ARM','arc':True,'sdk':str(sdk.resolve()),'clang':str(clang.resolve()),'clangVersion':subprocess.check_output([str(clang),'--version'],text=True),'sourceSHA256':{str(p.relative_to(src)):h(p) for d in ('Core','Extras','Networking') for p in sorted((src/d).glob('*')) if p.suffix in ('.m','.h')},'archiveSHA256':h(out/'libswiftLegacyFoundationBackports.a'),'qualification':'Compilation only. Networking host deterministic tests are separate; iOS5 runtime/device not qualified.'}
+m={'target':target,'instructionSet':'ARM','arc':True,'sdk':str(sdk.resolve()),'clang':str(clang.resolve()),'clangVersion':subprocess.check_output([str(clang),'--version'],text=True),'sourceSHA256':{str(p.relative_to(src)):h(p) for d in ('Core','Extras','Networking') for p in sorted((src/d).glob('*')) if p.suffix in ('.m','.h')},'archiveSHA256':h(out/'libswiftLegacyFoundationBackports.a'),'qualification':'Compilation only. Networking host deterministic tests are separate; iOS5 runtime/device not qualified.'}
 (out/'build-manifest.json').write_text(json.dumps(m,indent=2)+'\n')
 PY
 for notice in "$SRC/LICENSE" "$HERE/FOUNDATION-BACKPORTS.md"; do
