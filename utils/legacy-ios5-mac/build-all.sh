@@ -193,11 +193,19 @@ overlays() { # prepare + build + link the rewritten overlays
 
   # Media overlays for armv7 (the multiarch stage builds the 64-bit ones), linked against the armv7
   # runtime so the assembled toolchain ships the dylibs the app autolinks.
+  # Complete armv7 runtime set: the seven linked overlays, the 5.10.1 iOS 5.0 legacy core, and the
+  # 5.1.5-source base overlays. The media overlays are linked into this set below, so the multiarch
+  # stage has a complete armv7 base to merge the 64-bit slices into.
+  ARMV7_BASE="$ROOT/out/armv7-base"
+  rm -rf "$ARMV7_BASE"; mkdir -p "$ARMV7_BASE"
+  cp "$ROOT/bootstrap/probes/linked510-legacy/"libswift*.dylib "$ARMV7_BASE/"
+  for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
   ARMV7_MEDIA="$ROOT/out/armv7-media"
   rm -rf "$ARMV7_MEDIA"
   bash "$HERE/build-media-overlays-armv7.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/src/swift" \
     "$ROOT/build/swift/bin/swift-frontend" "$ROOT/build/llvm/bin/clang" "$ARMV7_MEDIA" \
-    "$ROOT/bootstrap/probes/linked510-legacy" > "$L/overlays.log" 2>&1 \
+    "$ARMV7_BASE" > "$L/overlays.log" 2>&1 \
     || { tail -20 "$L/overlays.log" >&2; exit 1; }
 }
 # Non-armv7 legacy slices: build the overlays, facades and runtime for armv7s/arm64 and merge them
@@ -210,12 +218,10 @@ multiarch() {
   base=$(dirname "$(dirname "$ROOT/build/swift/bin/swift-frontend")")/../bootstrap/probes/modules510/iphoneos 2>/dev/null || true
   # Complete armv7 dylib set to merge the other slices into: the seven overlays linked for armv7, the 5.10.1
   # legacy iOS 5.0 core/Darwin/SwiftOnoneSupport, and the 5.1.5-source base overlays.
-  ARMV7_BASE="$ROOT/out/armv7-base"; rm -rf "$ARMV7_BASE"; mkdir -p "$ARMV7_BASE"
-  cp "$ROOT/bootstrap/probes/linked510-legacy/"libswift*.dylib "$ARMV7_BASE/"
-  # NOTE: stage()'s name variable is `n`, and bash locals are dynamically scoped, so reusing `n` as a
-  # loop variable here silently rewrote the stamp name the caller touched (it created .stamps/CoreFoundation).
-  for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
-  for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  # The overlay stage already composed the complete armv7 runtime set (overlays + legacy core +
+  # base overlays + media overlays); only the media dylibs it built separately are added here.
+  ARMV7_BASE="$ROOT/out/armv7-base"
+  [ -d "$ARMV7_BASE" ] || { echo 'multiarch: armv7 base missing (run the overlays stage)' >&2; exit 1; }
   for MOD in CoreAudio CoreMedia AVFoundation; do
     [ -f "$ROOT/out/armv7-media/libswift$MOD.dylib" ] && cp "$ROOT/out/armv7-media/libswift$MOD.dylib" "$ARMV7_BASE/"
   done
