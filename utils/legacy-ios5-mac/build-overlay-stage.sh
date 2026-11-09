@@ -34,6 +34,9 @@ fi
 LEGACY_DEFINE=(-D LEGACY_IOS5)
 # Only the armv7 slice sees libdispatch as plain C structs; the others get ARC-managed ObjC objects.
 [ "$LEGACY_ARCH" = 1 ] || LEGACY_DEFINE+=(-D LEGACY_ARC_DISPATCH_OBJECTS)
+# The armv7 (legacy) slice's objects are named <Module>510.o; other slices carry their architecture
+# (<Module>510-<arch>.o). link-overlay-stage.sh reads exactly these names.
+OBJECT_SUFFIX="-$ARCH"; [ "$ARCH" = armv7 ] && OBJECT_SUFFIX=""
 mkdir -p "$STAGE/logs"
 # Modules are independent (separate modules, separate objects, separate logs), so they build
 # concurrently. JOBS defaults to 4; the old serial behaviour was the slow path.
@@ -96,7 +99,7 @@ build_one() {
       -target "$ARCH-apple-ios$TARGET" -sdk "$SDK" -resource-dir "$R" ${LEGACY_DEFINE[@]+"${LEGACY_DEFINE[@]}"} \
       -I "$STAGE/probes/dispatch-shims" \
       -runtime-compatibility-version none -disable-autolinking-runtime-compatibility-dynamic-replacements \
-      -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510-$ARCH.o" \
+      -enable-library-evolution -O -whole-module-optimization -emit-object -o "$STAGE/probes/${NAME}510${OBJECT_SUFFIX}.o" \
       -emit-module -emit-module-path "$R/iphoneos/$NAME.swiftmodule/$ARCH.swiftmodule" \
       -module-link-name "swift$NAME" -swift-version 5 \
       ${EXTRA[@]+"${EXTRA[@]}"} ${CC_FLAGS[@]+"${CC_FLAGS[@]}"} @"$SOURCES_FILE" \
