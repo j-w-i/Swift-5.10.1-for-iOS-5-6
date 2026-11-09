@@ -20,6 +20,7 @@
 
 import Foundation
 import UIKit
+import ObjectiveC
 
 @MainActor
 func runLegacyStackViewSmoke() -> [String] {
@@ -28,6 +29,17 @@ func runLegacyStackViewSmoke() -> [String] {
     // Force the legacy bridge even when the OS has Auto Layout: this is what the
     // iOS 5 name-shim path (and the simulator stress test) does.
     LegacyAutoLayout.installForLegacyNames()
+    // Registration must expose the class factories even when no UICStackView
+    // initializer has run. This catches the iOS 5 launch ordering regression.
+    if LegacyAutoLayout.isRequired {
+        let cls: AnyClass? = NSClassFromString("NSLayoutConstraint")
+        for name in ["constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:",
+                     "constraintsWithVisualFormat:options:metrics:views:"] {
+            precondition(cls != nil && class_getClassMethod(cls!, NSSelectorFromString(name)) != nil,
+                         "Incomplete NSLayoutConstraint registration: \(name)")
+        }
+        results.append("stack-smoke: constraint factories installed before stack init")
+    }
     let audit = LegacyAutoLayout.auditInstalledBridge()
     if audit.isEmpty {
         results.append("stack-smoke: installed audit clean")

@@ -152,4 +152,9 @@ internal nonisolated func registerNativeAutoLayoutAPI() {
     }
 
     if existing == nil { objc_registerClassPair(cls) }
+    // Every entry point that registers the iOS 5 class must expose its complete
+    // API. UIView's Swift shims can reach this path before UICStackView's
+    // bootstrap; leaving the class factories to that separate bootstrap makes
+    // OAStackView's first visual-format request raise an Objective-C exception.
+    UICInstallConstraintClassMethods()
 }
