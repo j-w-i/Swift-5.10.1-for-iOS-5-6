@@ -57,8 +57,9 @@ build_one() {
     # clang reports dispatch_object_t as two incompatible module definitions.
     # A per-stage Clang module cache keeps builds reproducible and avoids stale
     # dispatch/os_object modules built under different macro state.
-    # A per-invocation module cache keeps slices from sharing PCMs built under another target.
-    CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="${CLANG_MODULE_CACHE:-$STAGE/probes/cc-modcache}")
+    # A per-module cache keeps concurrently compiled modules from racing on one shared cache (an overlay
+    # frontend crashed in IRGen when Foundation and Metal wrote the same cache at the same time).
+    CC_FLAGS=(-Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="${CLANG_MODULE_CACHE:-$STAGE/probes/cc-modcache}-$ARCH-$NAME")
     if [ "$NAME" = Dispatch ]; then CC_FLAGS+=(-Xcc -DSWIFT_LEGACY_IOS5_CDISPATCH=1); fi
     # The legacy iOS 5 linker drops ARM/Thumb interworking bits from local
     # relocations, so Thumb code in these dylibs produces pointers that enter
