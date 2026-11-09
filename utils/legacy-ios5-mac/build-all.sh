@@ -186,6 +186,11 @@ overlays() { # prepare + build + link the rewritten overlays
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/build/swift/bin/swift-frontend" \
     "$ROOT/bootstrap/probes/modules510" "$ROOT/bootstrap/probes/native-numeric-runtime" \
     "$OLD_CORE_DIR/libswiftCore.dylib"
+  LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
+  SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
+  bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \
+    "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
+
   # Media overlays for armv7 (the multiarch stage builds the 64-bit ones), linked against the armv7
   # runtime so the assembled toolchain ships the dylibs the app autolinks.
   ARMV7_MEDIA="$ROOT/out/armv7-media"
@@ -194,10 +199,6 @@ overlays() { # prepare + build + link the rewritten overlays
     "$ROOT/build/swift/bin/swift-frontend" "$ROOT/build/llvm/bin/clang" "$ARMV7_MEDIA" \
     "$ROOT/bootstrap/probes/linked510-legacy" > "$L/overlays.log" 2>&1 \
     || { tail -20 "$L/overlays.log" >&2; exit 1; }
-  LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
-  SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
-  bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \
-    "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
 }
 # Non-armv7 legacy slices: build the overlays, facades and runtime for armv7s/arm64 and merge them
 # with the armv7 dylibs into one multi-arch tree. Runs after `overlays` (armv7 objects/modules) and
