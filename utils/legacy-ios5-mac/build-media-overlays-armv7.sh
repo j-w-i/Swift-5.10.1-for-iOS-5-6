@@ -42,4 +42,9 @@ link() { # NAME DEPS...
 link CoreAudio -lswiftCore -lswiftDarwin -lswiftObjectiveC -framework CoreAudio
 link CoreMedia -lswiftCore -lswiftDarwin -lswiftObjectiveC -lswiftCoreAudio -lswiftCoreFoundation -lswiftCoreGraphics -lswiftDispatch -lswiftFoundation -lswiftMetal -framework CoreMedia
 link AVFoundation -lswiftCore -lswiftDarwin -lswiftObjectiveC -lswiftCoreAudio -lswiftCoreMedia -lswiftCoreFoundation -lswiftCoreGraphics -lswiftDispatch -lswiftFoundation -lswiftMetal -lswiftQuartzCore -framework AVFoundation -framework CoreMedia
+# The modern libc++ stub records _voucher_adopt (iOS 12+) as a strong import even though these
+# overlays never call it; iOS 5.1.1 has no such export, so make the import weak instead of hiding it.
+for NAME in CoreAudio CoreMedia AVFoundation; do
+  /usr/bin/python3 "$(dirname "$0")/mark-weak-import.py" "$RT/libswift$NAME.dylib" _voucher_adopt >/dev/null
+done
 echo "armv7 media overlays: $RT"
