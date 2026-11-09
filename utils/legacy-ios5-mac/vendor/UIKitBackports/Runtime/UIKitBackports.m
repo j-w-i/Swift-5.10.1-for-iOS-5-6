@@ -215,6 +215,17 @@ UIC_ANCHOR_GETTERS
 }
 @end
 @implementation UICStackView
+// The compiler binds `UIStackView` to this facade at build time because the deployment target is
+// below iOS 9. On a system that ships the real UIStackView (iOS 9+), hand out the real class so the
+// app gets Apple's implementation, not OAStackView. Only exact instances are redirected: an app
+// subclass of UICStackView keeps its own class and the facade behaviour.
++ (instancetype)allocWithZone:(NSZone *)zone {
+    if (self == [UICStackView class]) {
+        Class native = NSClassFromString(@"UIStackView");
+        if (native && native != self) return [native allocWithZone:zone];
+    }
+    return [super allocWithZone:zone];
+}
 - (instancetype)initWithArrangedSubviews:(NSArray *)views { UICEnsureSwiftBridge(); return [super initWithArrangedSubviews:views]; }
 - (instancetype)initWithFrame:(CGRect)frame { UICEnsureSwiftBridge(); return [super initWithFrame:frame]; }
 - (instancetype)initWithCoder:(NSCoder *)coder { UICEnsureSwiftBridge(); return [super initWithCoder:coder]; }
