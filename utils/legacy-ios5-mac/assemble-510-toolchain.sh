@@ -382,8 +382,11 @@ try:
         for name in ('CoreAudio', 'CoreMedia', 'AVFoundation'):
             dylib = pick('libswift' + name + '.dylib', Path(extra_dir) / ('libswift' + name + '.dylib'))
             nonempty(dylib)
-            if run(OTOOL, '-D', dylib).splitlines()[1:] != ['@rpath/' + dylib.name]:
-                fail('Unexpected extra overlay install name: ' + str(dylib))
+            # A fat dylib prints one install name per slice; compare the per-arch value for each.
+            for arch in ('armv7', 'armv7s', 'arm64'):
+                ids = [line for line in run(OTOOL, '-arch', arch, '-D', dylib).splitlines()[1:] if line.strip()]
+                if any(identifier.strip() != '@rpath/' + dylib.name for identifier in ids):
+                    fail('Unexpected extra overlay install name: ' + str(dylib) + ' (' + arch + ')')
             replace_copy(dylib, ios / dylib.name)
             shipped_extras.append(name)
     replace_copy(backports, ios / 'libswiftLegacyIOS5Backports.a')
