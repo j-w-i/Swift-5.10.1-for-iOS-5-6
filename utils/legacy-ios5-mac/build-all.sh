@@ -87,6 +87,7 @@ host_toolchain() { # official swift.org 5.10.1 toolchain: host compiler for the 
 }
 fetch510() { bash "$HERE/fetch-deps.sh"; }
 stdlib510ios() { bash "$HERE/build-ios-stdlib510.sh"; }
+legacycore510() { bash "$HERE/build-legacy-core510.sh"; }
 baseline510() { bash "$HERE/stage-510-baseline.sh"; }
 llvm510() { bash "$HERE/build-llvm510-mac.sh"; }
 swift510() { export SWIFT_5_10_1_HOST_TOOLCHAIN="$ROOT/host/swift-5.10.1-RELEASE.xctoolchain"; bash "$HERE/configure-swift510-mac.sh"; }
@@ -236,6 +237,7 @@ stage compiler-515 compiler515
 stage crt-515 crt515
 stage runtime-515 runtime515
 stage runtime-package-515 runtime515package
+stage legacy-core-510 legacycore510
 stage overlays overlays
 if [ -n "${EXTRA_ARCHS:-}" ]; then stage multiarch multiarch; fi
 stage assemble assemble
