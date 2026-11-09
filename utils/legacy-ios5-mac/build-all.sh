@@ -223,7 +223,12 @@ assemble() {
   # toolchain from the current stage inputs.
   rm -rf "$ROOT/out/swift-5.10.1-ios5.xctoolchain"
   H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"; export LEGACY_515_ROOT="$ROOT/b515"
-  [ -d "$ROOT/out/multiarch-runtime/iphoneos" ] && export LEGACY_FAT_RUNTIME="$ROOT/out/multiarch-runtime/iphoneos"
+  # The media overlays (AVFoundation/CoreAudio/CoreMedia) are rebuilt by the multiarch stage; without
+  # this pointer assembly ships none of them and the app's media autolinks go unresolved.
+  if [ -d "$ROOT/out/multiarch-runtime/iphoneos" ]; then
+    export LEGACY_FAT_RUNTIME="$ROOT/out/multiarch-runtime/iphoneos"
+    export LEGACY_EXTRA_OVERLAYS_DIR="$ROOT/out/multiarch-runtime/iphoneos"
+  fi
   LINK_OUTPUT_NAME=linked510-legacy bash "$HERE/assemble-510-toolchain.sh" "$H" "$ROOT/build/swift/bin/swift-frontend" \
     "$S/swift-driver/.build/x86_64-apple-macosx/debug/swift-driver" "$ROOT/bootstrap" "$LEGACY_515_ROOT/build/runtime-ios5" \
     "$ROOT/bootstrap/probes/linked510-legacy/libLegacyRuntimeBackports.a" "$S/theos-sdks/iPhoneOS9.3.sdk/usr/lib/crt1.3.1.o" \
