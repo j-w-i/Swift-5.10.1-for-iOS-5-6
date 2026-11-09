@@ -186,6 +186,14 @@ overlays() { # prepare + build + link the rewritten overlays
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/build/swift/bin/swift-frontend" \
     "$ROOT/bootstrap/probes/modules510" "$ROOT/bootstrap/probes/native-numeric-runtime" \
     "$OLD_CORE_DIR/libswiftCore.dylib"
+  # Media overlays for armv7 (the multiarch stage builds the 64-bit ones), linked against the armv7
+  # runtime so the assembled toolchain ships the dylibs the app autolinks.
+  ARMV7_MEDIA="$ROOT/out/armv7-media"
+  rm -rf "$ARMV7_MEDIA"
+  bash "$HERE/build-media-overlays-armv7.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/src/swift" \
+    "$ROOT/build/swift/bin/swift-frontend" "$ROOT/build/llvm/bin/clang" "$ARMV7_MEDIA" \
+    "$ROOT/bootstrap/probes/linked510-legacy" > "$L/overlays.log" 2>&1 \
+    || { tail -20 "$L/overlays.log" >&2; exit 1; }
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
   bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \
@@ -207,6 +215,9 @@ multiarch() {
   # loop variable here silently rewrote the stamp name the caller touched (it created .stamps/CoreFoundation).
   for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
   for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  for MOD in CoreAudio CoreMedia AVFoundation; do
+    [ -f "$ROOT/out/armv7-media/libswift$MOD.dylib" ] && cp "$ROOT/out/armv7-media/libswift$MOD.dylib" "$ARMV7_BASE/"
+  done
   # build-multiarch-overlays.sh refuses to reuse an output directory (its outputs are evidence of one
   # run), so a re-run of this stage starts from a clean derived directory.
   rm -rf "$ROOT/out/multiarch-runtime"
