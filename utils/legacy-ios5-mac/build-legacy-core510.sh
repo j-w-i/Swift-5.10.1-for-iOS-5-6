@@ -33,8 +33,12 @@ cat > "$W/swiftc" <<WRAP
 #!/bin/sh
 # Target compiler for the iOS 5 stdlib build. Executed as swiftc so the driver validates the
 # deployment target and forwards frontend options; the legacy iOS 5 runtime and class-marking
-# modes are explicit opt-ins on this fork.
-exec "$S/bin/swiftc" "\$@" -enable-legacy-ios5-runtime -enable-legacy-ios5-class-marking
+# modes are explicit opt-ins on this fork and only valid for an iOS armv7 target. CMake also runs
+# this compiler for its own host self-test, which must not receive them.
+case "\$*" in
+  *apple-ios*) exec "$S/bin/swiftc" "\$@" -enable-legacy-ios5-runtime -enable-legacy-ios5-class-marking ;;
+  *) exec "$S/bin/swiftc" "\$@" ;;
+esac
 WRAP
 chmod +x "$W/swiftc"
 cp "$W/swiftc" "$B/tools/swiftc-ios5"
