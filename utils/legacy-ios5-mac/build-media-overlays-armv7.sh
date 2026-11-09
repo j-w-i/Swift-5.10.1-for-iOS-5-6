@@ -5,7 +5,10 @@
 # Usage: build-media-overlays-armv7.sh STAGE SDK SWIFT51_SOURCE FRONTEND LINKER OUT [RT] [LIBDIR]
 set -euo pipefail
 fail() { echo "build-media-overlays-armv7: $*" >&2; exit 1; }
-STAGE=$1; SDK=$2; SWIFT51=$3; SWIFT=$4; LINKER=$5; OUT=$6; RT=${7:-}; LIBDIR=${8:-$RT}
+STAGE=$1; SDK=$2; SWIFT51=$3; SWIFT=$4; LINKER=$5; OUT=$6; RT=${7:-}; LIBDIRS=${8:-$RT}
+LIB_FLAGS=()
+IFS=":" read -ra DIRS <<< "$LIBDIRS"
+for D in "${DIRS[@]}"; do LIB_FLAGS+=(-L"$D"); done
 [ -d "$STAGE/probes" ] || fail "missing stage"
 mkdir -p "$OUT"; W="$OUT/work"; mkdir -p "$W"
 RES="$STAGE/probes/modules510"
@@ -30,7 +33,7 @@ link() { # NAME DEPS...
   local NAME=$1; shift
   "$LINKER" -target armv7-apple-ios5.0 -isysroot "$SDK" -dynamiclib \
     -install_name "@rpath/libswift$NAME.dylib" -o "$RT/libswift$NAME.dylib" "$W/$NAME.o" \
-    -L"$RT" -L"$LIBDIR" -L"$STAGE/probes/linked510-legacy" $* -lc++ -lswiftCompatibility50 -lswiftCompatibility51 -lswiftCompatibility56 \
+    -L"$RT" ${LIB_FLAGS[@]+"${LIB_FLAGS[@]}"} -L"$STAGE/probes/linked510-legacy" $* -lc++ -lswiftCompatibility50 -lswiftCompatibility51 -lswiftCompatibility56 \
     -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftCoreMIDI' \
     -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftUniformTypeIdentifiers' \
     -Xlinker -U -Xlinker '__swift_FORCE_LOAD_$_swiftsimd' \
