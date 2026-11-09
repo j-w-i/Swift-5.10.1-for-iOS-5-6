@@ -180,10 +180,13 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
                     dropped_rpaths += 1
         # UIKit chooses between its compatibility layout and the current one from the SDK the
         # main executable was *linked* against. Source written for modern iOS (safe areas, bar
-        # metrics) expects the current layout, which an iOS 7+ slice built with an old SDK never
-        # gets on a new system. 64-bit executables are retagged; 32-bit slices run on the systems
-        # they were built for and are left alone.
-        if (linked_sdk is not None and is64 and filetype == MH_EXECUTE and
+        # metrics) expects the current layout, which an app linked against an old SDK never gets
+        # on a new system. EVERY executable slice is retagged, not just the 64-bit one: measured
+        # on an iPhone 15 Pro (iOS 27), a fat armv7+arm64 executable whose armv7 slice still said
+        # SDK 15.5 laid out 390x844 (zoomed compatibility size) even though the arm64 slice said
+        # 19.0; tagging both gave the native 393x852. The tag is advisory metadata on older
+        # systems (iOS 5 dyld ignores the SDK field; verified on iOS 5.1.1 and 10.3.3 devices).
+        if (linked_sdk is not None and filetype == MH_EXECUTE and
                 cmd in (LC_VERSION_MIN_IPHONEOS, LC_BUILD_VERSION)):
             sdk_off = cursor + (12 if cmd == LC_VERSION_MIN_IPHONEOS else 16)
             current = struct.unpack(endian + "I", data[sdk_off:sdk_off + 4])[0]
