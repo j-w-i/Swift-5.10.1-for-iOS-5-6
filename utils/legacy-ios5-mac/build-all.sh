@@ -149,8 +149,12 @@ overlays() { # prepare + build + link the rewritten overlays
     SRC_MOD="$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/$MOD.swiftmodule"
     [ -d "$SRC_MOD" ] || { echo "missing $SRC_MOD (runtime-515 must run first)" >&2; exit 1; }
     mkdir -p "$ROOT/bootstrap/probes/modules510/iphoneos"
-    rm -rf "$ROOT/bootstrap/probes/modules510/iphoneos/$MOD.swiftmodule"
-    cp -R "$SRC_MOD" "$ROOT/bootstrap/probes/modules510/iphoneos/$MOD.swiftmodule"
+    DEST_MOD="$ROOT/bootstrap/probes/modules510/iphoneos/$MOD.swiftmodule"
+    rm -rf "$DEST_MOD"; mkdir -p "$DEST_MOD"
+    # Interface text only: the 5.1.5 binary .swiftmodule cannot be read by the 5.10 compiler, which
+    # instead builds its own module from the .swiftinterface (armv7 spelling is reused by every slice).
+    cp "$SRC_MOD/armv7.swiftinterface" "$DEST_MOD/armv7.swiftinterface"
+    for A in armv7s arm64; do cp "$SRC_MOD/armv7.swiftinterface" "$DEST_MOD/$A.swiftinterface"; done
   done
   # UIKit's iOS 5 declaration supplement is a compiler resource, not a bridging
   # header or package. Build the matching implementation from vendored sources

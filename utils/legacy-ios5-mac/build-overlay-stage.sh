@@ -103,10 +103,23 @@ build_one() {
 }
 JOBS=${JOBS:-4}
 FAILED=0
-for NAME in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
-  while [ "$(jobs -rp | wc -l | tr -d " ")" -ge "$JOBS" ]; do sleep 1; done
-  ( build_one "$NAME" ) &
-done
-for pid in $(jobs -p); do wait "$pid" || FAILED=1; done
-[ "$FAILED" = 0 ] || { echo "overlay build failed; see the per-module logs" >&2; exit 1; }
+# Overlays import each other's *modules* (Foundation needs CoreGraphics' CGFloat, UIKit needs Foundation,
+# CoreGraphics, QuartzCore, ...), so a module can only compile once the modules it imports exist. Build in
+# dependency waves; modules inside one wave are independent and run concurrently. Starting them all at
+# once only ever worked when a previous run had left stale .swiftmodule files behind.
+run_wave() {
+  for NAME in "$@"; do
+    while [ "$(jobs -rp | wc -l | tr -d " ")" -ge "$JOBS" ]; do sleep 1; done
+    ( build_one "$NAME" ) &
+  done
+  local pid
+  for pid in $(jobs -p); do wait "$pid" || FAILED=1; done
+  [ "$FAILED" = 0 ] || { echo "overlay build failed; see the per-module logs" >&2; exit 1; }
+}
+run_wave Dispatch
+run_wave CoreGraphics
+run_wave Foundation Metal
+run_wave QuartzCore
+run_wave CoreImage
+run_wave UIKit
 ls "$STAGE/logs"/*.log >/dev/null 2>&1 || true
