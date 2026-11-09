@@ -215,10 +215,29 @@ try:
     # copied over the aliases below instead of being signed separately.
     for name, source in (('swift-frontend', frontend), ('swift-driver', driver)):
         replace_copy(source, out / 'usr/bin' / name)
+    # Merged multi-arch runtime tree from the multiarch stage (optional but required for 64-bit
+    # module files and fat dylibs).
+    fat_dir = Path(os.environ['LEGACY_FAT_RUNTIME']) if os.environ.get('LEGACY_FAT_RUNTIME') else None
     slot = out / 'usr/lib/swift_ios5'
     # The staged clang link points into its original host tree: do not copy it.
     shutil.copytree(modules, slot, symlinks=True,
                     ignore=lambda root, names: ['clang'] if Path(root) == modules else [])
+    # The staged module tree is armv7 only. armv7s/arm64 module files (including the overlay
+    # modules the multiarch stage compiled) come from its merged tree, so a 64-bit client links
+    # against our overlays instead of the SDK's Swift modules of the same name.
+    if fat_dir is not None and (fat_dir / 'iphoneos').is_dir():
+        for source_dir in sorted((fat_dir / 'iphoneos').glob('*.swiftmodule')):
+            if not source_dir.is_dir():
+                continue
+            dest_dir = slot / 'iphoneos' / source_dir.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for item in sorted(source_dir.iterdir()):
+                name = item.name
+                if name.startswith(('armv7s', 'arm64', 'x86_64')):
+                    target = dest_dir / name
+                    if target.is_file() or target.is_symlink():
+                        target.unlink()
+                    shutil.copy2(item, target) if item.is_file() else shutil.copytree(item, target)
     # A Swift overlay module that is present makes the compiler autolink and
     # force-load its runtime library. These overlays cannot exist on iOS 5 (os_log
     # needs iOS 10, simd/SceneKit/SpriteKit/ModelIO/GameplayKit need iOS 8+ and
@@ -339,9 +358,6 @@ try:
     # generation (Core, Darwin, ObjectiveC, CoreFoundation, Dispatch). Copy only
     # those, so no stale sibling dylib from another compiler generation ships.
     base_runtime = ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation')
-    # LEGACY_FAT_RUNTIME (the multiarch stage's merged tree) carries every dylib with all architecture
-    # slices; when present it is the source, so the shipped dylibs are fat instead of armv7-only.
-    fat_dir = Path(os.environ['LEGACY_FAT_RUNTIME']) if os.environ.get('LEGACY_FAT_RUNTIME') else None
     def pick(fat_name, fallback):
         if fat_dir is not None and (fat_dir / fat_name).is_file():
             return fat_dir / fat_name
