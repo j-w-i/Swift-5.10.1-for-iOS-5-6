@@ -155,7 +155,9 @@ overlays() { # prepare + build + link the rewritten overlays
     # Interface text only: the 5.1.5 binary .swiftmodule cannot be read by the 5.10 compiler, which
     # instead builds its own module from the .swiftinterface (armv7 spelling is reused by every slice).
     cp "$SRC_MOD/armv7.swiftinterface" "$DEST_MOD/armv7.swiftinterface"
-    for A in armv7s arm64; do cp "$SRC_MOD/armv7.swiftinterface" "$DEST_MOD/$A.swiftinterface"; done
+    # Each slice's interface declares its own -target; the armv7 text says armv7-apple-ios5.0, which the
+    # compiler rejects for a 7.0 arm64/armv7s module ("created for incompatible target").
+    for A in armv7s arm64; do sed "s/-target armv7-apple-ios[0-9.]*/-target $A-apple-ios7.0/" "$SRC_MOD/armv7.swiftinterface" > "$DEST_MOD/$A.swiftinterface"; done
   done
   # UIKit's iOS 5 declaration supplement is a compiler resource, not a bridging
   # header or package. Build the matching implementation from vendored sources

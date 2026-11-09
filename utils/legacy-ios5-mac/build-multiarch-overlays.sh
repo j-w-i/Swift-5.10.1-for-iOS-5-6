@@ -144,10 +144,16 @@ for ARCH in $EXTRA_ARCHS; do
     >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswiftAVFoundation.dylib failed"; }
 
   echo "== $ARCH: collecting modules"
-  for d in "$RES"/*.swiftmodule; do
-    name=$(basename "$d")
-    mkdir -p "$WORK/modules/$name"
-    for f in "$d"/*; do case "$(basename "$f")" in *"$ARCH"*) cp -R "$f" "$WORK/modules/$name/" ;; esac; done
+  # Compiled modules live under <resource>/iphoneos/: the stdlib trees for Swift, Darwin, ... and the
+  # overlay stage's own output (Dispatch, Foundation, UIKit, ...) for this architecture. Globbing the
+  # resource root, as an earlier version did, matched nothing and shipped no module for 64-bit slices.
+  for MODDIR in "$RES/iphoneos" "$STAGE/probes/modules510/iphoneos"; do
+    for d in "$MODDIR"/*.swiftmodule; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      mkdir -p "$WORK/modules/$name"
+      for f in "$d"/*; do case "$(basename "$f")" in "$ARCH".*|"$ARCH"-*) cp -R "$f" "$WORK/modules/$name/" ;; esac; done
+    done
   done
   [ -d "$RES/iphoneos/$ARCH" ] && cp -R "$RES/iphoneos/$ARCH" "$WORK/modules/arch-$ARCH"
 done
