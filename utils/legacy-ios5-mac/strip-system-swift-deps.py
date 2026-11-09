@@ -169,8 +169,12 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
                     # a retyped command makes install_name_tool/lipo-style tools reject the image.
                     room = cmdsize - path_off
                     if room > len(UNAVAILABLE):
+                        replacement = unavailable_at(len(neutralised_paths))
+                        while replacement in neutralised_paths:
+                            replacement += b"_"
+                        neutralised_paths.add(replacement)
                         data[cursor + path_off:cursor + cmdsize] = b"\0" * room
-                        data[cursor + path_off:cursor + path_off + len(UNAVAILABLE)] = UNAVAILABLE
+                        data[cursor + path_off:cursor + path_off + len(replacement)] = replacement
                     else:
                         data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
                     dropped_rpaths += 1
