@@ -31,6 +31,11 @@ LC_LOAD_DYLIB = 0xC
 LC_LOAD_WEAK_DYLIB = 0x80000018
 UNUSED_CMD = 0x1F01
 UNAVAILABLE = b"/.unavailable"
+
+
+def unavailable_at(index):
+    """Distinct unusable rpath per neutralised entry: dyld aborts on a duplicate LC_RPATH."""
+    return UNAVAILABLE if index == 0 else UNAVAILABLE + str(index + 1).encode()
 FAT_MAGIC = 0xCAFEBABE
 FAT_CIGAM = 0xBEBAFECA
 FAT_MAGIC_64 = 0xCAFEBABF
@@ -109,6 +114,7 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
     reexported = 0
     dropped_rpaths = 0
     seen_rpaths = set()
+    neutralised_paths = set()
     sdk_retagged = 0
     cursor = start
     for _ in range(ncmds):
@@ -139,13 +145,20 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
             dup_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
             if dup_off < cmdsize:
                 dup_path = bytes(cstr(data, cursor + dup_off, cmdsize - dup_off))
-                if dup_path in seen_rpaths and dup_path != UNAVAILABLE:
+                if dup_path.startswith(UNAVAILABLE):
+                    neutralised_paths.add(dup_path)
+                    continue
+                if dup_path in seen_rpaths:
                     room = cmdsize - dup_off
                     if room > len(UNAVAILABLE):
                         data[cursor + dup_off:cursor + cmdsize] = b"\0" * room
-                        data[cursor + dup_off:cursor + dup_off + len(UNAVAILABLE)] = UNAVAILABLE
+                        replacement = unavailable_at(len(neutralised_paths))
+                        while replacement in neutralised_paths:
+                            replacement += b"_"
+                        neutralised_paths.add(replacement)
+                        data[cursor + dup_off:cursor + dup_off + len(replacement)] = replacement
                         dropped_rpaths += 1
-                elif dup_path != UNAVAILABLE:
+                else:
                     seen_rpaths.add(dup_path)
         if drop_system_rpath and cmd == LC_RPATH and cmdsize >= 12:
             path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
