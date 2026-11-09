@@ -10,6 +10,11 @@ STAGE=$1; SDK=$2; SWIFT51=$3; SWIFT=$4; LINKER=$5; OUT=$6; RT=${7:-}
 mkdir -p "$OUT"; W="$OUT/work"; mkdir -p "$W"
 RES="$STAGE/probes/modules510"
 for NAME in CoreAudio CoreMedia AVFoundation; do
+  # The Swift 5.1 media overlay sources annotate APIs newer than the iOS 5 floor; the shipped armv7
+  # media slices have always been built at that floor (LC_VERSION_MIN_IPHONEOS 5.0). The suppression
+  # is confined to these three vendored overlays; project builds never enable it.
+  EXTRA_FLAGS=""
+  [ "$NAME" = AVFoundation ] && EXTRA_FLAGS="-Xfrontend -disable-availability-checking"
   SRC="$SWIFT51/stdlib/public/Darwin/$NAME"
   [ -d "$SRC" ] || fail "missing overlay sources: $SRC"
   /usr/bin/arch -x86_64 "$SWIFT" -parse-as-library -module-name "$NAME" \
@@ -17,7 +22,7 @@ for NAME in CoreAudio CoreMedia AVFoundation; do
     -target armv7-apple-ios5.0 -sdk "$SDK" -resource-dir "$RES" \
     -swift-version 5 -O -enable-library-evolution -emit-object -o "$W/$NAME.o" \
     -I "$RES/shims" -I "$STAGE/probes/dispatch-shims" \
-    -Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache-armv7-$NAME" \
+    -Xcc -DOS_OBJECT_USE_OBJC=0 -Xcc -fmodules-cache-path="$STAGE/probes/cc-modcache-armv7-$NAME" $EXTRA_FLAGS \
     "$SRC"/*.swift > "$OUT/log-$NAME.log" 2>&1 || { tail -20 "$OUT/log-$NAME.log" >&2; fail "$NAME compile"; }
 done
 [ -n "$RT" ] || fail "RT (armv7 runtime dir) required"
