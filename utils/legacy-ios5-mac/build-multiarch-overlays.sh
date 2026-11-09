@@ -97,8 +97,17 @@ for ARCH in $EXTRA_ARCHS; do
       -install_name "@rpath/libswift$NAME.dylib" -o "$RT/libswift$NAME.dylib" "$OBJECT" \
       -L"$RT" -L"$RES/iphoneos" -L"$STAGE/probes/linked510-$ARCH" ${BOOTSTRAP_DISPATCH_DIR:+-L"$BOOTSTRAP_DISPATCH_DIR"} ${LIBARGS[@]+"${LIBARGS[@]}"} \
       -lswiftCompatibility50 -lc++ ${FRAMEWORKS[@]+"${FRAMEWORKS[@]}"} \
+      ${FORCE_LOAD_UNDEFINED[@]+"${FORCE_LOAD_UNDEFINED[@]}"} \
       >> "$OUT/log-$ARCH-link.log" 2>&1 || { tail -20 "$OUT/log-$ARCH-link.log" >&2; fail "$ARCH libswift$NAME.dylib failed"; }
   }
+  # The base runtime dylibs autolink siblings that do not exist yet (CoreFoundation -> Dispatch,
+  # CoreMedia -> Foundation/Metal, ...) and the overlays in turn link against these. The autolink
+  # force-load references are therefore left undefined here and are never required at run time: the
+  # references are weak and the sibling is a real shipped dylib once the tree is merged.
+  FORCE_LOAD_UNDEFINED=()
+  for sib in Dispatch CoreGraphics Foundation Metal QuartzCore CoreAudio CoreMedia CoreFoundation ObjectiveC Darwin; do
+    FORCE_LOAD_UNDEFINED+=(-Xlinker -U -Xlinker "__swift_FORCE_LOAD_\$_swift$sib")
+  done
   link_overlay ObjectiveC "$WORK/ObjectiveC.o" Core Darwin --
   link_overlay CoreFoundation "$WORK/CoreFoundation.o" Core Darwin ObjectiveC -- Foundation CoreFoundation
   # AVFoundation is linked after the seven overlays so its Foundation/CoreGraphics/Dispatch/QuartzCore
