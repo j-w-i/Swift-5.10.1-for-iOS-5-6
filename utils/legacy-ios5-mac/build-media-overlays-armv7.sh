@@ -14,7 +14,7 @@ for NAME in CoreAudio CoreMedia AVFoundation; do
   # media slices have always been built at that floor (LC_VERSION_MIN_IPHONEOS 5.0). The suppression
   # is confined to these three vendored overlays; project builds never enable it.
   EXTRA_FLAGS=""
-  [ "$NAME" = AVFoundation ] && EXTRA_FLAGS="-Xfrontend -disable-availability-checking"
+  [ "$NAME" = AVFoundation ] && EXTRA_FLAGS="-disable-availability-checking"
   SRC="$SWIFT51/stdlib/public/Darwin/$NAME"
   [ -d "$SRC" ] || fail "missing overlay sources: $SRC"
   /usr/bin/arch -x86_64 "$SWIFT" -parse-as-library -module-name "$NAME" \
