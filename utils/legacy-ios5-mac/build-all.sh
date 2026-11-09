@@ -203,8 +203,10 @@ multiarch() {
   # legacy iOS 5.0 core/Darwin/SwiftOnoneSupport, and the 5.1.5-source base overlays.
   ARMV7_BASE="$ROOT/out/armv7-base"; rm -rf "$ARMV7_BASE"; mkdir -p "$ARMV7_BASE"
   cp "$ROOT/bootstrap/probes/linked510-legacy/"libswift*.dylib "$ARMV7_BASE/"
-  for n in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$n.dylib" "$ARMV7_BASE/"; done
-  for n in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$n.dylib" "$ARMV7_BASE/"; done
+  # NOTE: stage()'s name variable is `n`, and bash locals are dynamically scoped, so reusing `n` as a
+  # loop variable here silently rewrote the stamp name the caller touched (it created .stamps/CoreFoundation).
+  for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
   BASELINE_RUNTIME="$ARMV7_BASE" \
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
