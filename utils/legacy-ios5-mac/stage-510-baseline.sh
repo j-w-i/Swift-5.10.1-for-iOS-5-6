@@ -60,8 +60,11 @@ for arch in armv7 armv7s arm64; do
   CRT_SLICES+=("$slice")
 done
 /usr/bin/lipo -create "${CRT_SLICES[@]}" -output "$CLANG_DARWIN/libclang_rt.ios.a"
-/usr/bin/nm -gU "$CLANG_DARWIN/libclang_rt.ios.a" | /usr/bin/grep -q '__isPlatformVersionAtLeast' || {
-  echo "compiler-rt archive lacks __isPlatformVersionAtLeast" >&2; exit 1; }
+# Capture first: `nm | grep -q` under `set -o pipefail` reports failure when grep exits early and nm
+# gets SIGPIPE, which made a correct archive look broken.
+CRT_SYMBOLS="$(/usr/bin/nm -gU "$CLANG_DARWIN/libclang_rt.ios.a" 2>/dev/null)"
+case "$CRT_SYMBOLS" in *__isPlatformVersionAtLeast*) ;; *)
+  echo "compiler-rt archive lacks __isPlatformVersionAtLeast" >&2; exit 1 ;; esac
 
 
 # Host compiler binaries built from source.
