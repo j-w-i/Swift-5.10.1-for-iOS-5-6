@@ -205,7 +205,7 @@ overlays() { # prepare + build + link the rewritten overlays
   rm -rf "$ARMV7_MEDIA"
   bash "$HERE/build-media-overlays-armv7.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/src/swift" \
     "$ROOT/build/swift/bin/swift-frontend" "$ROOT/build/llvm/bin/clang" "$ARMV7_MEDIA" \
-    "$ARMV7_BASE" > "$L/overlays.log" 2>&1 \
+    "$ARMV7_BASE" "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos" > "$L/overlays.log" 2>&1 \
     || { tail -20 "$L/overlays.log" >&2; exit 1; }
 }
 # Non-armv7 legacy slices: build the overlays, facades and runtime for armv7s/arm64 and merge them
