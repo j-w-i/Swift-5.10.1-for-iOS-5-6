@@ -197,7 +197,13 @@ multiarch() {
   [ -n "${EXTRA_ARCHS:-}" ] || { echo 'multiarch: EXTRA_ARCHS empty, nothing to do'; return 0; }
   local base
   base=$(dirname "$(dirname "$ROOT/build/swift/bin/swift-frontend")")/../bootstrap/probes/modules510/iphoneos 2>/dev/null || true
-  BASELINE_RUNTIME="$ROOT/bootstrap/probes/linked510-legacy" \
+  # Complete armv7 dylib set to merge the other slices into: the seven overlays linked for armv7, the 5.10.1
+  # legacy iOS 5.0 core/Darwin/SwiftOnoneSupport, and the 5.1.5-source base overlays.
+  ARMV7_BASE="$ROOT/out/armv7-base"; rm -rf "$ARMV7_BASE"; mkdir -p "$ARMV7_BASE"
+  cp "$ROOT/bootstrap/probes/linked510-legacy/"libswift*.dylib "$ARMV7_BASE/"
+  for n in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$n.dylib" "$ARMV7_BASE/"; done
+  for n in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$n.dylib" "$ARMV7_BASE/"; done
+  BASELINE_RUNTIME="$ARMV7_BASE" \
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" \
@@ -210,6 +216,7 @@ assemble() {
   # toolchain from the current stage inputs.
   rm -rf "$ROOT/out/swift-5.10.1-ios5.xctoolchain"
   H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"; export LEGACY_515_ROOT="$ROOT/b515"
+  [ -d "$ROOT/out/multiarch-runtime/iphoneos" ] && export LEGACY_FAT_RUNTIME="$ROOT/out/multiarch-runtime/iphoneos"
   LINK_OUTPUT_NAME=linked510-legacy bash "$HERE/assemble-510-toolchain.sh" "$H" "$ROOT/build/swift/bin/swift-frontend" \
     "$S/swift-driver/.build/x86_64-apple-macosx/debug/swift-driver" "$ROOT/bootstrap" "$LEGACY_515_ROOT/build/runtime-ios5" \
     "$ROOT/bootstrap/probes/linked510-legacy/libLegacyRuntimeBackports.a" "$S/theos-sdks/iPhoneOS9.3.sdk/usr/lib/crt1.3.1.o" \

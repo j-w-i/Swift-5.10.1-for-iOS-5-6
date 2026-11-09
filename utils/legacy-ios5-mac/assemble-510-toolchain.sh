@@ -339,12 +339,19 @@ try:
     # generation (Core, Darwin, ObjectiveC, CoreFoundation, Dispatch). Copy only
     # those, so no stale sibling dylib from another compiler generation ships.
     base_runtime = ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation')
+    # LEGACY_FAT_RUNTIME (the multiarch stage's merged tree) carries every dylib with all architecture
+    # slices; when present it is the source, so the shipped dylibs are fat instead of armv7-only.
+    fat_dir = Path(os.environ['LEGACY_FAT_RUNTIME']) if os.environ.get('LEGACY_FAT_RUNTIME') else None
+    def pick(fat_name, fallback):
+        if fat_dir is not None and (fat_dir / fat_name).is_file():
+            return fat_dir / fat_name
+        return fallback
     for name in base_runtime:
-        source = oldlib / ('libswift' + name + '.dylib')
+        source = pick('libswift' + name + '.dylib', oldlib / ('libswift' + name + '.dylib'))
         nonempty(source)
         replace_copy(source, ios / source.name)
     for name in OVERLAYS:
-        source = linked / ('libswift' + name + '.dylib')
+        source = pick('libswift' + name + '.dylib', linked / ('libswift' + name + '.dylib'))
         replace_copy(source, ios / source.name)
     # Optional media overlays (AVFoundation and its CoreMedia/CoreAudio
     # dependencies) are rebuilt against the same matching runtime. They are
@@ -354,7 +361,7 @@ try:
     shipped_extras = []
     if extra_dir:
         for name in ('CoreAudio', 'CoreMedia', 'AVFoundation'):
-            dylib = Path(extra_dir) / ('libswift' + name + '.dylib')
+            dylib = pick('libswift' + name + '.dylib', Path(extra_dir) / ('libswift' + name + '.dylib'))
             nonempty(dylib)
             if run(OTOOL, '-D', dylib).splitlines()[1:] != ['@rpath/' + dylib.name]:
                 fail('Unexpected extra overlay install name: ' + str(dylib))
