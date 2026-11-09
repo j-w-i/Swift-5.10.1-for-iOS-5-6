@@ -90,10 +90,16 @@ swift_stdlib_NSObject_isEqual(id lhs,
 // +newTaggedNSStringWithASCIIBytes_:length_: exists only where Foundation/CoreFoundation grew
 // tagged-pointer strings (iOS 7+ in practice, and not even every iOS 7-11 release). The runtime
 // asks instead of assuming, so one binary works from its deployment floor to current systems.
-#if defined(SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK)
-// The "is Swift" bit this runtime tests and writes. iOS 12.2 (CoreFoundation 1570.15) switched
-// objc from the legacy bit (1) to the stable bit (2); earlier systems only know bit 1.
+// The "is Swift" bit this runtime tests and writes. iOS 12.2 (CoreFoundation 1570.15) switched objc
+// from the legacy bit (1) to the stable bit (2), so slices that serve systems on both sides of that
+// boundary pick the value at load time (SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK).
+//
+// The symbol is exported by every Darwin core, not only the dynamic ones: Swift 5.1.5's overlay
+// headers (still used for the vendored Foundation churn objects) reference it unconditionally, so an
+// armv7 legacy core that omitted it made libswiftFoundation fail to load on iOS 5. The legacy
+// class-marking ABI never reads it (it records Swift-ness in class_ro_t::flags).
 SWIFT_RUNTIME_EXPORT uintptr_t _swift_classIsSwiftMask = 2;
+#if defined(SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK)
 __attribute__((constructor(101))) static void swift_initClassIsSwiftMask(void) {
   _swift_classIsSwiftMask = (kCFCoreFoundationVersionNumber < 1570.15) ? 1 : 2;
 }
