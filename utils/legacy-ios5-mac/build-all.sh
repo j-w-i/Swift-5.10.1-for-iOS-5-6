@@ -192,6 +192,7 @@ overlays() { # prepare + build + link the rewritten overlays
 # with the armv7 dylibs into one multi-arch tree. Runs after `overlays` (armv7 objects/modules) and
 # after stdlib-510-ios produced the extra per-arch module trees when EXTRA_ARCHS is set.
 multiarch() {
+  export LEGACY_515_ROOT="$ROOT/b515"   # set here too: a resumed run skips the stage that exports it
   [ -n "${EXTRA_ARCHS:-}" ] || { echo 'multiarch: EXTRA_ARCHS empty, nothing to do'; return 0; }
   local base
   base=$(dirname "$(dirname "$ROOT/build/swift/bin/swift-frontend")")/../bootstrap/probes/modules510/iphoneos 2>/dev/null || true
