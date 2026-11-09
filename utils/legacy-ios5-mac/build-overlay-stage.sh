@@ -119,7 +119,8 @@ run_wave() {
 }
 run_wave Dispatch
 run_wave CoreGraphics
-run_wave Foundation Metal
+run_wave Foundation
+run_wave Metal
 run_wave QuartzCore
 run_wave CoreImage
 run_wave UIKit
