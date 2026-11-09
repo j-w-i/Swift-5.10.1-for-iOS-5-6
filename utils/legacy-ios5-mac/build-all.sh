@@ -207,6 +207,9 @@ multiarch() {
   # loop variable here silently rewrote the stamp name the caller touched (it created .stamps/CoreFoundation).
   for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
   for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  # build-multiarch-overlays.sh refuses to reuse an output directory (its outputs are evidence of one
+  # run), so a re-run of this stage starts from a clean derived directory.
+  rm -rf "$ROOT/out/multiarch-runtime"
   BASELINE_RUNTIME="$ARMV7_BASE" \
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
