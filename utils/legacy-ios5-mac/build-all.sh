@@ -196,7 +196,7 @@ multiarch() {
   local base
   base=$(dirname "$(dirname "$ROOT/build/swift/bin/swift-frontend")")/../bootstrap/probes/modules510/iphoneos 2>/dev/null || true
   BASELINE_RUNTIME="$ROOT/bootstrap/probes/linked510-legacy" \
-  SDK="$ROOT/src/theos-sdks/iPhoneOS13.7.sdk" \
+  SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" \
   EXTRA_ARCHS="$EXTRA_ARCHS" \
