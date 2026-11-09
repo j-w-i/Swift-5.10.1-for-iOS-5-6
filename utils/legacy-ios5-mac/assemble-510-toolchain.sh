@@ -225,8 +225,11 @@ try:
     # The staged module tree is armv7 only. armv7s/arm64 module files (including the overlay
     # modules the multiarch stage compiled) come from its merged tree, so a 64-bit client links
     # against our overlays instead of the SDK's Swift modules of the same name.
-    if fat_dir is not None and (fat_dir / 'iphoneos').is_dir():
-        for source_dir in sorted((fat_dir / 'iphoneos').glob('*.swiftmodule')):
+    fat_modules = None
+    if fat_dir is not None:
+        fat_modules = fat_dir / 'iphoneos' if (fat_dir / 'iphoneos').is_dir() else fat_dir
+    if fat_modules is not None and fat_modules.is_dir():
+        for source_dir in sorted(fat_modules.glob('*.swiftmodule')):
             if not source_dir.is_dir():
                 continue
             dest_dir = slot / 'iphoneos' / source_dir.name
