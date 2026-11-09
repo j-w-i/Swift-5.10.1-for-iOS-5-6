@@ -142,6 +142,16 @@ overlays() { # prepare + build + link the rewritten overlays
   export LEGACY_515_ROOT="$ROOT/b515"; H="$ROOT/out/swift-5.10.1-baseline.xctoolchain"
   SDK="$XC/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk"
   bash "$HERE/prepare-legacy-resources.sh" --swift510-resource "$H/usr/lib/swift" --swift51-source "$LEGACY_515_ROOT/src/swift" --output "$ROOT/bootstrap"
+  # The Swift 5.10 resource tree carries no ObjectiveC/CoreFoundation overlay modules (the 5.10 source
+  # tree has no Darwin overlay directory), but the Foundation/UIKit overlays import them (ObjCBool,
+  # CF bridging). They come from the matching Swift 5.1.5 runtime built in the runtime-515 stage.
+  for MOD in ObjectiveC CoreFoundation; do
+    SRC_MOD="$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/$MOD.swiftmodule"
+    [ -d "$SRC_MOD" ] || { echo "missing $SRC_MOD (runtime-515 must run first)" >&2; exit 1; }
+    mkdir -p "$ROOT/bootstrap/probes/modules510/iphoneos"
+    rm -rf "$ROOT/bootstrap/probes/modules510/iphoneos/$MOD.swiftmodule"
+    cp -R "$SRC_MOD" "$ROOT/bootstrap/probes/modules510/iphoneos/$MOD.swiftmodule"
+  done
   # UIKit's iOS 5 declaration supplement is a compiler resource, not a bridging
   # header or package. Build the matching implementation from vendored sources
   # before compiling overlays; link-overlay-stage embeds it in libswiftUIKit.
@@ -165,7 +175,7 @@ overlays() { # prepare + build + link the rewritten overlays
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/bootstrap/probes/native-uikit-runtime"
   OLD_CORE_DIR="$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos"
   [ -d "$OLD_CORE_DIR" ] || OLD_CORE_DIR="$LEGACY_515_ROOT/build/runtime-ios5"
-  bash "$HERE/build-native-numeric-runtime.sh" "$SDK" "$ROOT/build/llvm/bin/clang" \
+  bash "$HERE/build-native-numeric-runtime.sh" armv7 "$SDK" "$ROOT/build/llvm/bin/clang" \
     "$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" "$ROOT/build/swift/bin/swift-frontend" \
     "$ROOT/bootstrap/probes/modules510" "$ROOT/bootstrap/probes/native-numeric-runtime" \
     "$OLD_CORE_DIR/libswiftCore.dylib"
