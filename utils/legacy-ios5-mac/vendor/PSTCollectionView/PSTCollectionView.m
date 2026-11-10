@@ -72,6 +72,12 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     CGPoint _rotationBoundsOffset;
     int _rotationAnimationCount;
     int _pstSelfSizingRounds;
+    // Prefetching (iOS 10): items already announced and not yet displayed, and where the last pass stood.
+    NSMutableSet *_pstPrefetchedIndexPaths;
+    CGPoint _pstPrefetchLastOrigin;
+    BOOL _pstPrefetchHasOrigin;
+    BOOL _pstPrefetchDisabled;
+    __unsafe_unretained id<PSTCollectionViewDataSourcePrefetching> _prefetchDataSource;
     int _updateCount;
     NSMutableArray *_insertItems;
     NSMutableArray *_deleteItems;
@@ -696,6 +702,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
 - (void)reloadData {
     if (_reloadingSuspendedCount != 0) return;
+    [_pstPrefetchedIndexPaths removeAllObjects];
+    _pstPrefetchHasOrigin = NO;
     [self invalidateLayout];
     // Retire every visible view the way UIKit does: remove it, tell the delegate it stopped being
     // displayed, and return it to its reuse queue (so the next pass dequeues instead of allocating).
@@ -1698,8 +1706,80 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _pstVisibleViewsMatchAttributes = YES;
     PST_STATS_END_PASS();
     [self pstMeasureSelfSizingCells];
+    [self pstPrefetchAfterPass];
 }
 #undef PST_STATS_END_PASS
+
+- (id<PSTCollectionViewDataSourcePrefetching>)prefetchDataSource { return _prefetchDataSource; }
+- (void)setPrefetchDataSource:(id<PSTCollectionViewDataSourcePrefetching>)source { _prefetchDataSource = source; }
+- (BOOL)isPrefetchingEnabled { return !_pstPrefetchDisabled; }
+- (void)setPrefetchingEnabled:(BOOL)enabled {
+    _pstPrefetchDisabled = !enabled;
+    if (!enabled) [_pstPrefetchedIndexPaths removeAllObjects];
+}
+
+/// UICollectionViewDataSourcePrefetching. While the bounds are moving, the items just beyond the visible
+/// rect in the scroll direction (about three quarters of a screen, nearest first) are announced once through
+/// -collectionView:prefetchItemsAtIndexPaths:. An announced item that is then left behind without ever being
+/// displayed is cancelled through -collectionView:cancelPrefetchingForItemsAtIndexPaths:. Nothing fires
+/// while the bounds are still, so the initial layout and reloads never prefetch (matching iOS 27).
+- (void)pstPrefetchAfterPass {
+    id<PSTCollectionViewDataSourcePrefetching> source = _prefetchDataSource;
+    CGPoint origin = self.bounds.origin;
+    CGPoint previous = _pstPrefetchLastOrigin;
+    BOOL hadOrigin = _pstPrefetchHasOrigin;
+    _pstPrefetchLastOrigin = origin; _pstPrefetchHasOrigin = YES;
+    if (!source || _pstPrefetchDisabled || !hadOrigin) return;
+    CGFloat dx = origin.x - previous.x, dy = origin.y - previous.y;
+    if (dx == 0 && dy == 0) return;
+    BOOL vertical = fabs(dy) >= fabs(dx);
+    CGRect visible = self.bounds;
+    CGRect ahead = visible;
+    CGFloat reach = 0.75 * (vertical ? visible.size.height : visible.size.width);
+    if (vertical) { if (dy > 0) ahead.size.height += reach; else { ahead.origin.y -= reach; ahead.size.height += reach; } }
+    else          { if (dx > 0) ahead.size.width  += reach; else { ahead.origin.x -= reach; ahead.size.width  += reach; } }
+    BOOL forward = vertical ? dy > 0 : dx > 0;
+
+    NSMutableArray *candidates = [NSMutableArray array];
+    NSMutableSet *inAhead = [NSMutableSet set];
+    for (PSTCollectionViewLayoutAttributes *attributes in [_collectionViewData layoutAttributesForElementsInRect:ahead]) {
+        if (attributes.representedElementCategory != PSTCollectionViewItemTypeCell) continue;
+        [inAhead addObject:attributes.indexPath];
+        PSTCollectionViewItemKey *key = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:attributes];
+        if ([_allVisibleViewsDict objectForKey:key]) continue;
+        if ([_pstPrefetchedIndexPaths containsObject:attributes.indexPath]) continue;
+        [candidates addObject:attributes];
+    }
+    // Nearest to the visible edge first, ties in reading order.
+    CGFloat edge = vertical ? (forward ? CGRectGetMaxY(visible) : CGRectGetMinY(visible))
+                            : (forward ? CGRectGetMaxX(visible) : CGRectGetMinX(visible));
+    [candidates sortUsingComparator:^NSComparisonResult(PSTCollectionViewLayoutAttributes *a, PSTCollectionViewLayoutAttributes *b) {
+        CGFloat da = fabs((vertical ? (forward ? CGRectGetMinY(a.frame) : CGRectGetMaxY(a.frame))
+                                    : (forward ? CGRectGetMinX(a.frame) : CGRectGetMaxX(a.frame))) - edge);
+        CGFloat db = fabs((vertical ? (forward ? CGRectGetMinY(b.frame) : CGRectGetMaxY(b.frame))
+                                    : (forward ? CGRectGetMinX(b.frame) : CGRectGetMaxX(b.frame))) - edge);
+        if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
+        return [a.indexPath compare:b.indexPath];
+    }];
+
+    // Items announced earlier that are now displayed are done; ones that left the window undisplayed are cancelled.
+    if (!_pstPrefetchedIndexPaths) _pstPrefetchedIndexPaths = [NSMutableSet set];
+    NSMutableArray *cancelled = [NSMutableArray array];
+    for (NSIndexPath *indexPath in [_pstPrefetchedIndexPaths allObjects]) {
+        PSTCollectionViewItemKey *key = [PSTCollectionViewItemKey collectionItemKeyForCellWithIndexPath:indexPath];
+        if ([_allVisibleViewsDict objectForKey:key]) [_pstPrefetchedIndexPaths removeObject:indexPath];
+        else if (![inAhead containsObject:indexPath]) { [cancelled addObject:indexPath]; [_pstPrefetchedIndexPaths removeObject:indexPath]; }
+    }
+    if ([cancelled count] && [source respondsToSelector:@selector(collectionView:cancelPrefetchingForItemsAtIndexPaths:)]) {
+        [cancelled sortUsingSelector:@selector(compare:)];
+        [source collectionView:self cancelPrefetchingForItemsAtIndexPaths:cancelled];
+    }
+    if ([candidates count]) {
+        NSMutableArray *paths = [NSMutableArray arrayWithCapacity:[candidates count]];
+        for (PSTCollectionViewLayoutAttributes *attributes in candidates) { [paths addObject:attributes.indexPath]; [_pstPrefetchedIndexPaths addObject:attributes.indexPath]; }
+        [source collectionView:self prefetchItemsAtIndexPaths:paths];
+    }
+}
 
 /// Self-sizing cells (flow layout estimatedItemSize). Each visible cell that has not yet reported a size
 /// equal to the laid out one is asked for its preferred attributes. If any answers with a different size

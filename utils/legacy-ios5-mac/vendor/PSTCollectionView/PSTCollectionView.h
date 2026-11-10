@@ -47,6 +47,8 @@ __attribute__((swift_name("UICollectionView")))
 @property (nonatomic, strong) PSTCollectionViewLayout *collectionViewLayout;
 @property (nonatomic, assign) IBOutlet id<PSTCollectionViewDelegate> delegate;
 @property (nonatomic, assign) IBOutlet id<PSTCollectionViewDataSource> dataSource;
+@property (nonatomic, assign) id<PSTCollectionViewDataSourcePrefetching> prefetchDataSource; // iOS 10
+@property (nonatomic, getter=isPrefetchingEnabled) BOOL prefetchingEnabled;                     // iOS 10; default YES
 @property (nonatomic, strong) UIView *backgroundView; // will be automatically resized to track the size of the collection view and placed behind all cells and supplementary views.
 
 // For each reuse identifier that the collection view will use, register either a class or a nib from which to instantiate a cell.

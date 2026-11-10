@@ -26,6 +26,7 @@
 
 static IMP UICOriginalAddControlledSubview;
 static void UICInstallSelfSizing(Class collectionView);
+static void UICInstallPrefetching(Class collectionView);
 
 /// The layout attributes UIKit stored on a reusable view (private accessor present on iOS 6 and 7).
 static UICollectionViewLayoutAttributes *UICAttributesForView(UIView *view) {
@@ -95,6 +96,9 @@ void UICInstallCollectionViewDisplay(void) {
 
     // iOS 8 self-sizing: below it, give Apple's flow layout the estimate and the cell the preferred-size method.
     if (kCFCoreFoundationVersionNumber < UIC_CF_IOS_8) UICInstallSelfSizing(collectionView);
+
+    // iOS 10 prefetching, only where UIKit does not already have it.
+    if (!class_getInstanceMethod(collectionView, sel_registerName("prefetchDataSource"))) UICInstallPrefetching(collectionView);
 
     // The iOS 9 accessors, only where UIKit does not already have them.
     SEL visible = sel_registerName("visibleSupplementaryViewsOfKind:");
@@ -248,6 +252,117 @@ static void UICInstallSelfSizing(Class collectionView) {
     if (layout && !UICOriginalLayoutSubviews) UICOriginalLayoutSubviews = method_setImplementation(layout, (IMP)UICLayoutSubviews);
     Method reload = class_getInstanceMethod(collectionView, sel_registerName("reloadData"));
     if (reload && !UICOriginalReloadData) UICOriginalReloadData = method_setImplementation(reload, (IMP)UICReloadData);
+}
+
+#pragma mark - Prefetching on Apple's UICollectionView (iOS 6-9)
+
+// iOS 10 UICollectionViewDataSourcePrefetching: while the bounds are moving, the items just beyond the visible
+// rect in the scroll direction are announced once through collectionView:prefetchItemsAtIndexPaths:, and items
+// announced but left behind undisplayed are cancelled. Nothing fires while the bounds are still. Same rule as the
+// kit's PSTCollectionView, observed against UIKit on iOS 27.
+
+static char UICPrefetchSourceKey, UICPrefetchDisabledKey, UICPrefetchSetKey, UICPrefetchOriginKey;
+static IMP UICOriginalLayoutSubviewsForPrefetch, UICOriginalReloadDataForPrefetch;
+
+static id UICPrefetchDataSource(id self, SEL _cmd) {
+    return [objc_getAssociatedObject(self, &UICPrefetchSourceKey) nonretainedObjectValue];
+}
+static void UICSetPrefetchDataSource(id self, SEL _cmd, id source) {
+    objc_setAssociatedObject(self, &UICPrefetchSourceKey, source ? [NSValue valueWithNonretainedObject:source] : nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static BOOL UICIsPrefetchingEnabled(id self, SEL _cmd) {
+    return ![objc_getAssociatedObject(self, &UICPrefetchDisabledKey) boolValue];
+}
+static void UICSetPrefetchingEnabled(id self, SEL _cmd, BOOL enabled) {
+    objc_setAssociatedObject(self, &UICPrefetchDisabledKey, enabled ? nil : @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!enabled) [(NSMutableSet *)objc_getAssociatedObject(self, &UICPrefetchSetKey) removeAllObjects];
+}
+
+static void UICPrefetchAfterPass(UICollectionView *self) {
+    id source = UICPrefetchDataSource(self, NULL);
+    CGPoint origin = self.bounds.origin;
+    NSValue *previousValue = objc_getAssociatedObject(self, &UICPrefetchOriginKey);
+    objc_setAssociatedObject(self, &UICPrefetchOriginKey, [NSValue valueWithCGPoint:origin], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!source || !UICIsPrefetchingEnabled(self, NULL) || !previousValue) return;
+    CGPoint previous = [previousValue CGPointValue];
+    CGFloat dx = origin.x - previous.x, dy = origin.y - previous.y;
+    if (dx == 0 && dy == 0) return;
+    SEL prefetchSel = sel_registerName("collectionView:prefetchItemsAtIndexPaths:");
+    if (![source respondsToSelector:prefetchSel]) return;
+    BOOL vertical = fabs(dy) >= fabs(dx), forward = vertical ? dy > 0 : dx > 0;
+    CGRect visible = self.bounds, ahead = visible;
+    CGFloat reach = 0.75 * (vertical ? visible.size.height : visible.size.width);
+    if (vertical) { if (!forward) ahead.origin.y -= reach; ahead.size.height += reach; }
+    else          { if (!forward) ahead.origin.x -= reach; ahead.size.width  += reach; }
+
+    NSMutableSet *announced = objc_getAssociatedObject(self, &UICPrefetchSetKey);
+    if (!announced) { announced = [NSMutableSet set]; objc_setAssociatedObject(self, &UICPrefetchSetKey, announced, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    NSMutableSet *displayed = [NSMutableSet set];
+    for (UICollectionViewCell *cell in [self visibleCells]) { NSIndexPath *p = [self indexPathForCell:cell]; if (p) [displayed addObject:p]; }
+
+    NSMutableArray *candidates = [NSMutableArray array];
+    NSMutableSet *inAhead = [NSMutableSet set];
+    for (UICollectionViewLayoutAttributes *attributes in [[self collectionViewLayout] layoutAttributesForElementsInRect:ahead]) {
+        if ([attributes representedElementCategory] != UICollectionElementCategoryCell) continue;
+        [inAhead addObject:attributes.indexPath];
+        if ([displayed containsObject:attributes.indexPath] || [announced containsObject:attributes.indexPath]) continue;
+        [candidates addObject:attributes];
+    }
+    CGFloat edge = vertical ? (forward ? CGRectGetMaxY(visible) : CGRectGetMinY(visible))
+                            : (forward ? CGRectGetMaxX(visible) : CGRectGetMinX(visible));
+    CGFloat (^distance)(UICollectionViewLayoutAttributes *) = ^CGFloat(UICollectionViewLayoutAttributes *a) {
+        CGFloat position = vertical ? (forward ? CGRectGetMinY(a.frame) : CGRectGetMaxY(a.frame))
+                                    : (forward ? CGRectGetMinX(a.frame) : CGRectGetMaxX(a.frame));
+        return fabs(position - edge);
+    };
+    [candidates sortUsingComparator:^NSComparisonResult(UICollectionViewLayoutAttributes *a, UICollectionViewLayoutAttributes *b) {
+        CGFloat da = distance(a), db = distance(b);
+        if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
+        return [a.indexPath compare:b.indexPath];
+    }];
+
+    NSMutableArray *cancelled = [NSMutableArray array];
+    for (NSIndexPath *indexPath in [announced allObjects]) {
+        if ([displayed containsObject:indexPath]) [announced removeObject:indexPath];
+        else if (![inAhead containsObject:indexPath]) { [cancelled addObject:indexPath]; [announced removeObject:indexPath]; }
+    }
+    SEL cancelSel = sel_registerName("collectionView:cancelPrefetchingForItemsAtIndexPaths:");
+    if ([cancelled count] && [source respondsToSelector:cancelSel]) {
+        [cancelled sortUsingSelector:@selector(compare:)];
+        ((void (*)(id, SEL, id, id))objc_msgSend)(source, cancelSel, self, cancelled);
+    }
+    if ([candidates count]) {
+        NSMutableArray *paths = [NSMutableArray arrayWithCapacity:[candidates count]];
+        for (UICollectionViewLayoutAttributes *attributes in candidates) { [paths addObject:attributes.indexPath]; [announced addObject:attributes.indexPath]; }
+        ((void (*)(id, SEL, id, id))objc_msgSend)(source, prefetchSel, self, paths);
+    }
+}
+
+static void UICLayoutSubviewsPrefetch(UICollectionView *self, SEL _cmd) {
+    ((void (*)(id, SEL))UICOriginalLayoutSubviewsForPrefetch)(self, _cmd);
+    UICPrefetchAfterPass(self);
+}
+static void UICReloadDataPrefetch(UICollectionView *self, SEL _cmd) {
+    [(NSMutableSet *)objc_getAssociatedObject(self, &UICPrefetchSetKey) removeAllObjects];
+    objc_setAssociatedObject(self, &UICPrefetchOriginKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    ((void (*)(id, SEL))UICOriginalReloadDataForPrefetch)(self, _cmd);
+}
+
+static void UICInstallPrefetching(Class collectionView) {
+    char getter[16], setter[16], boolGetter[16], boolSetter[16];
+    snprintf(getter, sizeof getter, "@@:"); snprintf(setter, sizeof setter, "v@:@");
+    snprintf(boolGetter, sizeof boolGetter, "%s@:", @encode(BOOL)); snprintf(boolSetter, sizeof boolSetter, "v@:%s", @encode(BOOL));
+    class_addMethod(collectionView, sel_registerName("prefetchDataSource"), (IMP)UICPrefetchDataSource, getter);
+    class_addMethod(collectionView, sel_registerName("setPrefetchDataSource:"), (IMP)UICSetPrefetchDataSource, setter);
+    class_addMethod(collectionView, sel_registerName("isPrefetchingEnabled"), (IMP)UICIsPrefetchingEnabled, boolGetter);
+    class_addMethod(collectionView, sel_registerName("setPrefetchingEnabled:"), (IMP)UICSetPrefetchingEnabled, boolSetter);
+    // Wrap layoutSubviews / reloadData (the self-sizing installer may already have wrapped them; both chain).
+    Method layout = class_getInstanceMethod(collectionView, sel_registerName("layoutSubviews"));
+    if (layout && !UICOriginalLayoutSubviewsForPrefetch)
+        UICOriginalLayoutSubviewsForPrefetch = method_setImplementation(layout, (IMP)UICLayoutSubviewsPrefetch);
+    Method reload = class_getInstanceMethod(collectionView, sel_registerName("reloadData"));
+    if (reload && !UICOriginalReloadDataForPrefetch)
+        UICOriginalReloadDataForPrefetch = method_setImplementation(reload, (IMP)UICReloadDataPrefetch);
 }
 
 #pragma mark - UICollectionViewFlowLayoutAutomaticSize (iOS 10)

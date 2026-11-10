@@ -32,6 +32,15 @@ __attribute__((swift_name("UICollectionViewDataSource")))
 
 @end
 
+// iOS 10: told which items are about to be needed while scrolling, so data can be prepared ahead of cellForItem.
+__attribute__((swift_name("UICollectionViewDataSourcePrefetching")))
+@protocol PSTCollectionViewDataSourcePrefetching <NSObject>
+@required
+- (void)collectionView:(PSTCollectionView *)collectionView prefetchItemsAtIndexPaths:(NSArray *)indexPaths;
+@optional
+- (void)collectionView:(PSTCollectionView *)collectionView cancelPrefetchingForItemsAtIndexPaths:(NSArray *)indexPaths;
+@end
+
 __attribute__((swift_name("UICollectionViewDelegate")))
 @protocol PSTCollectionViewDelegate <UIScrollViewDelegate>
 @optional

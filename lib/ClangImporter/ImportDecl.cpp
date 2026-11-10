@@ -108,6 +108,8 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
       .Cases("UICollectionViewLayout", "UICollectionViewFlowLayout", 6)
       .Cases("UICollectionViewLayoutAttributes", "UICollectionViewController", 6)
       .Cases("UICollectionViewUpdateItem", "UICollectionViewDataSource", 6)
+      // iOS 10 prefetching protocol: implemented by PSTCollectionView and the runtime below the OS that ships it.
+      .Case("UICollectionViewDataSourcePrefetching", 10)
       .Cases("UICollectionViewDelegate", "UICollectionViewDelegateFlowLayout", 6)
       .Cases("UICollectionViewScrollPosition", "UICollectionViewScrollDirection", 6)
       .Cases("UICollectionUpdateAction", "UICollectionElementCategory", 6)
@@ -359,6 +361,10 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       if (member == "visibleSupplementaryViewsOfKind" ||
           member == "indexPathsForVisibleSupplementaryElementsOfKind")
         return 9;
+      if (member == "prefetchDataSource" || member == "setPrefetchDataSource" ||
+          member == "prefetchingEnabled" || member == "setPrefetchingEnabled" ||
+          member == "isPrefetchingEnabled")
+        return 10;
       return legacyUIKitFamilyCeiling(owner);
     }
     // iOS 8 display callbacks on the delegate protocol.
