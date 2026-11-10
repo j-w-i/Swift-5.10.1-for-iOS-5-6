@@ -12,9 +12,11 @@
 #define UICollectionViewDelegateFlowLayout PSTCollectionViewDelegateFlowLayout
 #endif
 static NSUInteger fittingCalls, delegateCalls;
+static CGSize firstProposal;
 @interface PrecedenceCell : UICollectionViewCell @end
 @implementation PrecedenceCell
 - (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a {
+    if (!fittingCalls) firstProposal=a.size;
     fittingCalls++;
     UICollectionViewLayoutAttributes *result=[a copy]; result.size=CGSizeMake(80,99); return result;
 }
@@ -39,6 +41,9 @@ int main(void) { @autoreleasepool {
     [cv layoutIfNeeded];
     CGSize size=[layout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]].size;
     printf("delegateCalls=%lu fittingCalls=%lu final=%gx%g\n",(unsigned long)delegateCalls,(unsigned long)fittingCalls,size.width,size.height);
+    if (!CGSizeEqualToSize(firstProposal,CGSizeMake(80,31))) {
+        fprintf(stderr,"FAIL: first preferred-size proposal must be delegate size, not estimate\n"); return 1;
+    }
     if (!delegateCalls || !fittingCalls || !CGSizeEqualToSize(size,CGSizeMake(80,99))) {
         fprintf(stderr,"FAIL: preferred size must override delegate seed when estimatedItemSize is enabled\n"); return 1;
     }
