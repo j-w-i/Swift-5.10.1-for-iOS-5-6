@@ -74,3 +74,15 @@ ARM mode is the primary guarantee.
 Static compilation and linkage are not device-execution proof. Test on a real
 iOS 5 device and on iOS 6 before claiming runtime qualification; the profile's
 `deviceExecution` remains `pending` until separately observed.
+
+## Hardware verification of the iOS 8-10 additions (round 7)
+
+| Device | Route | Verified |
+| --- | --- | --- |
+| iPod touch 3, iOS 5.1.1 | PSTCollectionView | willDisplay, visible supplementary accessors, prefetching, self-sizing, systemLayoutSizeFitting |
+| iPod touch 5, iOS 6.1.3 | Apple's UICollectionView + runtime hooks | same |
+| iPhone 6, iOS 10.3.3 | Apple's native implementation (hooks inactive) | counts and sizes match the iOS 27 simulator within font-metric differences; native prefetch fired 8 batches and 1 cancel |
+
+Known unresolved: an arm64 app built with a deployment target of 10.0 aborted at launch on the iPhone 6 inside
+libswiftFoundation's NSDictionary bridge (`cacheCanonicalSpecializedMetadata`), the same stack as the armv7s
+startup crash recorded in SCENE-LIFECYCLE.md. The deployment-5.0 fat build's arm64 slice runs.
