@@ -78,8 +78,17 @@ int main(void) { @autoreleasepool {
         [cv reloadItemsAtIndexPaths:@[[NSIndexPath indexPathForItem:0 inSection:0]]];
         check(cv,data,"repeated reload changes preferred height");
     }
+#ifdef TEST_FRESH_OFFSCREEN
+    // Diagnostic isolation only. Default keeps the reload-after-mutation case.
+    layout=[UICollectionViewFlowLayout new];
+    layout.estimatedItemSize=CGSizeMake(200,40); layout.minimumLineSpacing=0;
+    cv=[[UICollectionView alloc]initWithFrame:CGRectMake(0,0,200,120) collectionViewLayout:layout];
+    [cv registerClass:[UpdateCell class] forCellWithReuseIdentifier:@"u"];
+    data=[UpdateData new]; data.heights=[NSMutableArray array]; cv.dataSource=data;
+#else
     cv.frame=CGRectMake(0,0,200,120);
     [data.heights removeAllObjects];
+#endif
     for (int i=0;i<40;i++) [data.heights addObject:@(30+i*2)];
     [cv reloadData]; [cv layoutIfNeeded];
     visit(cv,data,0,"measure front");
