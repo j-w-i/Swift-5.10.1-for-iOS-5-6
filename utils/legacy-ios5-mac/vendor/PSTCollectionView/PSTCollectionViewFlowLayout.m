@@ -586,6 +586,11 @@ static char kPSTCachedItemRectsKey;
         }
         section.frame = sectionFrame;
     }
+    // The non-scrolling axis still spans the viewport when an incomplete column
+    // occupies less space. This matters for self-sizing columns, whose measured
+    // union can be much shorter than the available height.
+    if (_data.horizontal && _data.sections.count)
+        contentSize.height = MAX(contentSize.height, _data.dimension);
     _data.contentSize = contentSize;
 }
 

@@ -8,6 +8,7 @@
 #define UICollectionViewDataSource PSTCollectionViewDataSource
 #endif
 static BOOL firstProposal;
+static NSInteger itemCount = 2;
 @interface AutomaticCell : UICollectionViewCell @end
 @implementation AutomaticCell
 - (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a {
@@ -20,12 +21,13 @@ static BOOL firstProposal;
 @end
 @interface AutomaticData : NSObject<UICollectionViewDataSource> @end
 @implementation AutomaticData
-- (NSInteger)collectionView:(UICollectionView*)cv numberOfItemsInSection:(NSInteger)s { return 2; }
+- (NSInteger)collectionView:(UICollectionView*)cv numberOfItemsInSection:(NSInteger)s { return itemCount; }
 - (UICollectionViewCell*)collectionView:(UICollectionView*)cv cellForItemAtIndexPath:(NSIndexPath*)p {
     return [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:p];
 }
 @end
 int main(void) { @autoreleasepool {
+ for (itemCount=1;itemCount<=3;itemCount++) {
  for (int horizontal=0;horizontal<2;horizontal++) {
     firstProposal=NO;
     UICollectionViewFlowLayout *fl=[UICollectionViewFlowLayout new];
@@ -37,11 +39,13 @@ int main(void) { @autoreleasepool {
     AutomaticData*d=[AutomaticData new]; cv.dataSource=d;
     [cv layoutIfNeeded];
     if (!firstProposal || !isfinite(cv.contentSize.width) || !isfinite(cv.contentSize.height)) abort();
-    printf("axis=%d content=%gx%g\n",horizontal,cv.contentSize.width,cv.contentSize.height);
-    for (int i=0;i<2;i++) {
+    if (horizontal && cv.contentSize.height != 200) abort();
+    printf("count=%ld axis=%d content=%gx%g\n",(long)itemCount,horizontal,cv.contentSize.width,cv.contentSize.height);
+    for (int i=0;i<itemCount;i++) {
         CGRect frame=[fl layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]].frame;
         if (!CGSizeEqualToSize(frame.size,CGSizeMake(80,30))) abort();
         printf("cell=%d frame=%g,%g,%g,%g\n",i,frame.origin.x,frame.origin.y,frame.size.width,frame.size.height);
     }
+ }
  }
 } return 0; }

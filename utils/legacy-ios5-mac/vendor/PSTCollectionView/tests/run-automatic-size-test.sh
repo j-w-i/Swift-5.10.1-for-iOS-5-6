@@ -24,6 +24,6 @@ echo 'PASS: sentinel preserved; initial proposal 50x50 and preferred cell sizes 
 if diff -u "$OUT/native.txt" "$OUT/pst.txt"; then
     echo 'PASS: exact geometry parity'
 else
-    echo 'KNOWN GAP: horizontal content extent and row spacing differ (not an exact parity pass)'
+    echo 'KNOWN GAPS: sole-item centering/vertical content width and item-position rounding differ (not an exact parity pass)'
 fi
 echo "Artifacts: $OUT"
