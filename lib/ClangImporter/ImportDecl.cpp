@@ -350,6 +350,11 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       // Implemented for the legacy runtime by the UIKit backports: measured with
       // CoreText using the same attribute-name strings UIKit exports.
       return member == "sizeWithAttributes" ? 7 : 0;
+    // iOS 7 affine convenience property: PST implements it and the Apple route
+    // adds absent-only accessors on iOS 6.
+    if (owner == "UICollectionViewLayoutAttributes" &&
+        (member == "transform" || member == "setTransform"))
+      return 7;
     // Self-sizing cells: iOS 8 estimate and preferred attributes; iOS 10 automatic size constant.
     if ((owner == "UICollectionViewFlowLayout" &&
          (member == "estimatedItemSize" || member == "setEstimatedItemSize")) ||
