@@ -929,8 +929,16 @@ static void UICConnectScene(NSDictionary *launchOptions) {
         storyboardName = [UICConfigurationDictionary([configuration name]) objectForKey:@"UISceneStoryboardFile"];
     if (storyboardName && UICResponds(delegate, @selector(setWindow:)) && [delegate respondsToSelector:@selector(window)]
         && ![delegate window]) {
-        UIStoryboard *storyboard = [UIStoryboard storyboardWithName:storyboardName bundle:nil];
-        UIViewController *root = [storyboard instantiateInitialViewController];
+        // A storyboard iOS cannot open (for example a modern compiled bundle on iOS 5) raises; UIKit would
+        // fail the launch, here the scene still connects with an empty window so the app can recover.
+        UIStoryboard *storyboard = nil;
+        UIViewController *root = nil;
+        @try {
+            storyboard = [UIStoryboard storyboardWithName:storyboardName bundle:nil];
+            root = [storyboard instantiateInitialViewController];
+        } @catch (NSException *exception) {
+            NSLog(@"UIScene storyboard '%@' could not be loaded: %@", storyboardName, [exception reason]);
+        }
         UIWindow *window = ((id (*)(id, SEL, id))objc_msgSend)([UIWindow alloc], sel_registerName("initWithWindowScene:"), scene);
         window.rootViewController = root;
         [delegate setWindow:window];

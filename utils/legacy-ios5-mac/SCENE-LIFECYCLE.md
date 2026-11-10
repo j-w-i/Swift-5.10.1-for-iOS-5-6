@@ -31,7 +31,9 @@ it** and drives launch / foreground / background / URL / user-activity delivery 
   user-activity (`willContinue`) routes to the scene delegate (iPod + iPhone 6). Shortcut items do not exist on iOS 5 (class absent).
 * State restoration: `stateRestorationActivityForScene:` is requested twice before `sceneDidEnterBackground:` and
   `restoreInteractionState…` is delivered on every foreground entry, in the native order (iPod).
-* Not exercised: sceneDidDisconnect (the simulator did not send it either when the app was killed), storyboard scene windows,
+* Not exercised: sceneDidDisconnect (the simulator did not send it either when the app was killed), storyboard scene windows (NOT verified: the Kit's Xcode 13.4.1/27 `ibtool` only emits the modern compiled-storyboard layout, which iOS 5's
+  `UIStoryboard` rejects — "no valid compiled storyboard" — so a storyboard scene app cannot be built for iOS 5 here; the runtime loads the
+  storyboard if present and survives a failed load with an empty window),
   requestSceneSession* calls, multiple scenes (always reports unsupported, as an iPhone does natively).
 * Probe apps were installed as system apps (/Applications) on jailbroken devices, not as sandboxed user apps.
 
