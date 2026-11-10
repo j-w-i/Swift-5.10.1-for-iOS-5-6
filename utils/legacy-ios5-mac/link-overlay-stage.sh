@@ -231,6 +231,10 @@ fi
 # silently satisfy a rebuilt overlay dependency. Rebuild CG before Foundation.
 BASE=("$OLD_LIB/libswiftCore.dylib" "$OLD_LIB/libswiftDarwin.dylib" "$OLD_LIB/libswiftObjectiveC.dylib")
 CF=("$OLD_LIB/libswiftCoreFoundation.dylib")
+# Foundation's async adapters must bind the source-built embedded runtime, not
+# the SDK's system concurrency stub. Other base overlay dependencies stay explicit.
+CONCURRENCY_LIB="${LEGACY_CONCURRENCY_RUNTIME:-$OLD_LIB/libswift_Concurrency.dylib}"
+[ -s "$CONCURRENCY_LIB" ] || fail "Missing embedded concurrency runtime: $CONCURRENCY_LIB"
 for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
   DEPS=("${BASE[@]}")
   EXTRA=()
@@ -242,7 +246,7 @@ for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; d
       DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib")
       EXTRA=(-framework CoreGraphics) ;;
     Foundation)
-      DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib")
+      DEPS+=("${CF[@]}" "$OUT/libswiftDispatch.dylib" "$OUT/libswiftCoreGraphics.dylib" "$CONCURRENCY_LIB")
       EXTRA=(-framework Foundation -framework CoreFoundation -framework CoreGraphics -lc++)
       # The churn objects patch the iOS 5/6 Foundation overlay against a 5.1-era core (they use
       # __swift_classIsSwiftMask and friends). The newer slices link a current stdlib that already

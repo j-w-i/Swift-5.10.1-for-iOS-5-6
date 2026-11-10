@@ -49,7 +49,17 @@ stage() { # name  command...
   [ -e "$ROOT/.stamps/$n" ] && { echo "== $n: done (skip)"; return; }
   if [ -n "${ONLY:-}" ] && [ "$ONLY" != "$n" ]; then return; fi
   if [ -n "${FROM:-}" ] && [ -z "${STARTED:-}" ]; then [ "$FROM" = "$n" ] && STARTED=1 || { echo "== $n: before --from, skip"; return; }; fi
-  echo "== $n: $(date +%T)"; "$@" > "$L/$n.log" 2>&1 || { echo "FAILED: $n (see $L/$n.log)"; tail -25 "$L/$n.log"; exit 1; }
+  echo "== $n: $(date +%T)"
+  # Calling a shell function as the left operand of || disables errexit throughout
+  # its body. Run it outside a conditional so an early failed build cannot be
+  # hidden by a later successful command (or stamped as complete).
+  set +e
+  (set -e; "$@") > "$L/$n.log" 2>&1
+  local status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    echo "FAILED: $n (see $L/$n.log)"; tail -25 "$L/$n.log"; exit "$status"
+  fi
   touch "$ROOT/.stamps/$n"
 }
 while [ $# -gt 0 ]; do case "$1" in --from) FROM=$2; shift 2;; --only) ONLY=$2; shift 2;; *) echo "bad arg $1"; exit 64;; esac; done
@@ -188,6 +198,7 @@ overlays() { # prepare + build + link the rewritten overlays
     "$OLD_CORE_DIR/libswiftCore.dylib"
   LLVM_CONFIG_INCLUDE_DIR="$ROOT/build/llvm/include" LINK_OUTPUT_NAME=linked510-legacy IOS_DEPLOYMENT_TARGET=5.0 AR="$XC/Toolchains/XcodeDefault.xctoolchain/usr/bin/ar" \
   SWIFT51_SOURCE="$LEGACY_515_ROOT/src/swift" \
+  LEGACY_CONCURRENCY_RUNTIME="$ROOT/build/runtime510-ios5/lib/swift/iphoneos/armv7/libswift_Concurrency.dylib" \
   bash "$HERE/link-overlay-stage.sh" "$ROOT/bootstrap" "$SDK" "$LEGACY_515_ROOT/build/runtime-ios5" \
     "$LEGACY_515_ROOT/build/crt-armv7-ios50/libclang_rt.builtins_armv7_ios.a" "$ROOT/build/llvm/bin/clang" "$LEGACY_515_ROOT/src/llvm-project/libcxx/include"
 

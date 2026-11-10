@@ -122,6 +122,7 @@ for ARCH in $EXTRA_ARCHS; do
   rm -rf "$STAGE/probes/linked510-$ARCH"
   LINK_OUTPUT_NAME="linked510-$ARCH" IOS_DEPLOYMENT_TARGET="$EXTRA_DEPLOYMENT" AR="$AR" \
   SWIFT51_SOURCE="$SWIFT51_SOURCE" \
+  LEGACY_CONCURRENCY_RUNTIME="$RES/iphoneos/$ARCH/libswift_Concurrency.dylib" \
   LLVM_CONFIG_INCLUDE_DIR="${LLVM_CONFIG_INCLUDE_DIR:-$B/build/llvm/include}" \
   LLVM_INCLUDE_DIR="${LLVM_INCLUDE_DIR:-$(dirname "$SWIFT51_SOURCE")/llvm/include}" \
   LEGACY_UIKIT_BACKPORTS_ARCHIVE="$WORK/backports/libswiftLegacyUIKitBackports.a" \

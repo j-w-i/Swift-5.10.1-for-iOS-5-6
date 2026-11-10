@@ -56,7 +56,7 @@ extension Dictionary : _JSONStringDictionaryDecodableMarker where Key == String,
 // used in the new runtime. _TtC10Foundation13__JSONEncoder is the
 // mangled name for Foundation.__JSONEncoder.
 @_objcRuntimeName(_TtC10Foundation13__JSONEncoder)
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 open class JSONEncoder {
     // MARK: Options
 
@@ -90,7 +90,7 @@ open class JSONEncoder {
         case millisecondsSince1970
 
         /// Encode the `Date` as an ISO-8601-formatted string (in RFC 3339 format).
-        @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+        @available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
         case iso8601
 
         /// Encode the `Date` as a string formatted by the given formatter.
@@ -284,7 +284,7 @@ open class JSONEncoder {
 // NOTE: older overlays called this class _JSONEncoder.
 // The two must coexist without a conflicting ObjC class name, so it
 // was renamed. The old name must not be used in the new runtime.
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate class __JSONEncoder : Encoder {
     // MARK: Properties
 
@@ -367,7 +367,7 @@ fileprivate class __JSONEncoder : Encoder {
 
 // MARK: - Encoding Storage and Containers
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONEncodingStorage {
     // MARK: Properties
 
@@ -410,7 +410,7 @@ fileprivate struct _JSONEncodingStorage {
 
 // MARK: - Encoding Containers
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONKeyedEncodingContainer<K : CodingKey> : KeyedEncodingContainerProtocol {
     typealias Key = K
 
@@ -559,7 +559,7 @@ fileprivate struct _JSONKeyedEncodingContainer<K : CodingKey> : KeyedEncodingCon
     }
 }
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONUnkeyedEncodingContainer : UnkeyedEncodingContainer {
     // MARK: Properties
 
@@ -647,7 +647,7 @@ fileprivate struct _JSONUnkeyedEncodingContainer : UnkeyedEncodingContainer {
     }
 }
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 extension __JSONEncoder : SingleValueEncodingContainer {
     // MARK: - SingleValueEncodingContainer Methods
 
@@ -740,7 +740,7 @@ extension __JSONEncoder : SingleValueEncodingContainer {
 
 // The box helpers forward to iOS 7 base64 APIs; annotate the extension to
 // match JSONEncoder's own availability at a 5.0 deployment floor.
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 extension __JSONEncoder {
     /// Returns the given value boxed in a container appropriate for pushing onto the container stack.
     fileprivate func box(_ value: Bool)   -> NSObject { return NSNumber(value: value) }
@@ -972,7 +972,7 @@ extension __JSONEncoder {
 // NOTE: older overlays called this class _JSONReferencingEncoder.
 // The two must coexist without a conflicting ObjC class name, so it
 // was renamed. The old name must not be used in the new runtime.
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate class __JSONReferencingEncoder : __JSONEncoder {
     // MARK: Reference types.
 
@@ -1059,7 +1059,7 @@ fileprivate class __JSONReferencingEncoder : __JSONEncoder {
 // used in the new runtime. _TtC10Foundation13__JSONDecoder is the
 // mangled name for Foundation.__JSONDecoder.
 @_objcRuntimeName(_TtC10Foundation13__JSONDecoder)
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 open class JSONDecoder {
     // MARK: Options
 
@@ -1075,7 +1075,7 @@ open class JSONDecoder {
         case millisecondsSince1970
 
         /// Decode the `Date` as an ISO-8601-formatted string (in RFC 3339 format).
-        @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+        @available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
         case iso8601
 
         /// Decode the `Date` as a string parsed by the given formatter.
@@ -1225,7 +1225,10 @@ open class JSONDecoder {
     open func decode<T : Decodable>(_ type: T.Type, from data: Data) throws -> T {
         let topLevel: Any
         do {
-           topLevel = try JSONSerialization.jsonObject(with: data)
+           // iOS 5-9 NSJSONSerialization rejects top-level fragments (a bare number/string/bool) unless
+           // asked to allow them; Foundation 10+ and swift-corelibs accept them, and Codable types such as
+           // Int or String need them, so request fragments explicitly.
+           topLevel = try JSONSerialization.jsonObject(with: data, options: [.allowFragments])
         } catch {
             throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: [], debugDescription: "The given data was not valid JSON.", underlyingError: error))
         }
@@ -1244,7 +1247,7 @@ open class JSONDecoder {
 // NOTE: older overlays called this class _JSONDecoder. The two must
 // coexist without a conflicting ObjC class name, so it was renamed.
 // The old name must not be used in the new runtime.
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate class __JSONDecoder : Decoder {
     // MARK: Properties
 
@@ -1310,7 +1313,7 @@ fileprivate class __JSONDecoder : Decoder {
 
 // MARK: - Decoding Storage
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONDecodingStorage {
     // MARK: Properties
 
@@ -1346,7 +1349,7 @@ fileprivate struct _JSONDecodingStorage {
 
 // MARK: Decoding Containers
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONKeyedDecodingContainer<K : CodingKey> : KeyedDecodingContainerProtocol {
     typealias Key = K
 
@@ -1695,7 +1698,7 @@ fileprivate struct _JSONKeyedDecodingContainer<K : CodingKey> : KeyedDecodingCon
     }
 }
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 fileprivate struct _JSONUnkeyedDecodingContainer : UnkeyedDecodingContainer {
     // MARK: Properties
 
@@ -2051,7 +2054,7 @@ fileprivate struct _JSONUnkeyedDecodingContainer : UnkeyedDecodingContainer {
     }
 }
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 extension __JSONDecoder : SingleValueDecodingContainer {
     // MARK: SingleValueDecodingContainer Methods
 
@@ -2143,7 +2146,7 @@ extension __JSONDecoder : SingleValueDecodingContainer {
 
 // MARK: - Concrete Value Representations
 
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 extension __JSONDecoder {
     /// Returns the given value unboxed from a container.
     fileprivate func unbox(_ value: Any, as type: Bool.Type) throws -> Bool? {
@@ -2586,7 +2589,7 @@ fileprivate struct _JSONKey : CodingKey {
 
 // NOTE: This value is implicitly lazy and _must_ be lazy. We're compiled against the latest SDK (w/ ISO8601DateFormatter), but linked against whichever Foundation the user has. ISO8601DateFormatter might not exist, so we better not hit this code path on an older OS.
 #if !LEGACY_IOS5
-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+@available(macOS 10.12, iOS 5.0, watchOS 3.0, tvOS 10.0, *)
 #endif
 fileprivate var _iso8601Formatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()

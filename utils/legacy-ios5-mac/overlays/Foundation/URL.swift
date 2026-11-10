@@ -785,6 +785,34 @@ public struct URL : ReferenceConvertible, Equatable {
     public var pathExtension: String {
         return _url.pathExtension ?? ""
     }
+
+    // The path-building methods are NSURL API available since iOS 4/5; the legacy overlay's struct
+    // simply never exposed them, which made ordinary file code (`dir.appendingPathComponent("x")`)
+    // fail to compile.
+    public func appendingPathComponent(_ pathComponent: String) -> URL {
+        if let r = _url.appendingPathComponent(pathComponent) { return URL(reference: r as NSURL) }
+        return self
+    }
+    public func appendingPathComponent(_ pathComponent: String, isDirectory: Bool) -> URL {
+        if let r = _url.appendingPathComponent(pathComponent, isDirectory: isDirectory) { return URL(reference: r as NSURL) }
+        return self
+    }
+    public func deletingLastPathComponent() -> URL {
+        if let r = _url.deletingLastPathComponent { return URL(reference: r as NSURL) }
+        return self
+    }
+    public func appendingPathExtension(_ pathExtension: String) -> URL {
+        if let r = _url.appendingPathExtension(pathExtension) { return URL(reference: r as NSURL) }
+        return self
+    }
+    public func deletingPathExtension() -> URL {
+        if let r = _url.deletingPathExtension { return URL(reference: r as NSURL) }
+        return self
+    }
+    public mutating func appendPathComponent(_ pathComponent: String) { self = appendingPathComponent(pathComponent) }
+    public mutating func deleteLastPathComponent() { self = deletingLastPathComponent() }
+    public mutating func appendPathExtension(_ pathExtension: String) { self = appendingPathExtension(pathExtension) }
+    public mutating func deletePathExtension() { self = deletingPathExtension() }
     
     
     

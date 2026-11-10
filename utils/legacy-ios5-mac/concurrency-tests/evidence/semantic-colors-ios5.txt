@@ -1,0 +1,8 @@
+PASS UIColor.systemBackgroundColor
+PASS UIColor.secondarySystemBackgroundColor
+PASS UIColor.tertiarySystemBackgroundColor
+PASS UIColor.systemGroupedBackgroundColor
+PASS UIColor.secondarySystemGroupedBackgroundColor
+PASS UIColor.tertiarySystemGroupedBackgroundColor
+PASS semantic background is opaque
+EXIT=0

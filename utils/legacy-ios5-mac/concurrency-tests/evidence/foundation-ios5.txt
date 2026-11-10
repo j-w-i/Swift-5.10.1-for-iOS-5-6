@@ -1,0 +1,62 @@
+FoundationAsync: async Foundation adapter regression suite
+  os Version 5.1.1 (Build 9B206)
+PASS URL.appendingPathComponent
+PASS URL.appendingPathComponent isDirectory
+PASS URL.deletingLastPathComponent
+PASS URL.appendingPathExtension
+PASS URL.deletingPathExtension
+PASS URL.appendPathComponent (mutating)
+PASS URL.deleteLastPathComponent (mutating)
+PASS URL.appendPathExtension (mutating)
+PASS URL.deletePathExtension (mutating)
+PASS file URL deletingLastPathComponent
+PASS file URL appendingPathComponent
+PASS JSONDecoder top-level Int
+PASS JSONDecoder top-level Double
+PASS JSONDecoder top-level String
+PASS JSONDecoder top-level Bool
+PASS JSONDecoder top-level array
+PASS JSONDecoder top-level object
+PASS JSONDecoder top-level null -> Optional
+PASS JSONDecoder fragment with whitespace
+PASS JSONEncoder/Decoder struct round trip
+PASS JSONDecoder rejects invalid JSON
+PASS URL.lines mixed line endings
+PASS URL.lines no trailing newline
+PASS URL.lines empty file
+PASS URL.lines only newlines
+PASS URL.lines multibyte utf-8
+PASS URL.lines blank line in the middle
+PASS FileHandle.bytes count
+PASS FileHandle.bytes content
+PASS FileHandle.bytes on drained handle
+PASS FileHandle.bytes empty file
+PASS NotificationCenter.notifications delivered 3
+PASS notifications stream survived a post after termination
+PASS second notifications stream stays independent
+PASS task cancelled before body observes it
+PASS cancelled sleep returns quickly
+PASS URLSession.data(from:) status
+PASS URLSession.data(from:) body
+PASS URLSession.data(for:) status
+PASS URLSession.data(for:) body
+PASS URLSession.data(for:) JSON body decodes
+PASS URLSession.bytes(from:) content
+PASS URLSession.bytes(from:) count
+PASS URLSession.download(from:) status
+PASS URLSession.download(from:) file exists
+PASS URLSession.download(from:) size
+PASS URLSession.download(from:) content
+PASS URLSession.download(from:) file is outside the system temp name
+PASS URLSession.download(from:) caller can delete the file
+PASS URLSession.upload(for:from:) status
+PASS URLSession.upload(for:from:) echoed body
+PASS URLSession.data 404 status
+PASS URLSession.data 404 body
+PASS URL.lines over HTTP
+PASS URLSession.data cancellation throws
+PASS URLSession.data cancellation returns before the slow reply (0.23s < 1.5s)
+PASS session usable after a cancelled request
+checks: 57 passed, 0 failed, 0 skipped
+ALL PASS
+EXIT=0

@@ -366,6 +366,28 @@ static void UICInstallNativeSafeAreaGuide(void) {
     class_addMethod(view, selector, (IMP)UICNativeSafeAreaLayoutGuide, "@@:");
 }
 
+// Semantic backgrounds are light-appearance colors on systems without dynamic
+// appearance. Install only missing class selectors so modern UIKit stays native.
+static id UICSystemBackground(id self, SEL cmd) { return [UIColor whiteColor]; }
+static id UICSecondarySystemBackground(id self, SEL cmd) {
+    return [UIColor colorWithRed:242.0/255.0 green:242.0/255.0 blue:247.0/255.0 alpha:1.0];
+}
+static void UICInstallSemanticBackgroundColors(void) {
+    Class meta = object_getClass(objc_getClass("UIColor"));
+    const char *white[] = {"systemBackgroundColor", "tertiarySystemBackgroundColor",
+        "secondarySystemGroupedBackgroundColor"};
+    const char *gray[] = {"secondarySystemBackgroundColor", "systemGroupedBackgroundColor",
+        "tertiarySystemGroupedBackgroundColor"};
+    for (unsigned i = 0; i < sizeof(white)/sizeof(white[0]); ++i) {
+        SEL sel = sel_registerName(white[i]);
+        if (!class_getInstanceMethod(meta, sel)) class_addMethod(meta, sel, (IMP)UICSystemBackground, "@@:");
+    }
+    for (unsigned i = 0; i < sizeof(gray)/sizeof(gray[0]); ++i) {
+        SEL sel = sel_registerName(gray[i]);
+        if (!class_getInstanceMethod(meta, sel)) class_addMethod(meta, sel, (IMP)UICSecondarySystemBackground, "@@:");
+    }
+}
+
 __attribute__((constructor)) static void UICInstallBackportMethods(void) {
     @autoreleasepool {
         // Constructor work is limited to Objective-C runtime registration: no
@@ -377,6 +399,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallFullScreenLayoutDefault();
         UICInstallAutoAdjustDefault();
         UICInstallNativeSafeAreaGuide();
+        UICInstallSemanticBackgroundColors();
         UICInstallConstraintItemUnwrapping();
     }
 }
