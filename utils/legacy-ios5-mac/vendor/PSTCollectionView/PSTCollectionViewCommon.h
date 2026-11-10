@@ -60,6 +60,10 @@ __attribute__((swift_name("UICollectionViewDelegate")))
 
 - (void)collectionView:(PSTCollectionView *)collectionView didDeselectItemAtIndexPath:(NSIndexPath *)indexPath;
 
+// Called after the cell has been created, configured and added to the collection view, immediately before it
+// can appear on screen (UICollectionViewDelegate, iOS 8).
+- (void)collectionView:(PSTCollectionView *)collectionView willDisplayCell:(PSTCollectionViewCell *)cell forItemAtIndexPath:(NSIndexPath *)indexPath;
+- (void)collectionView:(PSTCollectionView *)collectionView willDisplaySupplementaryView:(PSTCollectionReusableView *)view forElementKind:(NSString *)elementKind atIndexPath:(NSIndexPath *)indexPath;
 - (void)collectionView:(PSTCollectionView *)collectionView didEndDisplayingCell:(PSTCollectionViewCell *)cell forItemAtIndexPath:(NSIndexPath *)indexPath;
 
 - (void)collectionView:(PSTCollectionView *)collectionView didEndDisplayingSupplementaryView:(PSTCollectionReusableView *)view forElementOfKind:(NSString *)elementKind atIndexPath:(NSIndexPath *)indexPath;

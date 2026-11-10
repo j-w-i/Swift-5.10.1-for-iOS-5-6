@@ -96,6 +96,8 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
         unsigned int delegateDidSelectItemAtIndexPath : 1;
         unsigned int delegateDidDeselectItemAtIndexPath : 1;
         unsigned int delegateSupportsMenus : 1;
+        unsigned int delegateWillDisplayCell : 1;
+        unsigned int delegateWillDisplaySupplementaryView : 1;
         unsigned int delegateDidEndDisplayingCell : 1;
         unsigned int delegateDidEndDisplayingSupplementaryView : 1;
         unsigned int dataSourceNumberOfSections : 1;
@@ -693,12 +695,28 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 - (void)reloadData {
     if (_reloadingSuspendedCount != 0) return;
     [self invalidateLayout];
-    [_allVisibleViewsDict enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-        if ([obj isKindOfClass:UIView.class]) {
-            [obj removeFromSuperview];
+    // Retire every visible view the way UIKit does: remove it, tell the delegate it stopped being
+    // displayed, and return it to its reuse queue (so the next pass dequeues instead of allocating).
+    NSDictionary *retiring = [_allVisibleViewsDict copy];
+    [_allVisibleViewsDict removeAllObjects];
+    [retiring enumerateKeysAndObjectsUsingBlock:^(PSTCollectionViewItemKey *key, id obj, BOOL *stop) {
+        if (![obj isKindOfClass:UIView.class]) return;
+        PSTCollectionReusableView *view = obj;
+        [view removeFromSuperview];
+        if (key.type == PSTCollectionViewItemTypeCell) {
+            if (_collectionViewFlags.delegateDidEndDisplayingCell)
+                [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)view forItemAtIndexPath:key.indexPath];
+            [self reuseCell:(PSTCollectionViewCell *)view];
+        } else if (key.type == PSTCollectionViewItemTypeSupplementaryView) {
+            if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView)
+                [self.delegate collectionView:self didEndDisplayingSupplementaryView:view forElementOfKind:key.identifier atIndexPath:key.indexPath];
+            [self reuseSupplementaryView:view];
+        } else if (key.type == PSTCollectionViewItemTypeDecorationView) {
+            if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView)
+                [self.delegate collectionView:self didEndDisplayingSupplementaryView:view forElementOfKind:key.identifier atIndexPath:key.indexPath];
+            [self reuseDecorationView:view];
         }
     }];
-    [_allVisibleViewsDict removeAllObjects];
 
     for (NSIndexPath *indexPath in _indexPathsForSelectedItems) {
         PSTCollectionViewCell *selectedCell = [self cellForItemAtIndexPath:indexPath];
@@ -1335,6 +1353,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                             withLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"previousLayoutInfos"]];
                     [_allVisibleViewsDict setObject:cell forKey:key];
                     [self addControlledSubview:cell];
+                    [self pstNotifyWillDisplayView:cell forKey:key];
                 }
                 else [cell applyLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"previousLayoutInfos"]];
             }
@@ -1347,6 +1366,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                             withLayoutAttributes:attrs];
                     [_allVisibleViewsDict setObject:view forKey:key];
                     [self addControlledSubview:view];
+                    [self pstNotifyWillDisplayView:view forKey:key];
                 }
             }
             else if (key.type == PSTCollectionViewItemTypeDecorationView) {
@@ -1447,6 +1467,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _collectionViewFlags.delegateDidUnhighlightItemAtIndexPath = (unsigned int)[self.delegate respondsToSelector:@selector(collectionView:didUnhighlightItemAtIndexPath:)];
 
     //  Tracking the Removal of Views
+    _collectionViewFlags.delegateWillDisplayCell = (unsigned int)[self.delegate respondsToSelector:@selector(collectionView:willDisplayCell:forItemAtIndexPath:)];
+    _collectionViewFlags.delegateWillDisplaySupplementaryView = (unsigned int)[self.delegate respondsToSelector:@selector(collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:)];
     _collectionViewFlags.delegateDidEndDisplayingCell = (unsigned int)[self.delegate respondsToSelector:@selector(collectionView:didEndDisplayingCell:forItemAtIndexPath:)];
     _collectionViewFlags.delegateDidEndDisplayingSupplementaryView = (unsigned int)[self.delegate respondsToSelector:@selector(collectionView:didEndDisplayingSupplementaryView:forElementOfKind:atIndexPath:)];
 
@@ -1591,6 +1613,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 // Always apply attributes. Fixes #203.
                 PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
                 [view applyLayoutAttributes:layoutAttributes];
+                [self pstNotifyWillDisplayView:view forKey:itemKey];
             }
         }else {
             // just update cell - unless it already shows exactly these attributes
@@ -1725,6 +1748,19 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 // enqueue decoration view for reuse
 - (void)reuseDecorationView:(PSTCollectionReusableView *)decorationView {
     [self queueReusableView:decorationView inQueue:_decorationViewReuseQueues withIdentifier:decorationView.reuseIdentifier];
+}
+
+/// Delivers collectionView:willDisplayCell: / willDisplaySupplementaryView: for a view that has just been
+/// created, configured and added. Decoration views have no such callback in UIKit.
+- (void)pstNotifyWillDisplayView:(PSTCollectionReusableView *)view forKey:(PSTCollectionViewItemKey *)key {
+    if (!view || !key) return;
+    if (key.type == PSTCollectionViewItemTypeCell) {
+        if (_collectionViewFlags.delegateWillDisplayCell)
+            [self.delegate collectionView:self willDisplayCell:(PSTCollectionViewCell *)view forItemAtIndexPath:key.indexPath];
+    } else if (key.type == PSTCollectionViewItemTypeSupplementaryView) {
+        if (_collectionViewFlags.delegateWillDisplaySupplementaryView)
+            [self.delegate collectionView:self willDisplaySupplementaryView:view forElementKind:key.identifier atIndexPath:key.indexPath];
+    }
 }
 
 - (void)addControlledSubview:(PSTCollectionReusableView *)subview {
@@ -1927,6 +1963,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 PSTCollectionReusableView *view = [self createPreparedCellForItemAtIndexPath:indexPath
                         withLayoutAttributes:startAttrs];
                 [self addControlledSubview:view];
+                [self pstNotifyWillDisplayView:view forKey:key];
 
                 [newAllVisibleView setObject:view forKey:key];
                 [newAllVisibleViewKeys addObject:key];
@@ -1960,6 +1997,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 startAttrs.alpha = 0;
                 view = [self createPreparedCellForItemAtIndexPath:indexPathAfter withLayoutAttributes:startAttrs];
                 [self addControlledSubview:view];
+                [self pstNotifyWillDisplayView:view forKey:keyAfter];
                 [newAllVisibleView setObject:view forKey:keyAfter];
                 [newAllVisibleViewKeys addObject:keyAfter];
             }
@@ -2032,6 +2070,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             PSTCollectionReusableView *view = [self createPreparedCellForItemAtIndexPath:attrs.indexPath
                     withLayoutAttributes:startAttrs];
             [self addControlledSubview:view];
+            [self pstNotifyWillDisplayView:view forKey:key];
             [newAllVisibleView setObject:view forKey:key];
             [newAllVisibleViewKeys addObject:key];
 
