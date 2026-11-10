@@ -1068,6 +1068,10 @@ void UICInstallSceneLifecycle(void) {
     UICObserve(UIApplicationWillEnterForegroundNotification, UICWillEnterForeground);
     UICObserve(UIApplicationWillTerminateNotification, UICWillTerminate);
     UICObserve(UIApplicationDidChangeStatusBarOrientationNotification, UICStatusBarOrientationChanged);
+    // Interface orientation also changes through view-controller rotation and setStatusBarOrientation:,
+    // which do not always post the status-bar notification; the device-orientation signal covers them.
+    UICObserve(UIDeviceOrientationDidChangeNotification, UICStatusBarOrientationChanged);
+    UICObserve(UIWindowDidBecomeVisibleNotification, UICStatusBarOrientationChanged);
 }
 
 #pragma mark - NSUserActivity (iOS 8) model

@@ -20,9 +20,12 @@ it** and drives launch / foreground / background / URL / user-activity delivery 
 * Layout gates (native-parity, direct stack, first-use) and the TestingAPIs device run pass with this build.
 
 ## Known differences / not verified
-* `windowScene(_:didUpdateCoordinateSpace:…)` cannot be written in Swift below iOS 8 (UITraitCollection);
-  the runtime sends it with nil traits and it was not observed firing. Native fires it repeatedly at launch.
-* iPhone 6: rotation not run. armv7s: built, not run.
+* `windowScene(_:didUpdateCoordinateSpace:interfaceOrientation:traitCollection:)` is delivered on orientation change
+  (verified: iPod 5.1.1 via a runtime-added method; iPhone 6 at an iOS 10 deployment, with real `UITraitCollection`).
+  Below an iOS 8 deployment the method cannot be declared in Swift (needs `UITraitCollection`); an Objective-C or
+  runtime-added implementation works. Native fires it repeatedly during launch; the backport fires only on a real
+  orientation change, so launch-time call counts differ.
+* armv7s: built, not run.
 * The simulator's URL-while-backgrounded run did not reach the probe, so URL ordering around activation is unverified against it.
 * Not exercised: sceneDidDisconnect, state restoration, shortcut items, storyboard scene windows,
   requestSceneSession* calls, multiple scenes (always reports unsupported, as an iPhone does natively).
