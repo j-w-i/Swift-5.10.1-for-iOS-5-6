@@ -304,6 +304,10 @@ static char kPSTCachedItemRectsKey;
 #pragma mark - Invalidating the Layout
 
 - (void)invalidateLayout {
+    // Previously measured sizes remain useful estimates, but an explicit invalidation
+    // permits content-driven preferred sizes to change. Clearing only stability also
+    // lets internal measurement invalidations converge without returning to the seed.
+    [_pstStableMeasuredIndexPaths removeAllObjects];
     [super invalidateLayout];
     objc_setAssociatedObject(self, &kPSTCachedItemRectsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Keep _data: prepareLayout will verify the prepared-generation token and

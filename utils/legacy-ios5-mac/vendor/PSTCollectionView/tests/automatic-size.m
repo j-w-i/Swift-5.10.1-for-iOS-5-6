@@ -58,6 +58,15 @@ int main(int argc, char **argv) { @autoreleasepool {
             return 1;
         }
     }
+    preferredHeight=45;
+    [fl invalidateLayout]; [cv setNeedsLayout]; [cv layoutIfNeeded];
+    for (int i=0;i<itemCount;i++) {
+        CGSize size=[fl layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]].size;
+        if (!CGSizeEqualToSize(size,CGSizeMake(80,45))) {
+            fprintf(stderr,"FAIL: invalidation retained stale size axis=%d count=%ld item=%d size=%gx%g\n",horizontal,(long)itemCount,i,size.width,size.height);
+            return 1;
+        }
+    }
  }
  }
 } return 0; }

@@ -120,6 +120,13 @@ void UICInstallCollectionViewDisplay(void) {
 
 static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey;
 static IMP UICOriginalLayoutSubviews, UICOriginalPrepareLayout, UICOriginalReloadData;
+static IMP UICOriginalInvalidateFlowLayout;
+
+static void UICInvalidateFlowLayout(id self, SEL _cmd) {
+    // Keep measured estimates but permit another preferred-size query after invalidation.
+    [(NSMutableSet *)objc_getAssociatedObject(self, &UICStableKey) removeAllObjects];
+    ((void (*)(id, SEL))UICOriginalInvalidateFlowLayout)(self, _cmd);
+}
 
 static BOOL UICLayoutIsSelfSizing(id layout) {
     NSValue *value = objc_getAssociatedObject(layout, &UICEstimateKey);
@@ -255,6 +262,15 @@ static void UICInstallSelfSizing(Class collectionView) {
     class_addMethod(flow, sel_registerName("setEstimatedItemSize:"), (IMP)UICEstimatedItemSizeSetter, setter);
     class_addMethod(reusable, sel_registerName("preferredLayoutAttributesFittingAttributes:"), (IMP)UICPreferredAttributes, "@@:@");
 
+    // invalidateLayout may be inherited from UICollectionViewLayout. Add an override
+    // on the flow class rather than replacing the superclass method globally.
+    SEL invalidateSelector = sel_registerName("invalidateLayout");
+    Method invalidate = class_getInstanceMethod(flow, invalidateSelector);
+    if (invalidate && !UICOriginalInvalidateFlowLayout) {
+        UICOriginalInvalidateFlowLayout = method_getImplementation(invalidate);
+        if (!class_addMethod(flow, invalidateSelector, (IMP)UICInvalidateFlowLayout, method_getTypeEncoding(invalidate)))
+            method_setImplementation(class_getInstanceMethod(flow, invalidateSelector), (IMP)UICInvalidateFlowLayout);
+    }
     Method prepare = class_getInstanceMethod(flow, sel_registerName("prepareLayout"));
     if (prepare && !UICOriginalPrepareLayout) UICOriginalPrepareLayout = method_setImplementation(prepare, (IMP)UICPrepareLayout);
     Method layout = class_getInstanceMethod(collectionView, sel_registerName("layoutSubviews"));

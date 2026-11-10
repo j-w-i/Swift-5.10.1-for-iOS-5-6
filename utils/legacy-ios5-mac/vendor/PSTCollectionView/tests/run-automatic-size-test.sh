@@ -23,6 +23,7 @@ for mode in native pst; do
 done
 echo 'PASS: sentinel preserved; initial proposal 50x50 and preferred cell sizes 80x30 on both axes'
 echo 'PASS: reloadData remeasures changed preferred height from 30 to 60 (one through three items, both axes)'
+echo 'PASS: invalidateLayout remeasures changed preferred height from 60 to 45 (one through three items, both axes)'
 SCALE=$(xcrun simctl spawn "$SIM" "$OUT/native" --scale)
 python3 "$HERE/check-automatic-size.py" "$OUT/native.txt" "$OUT/pst.txt" "$SCALE"
 echo "Artifacts: $OUT"

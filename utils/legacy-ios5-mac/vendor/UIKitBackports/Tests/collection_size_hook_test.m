@@ -49,6 +49,7 @@ int main(void) { @autoreleasepool {
     SEL selectors[] = { @selector(layoutSubviews), @selector(reloadData), @selector(prefetchDataSource) };
     IMP native[3];
     for (int i = 0; i < 3; i++) native[i] = class_getMethodImplementation(cvClass, selectors[i]);
+    IMP nativeInvalidate = class_getMethodImplementation(flowClass, @selector(invalidateLayout));
     IMP nativeEstimate = class_getMethodImplementation(flowClass, @selector(estimatedItemSize));
     UICInstallCollectionViewDisplay();
     for (int i = 0; i < 3; i++) require(native[i] == class_getMethodImplementation(cvClass, selectors[i]), @"native collection IMP unchanged");
@@ -58,6 +59,14 @@ int main(void) { @autoreleasepool {
     UICEstimatedItemSizeSetter(automatic, NULL, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX));
     require(CGSizeEqualToSize(UICEstimatedItemSizeGetter(automatic, NULL), CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)), @"automatic sentinel getter preserved");
     require(CGSizeEqualToSize(UICSizeForItem(automatic, [NSIndexPath indexPathForItem:0 inSection:0]), CGSizeMake(50, 50)), @"automatic estimate normalized");
+    require(nativeInvalidate == class_getMethodImplementation(flowClass, @selector(invalidateLayout)), @"native invalidate IMP unchanged");
+    NSIndexPath *measuredPath = [NSIndexPath indexPathForItem:0 inSection:0];
+    objc_setAssociatedObject(automatic, &UICStableKey, [NSMutableSet setWithObject:measuredPath], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(automatic, &UICMeasuredKey, [NSMutableDictionary dictionaryWithObject:[NSValue valueWithCGSize:CGSizeMake(80,60)] forKey:measuredPath], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UICOriginalInvalidateFlowLayout = nativeInvalidate;
+    UICInvalidateFlowLayout(automatic, @selector(invalidateLayout));
+    require([(NSSet *)objc_getAssociatedObject(automatic, &UICStableKey) count] == 0, @"invalidation removes stability");
+    require(CGSizeEqualToSize(UICSizeForItem(automatic, measuredPath), CGSizeMake(80,60)), @"invalidation retains measured estimate");
     SharedSizeDelegate *delegate = [SharedSizeDelegate new];
     SizeHookCollection *first = collection(delegate), *second = collection(delegate);
     require(UICInstallSizeHook(first), @"first collection installs shim");
