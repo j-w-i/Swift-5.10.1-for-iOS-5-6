@@ -1154,7 +1154,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     [self setupCellAnimations];
 
     if (updates) updates();
-    if (completion) _updateCompletionHandler = completion;
+    // Each update owns its completion: a second performBatchUpdates:completion: issued while the
+    // first is still animating must not replace (and so lose) the first one's handler.
+    _updateCompletionHandler = completion;
 
     [self endItemAnimations];
 }
@@ -2043,46 +2045,64 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _allVisibleViewsDict = newAllVisibleView;
     _pstVisibleViewsMatchAttributes = NO;
 
+    // Starting state: applied without animation so every view begins exactly where the previous
+    // layout (or the layout's initial/final appearing attributes) says it is.
+    BOOL animationsWereEnabled = [UIView areAnimationsEnabled];
+    [UIView setAnimationsEnabled:NO];
     for (NSDictionary *animation in animations) {
         PSTCollectionReusableView *view = [animation objectForKey:@"view"];
         PSTCollectionViewLayoutAttributes *attr = [animation objectForKey:@"previousLayoutInfos"];
         [view applyLayoutAttributes:attr];
     };
+    [UIView setAnimationsEnabled:animationsWereEnabled];
 
     _collectionViewFlags.updatingLayout = YES;
 
-	[CATransaction begin];
-	[CATransaction setAnimationDuration:0];
-	[CATransaction setCompletionBlock:^{
-		// Iterate through all the views that we are going to remove.
-		[viewsToRemove enumerateKeysAndObjectsUsingBlock:^(NSNumber *keyObj, NSArray *views, BOOL *stop) {
-			PSTCollectionViewItemType type = [keyObj unsignedIntegerValue];
-			for (PSTCollectionReusableView *view in views) {
-				if (type == PSTCollectionViewItemTypeCell) {
-					[self reuseCell:(PSTCollectionViewCell *)view];
-				} else if (type == PSTCollectionViewItemTypeSupplementaryView) {
-					[self reuseSupplementaryView:view];
-				} else if (type == PSTCollectionViewItemTypeDecorationView) {
-					[self reuseDecorationView:view];
-				}
-			}
-		}];
+    void (^updateCompletion)(BOOL) = _updateCompletionHandler;
+    _updateCompletionHandler = nil;
+    void (^finishUpdate)(void) = ^{
+        // Iterate through all the views that we are going to remove.
+        [viewsToRemove enumerateKeysAndObjectsUsingBlock:^(NSNumber *keyObj, NSArray *views, BOOL *stop) {
+            PSTCollectionViewItemType type = [keyObj unsignedIntegerValue];
+            for (PSTCollectionReusableView *view in views) {
+                if (type == PSTCollectionViewItemTypeCell) {
+                    [self reuseCell:(PSTCollectionViewCell *)view];
+                } else if (type == PSTCollectionViewItemTypeSupplementaryView) {
+                    [self reuseSupplementaryView:view];
+                } else if (type == PSTCollectionViewItemTypeDecorationView) {
+                    [self reuseDecorationView:view];
+                }
+            }
+        }];
 
-		_collectionViewFlags.updatingLayout = NO;
+        _collectionViewFlags.updatingLayout = NO;
 
-		//In here I think when the block is called, the flag is YES. So the _updateCopletionHandler's paramer is YES.
-		if (_updateCompletionHandler) {
-			_updateCompletionHandler(YES);
-			_updateCompletionHandler = nil;
-		}
-	}];
+        if (updateCompletion) updateCompletion(YES);
+    };
 
-	for (NSDictionary *animation in animations) {
-		PSTCollectionReusableView *view = [animation objectForKey:@"view"];
-		PSTCollectionViewLayoutAttributes *attrs = [animation objectForKey:@"newLayoutInfos"];
-		[view applyLayoutAttributes:attrs];
-	}
-	[CATransaction commit];
+    // UIKit's own collection view animates position/bounds/alpha/transform over 0.3 s (measured on
+    // iOS 6.1.3 hardware). A view's backing layer only animates inside a UIView animation block, so a
+    // bare CATransaction with duration 0 (the previous code) made every update snap.
+    if ([animations count] && animationsWereEnabled) {
+        [UIView animateWithDuration:0.3 * PSTSimulatorAnimationDragCoefficient()
+                              delay:0
+                            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                         animations:^{
+                             for (NSDictionary *animation in animations) {
+                                 PSTCollectionReusableView *view = [animation objectForKey:@"view"];
+                                 PSTCollectionViewLayoutAttributes *attrs = [animation objectForKey:@"newLayoutInfos"];
+                                 [view applyLayoutAttributes:attrs];
+                             }
+                         }
+                         completion:^(BOOL finished) { finishUpdate(); }];
+    } else {
+        for (NSDictionary *animation in animations) {
+            PSTCollectionReusableView *view = [animation objectForKey:@"view"];
+            PSTCollectionViewLayoutAttributes *attrs = [animation objectForKey:@"newLayoutInfos"];
+            [view applyLayoutAttributes:attrs];
+        }
+        finishUpdate();
+    }
 	_pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
 
     [_layout finalizeCollectionViewUpdates];
