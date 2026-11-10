@@ -111,3 +111,17 @@ The probe's historical timing output is not the corrected paired benchmark and
 must not be used to claim PST/native performance parity. Simulator benchmark
 results now include offset-setter work and alternate engine order, but remain
 CPU microbenchmarks rather than hardware frame-delivery measurements.
+
+### Round 29: controlled batch-mapping A/B (simulator only)
+
+Compared PST source at `30764bd0` (before the recent mapping allocation changes)
+with `d3439b7c` using the same current benchmark harness. Eight fresh-process
+pairs alternated before/after order; each binary's batch result is the median
+of nine repetitions. Every invocation passed the same 14-scenario geometry
+golden. After/before batch ratios were 0.922, 0.894, 0.957, 0.891, 0.974, 0.962,
+0.941, and 0.970 (median 0.949; improvement in 8/8 pairs). This supports roughly
+5.1% lower synchronous batch CPU time for the combined changes in this workload,
+not a confidence bound, a hardware result, or equality with native UIKit.
+Native/PST batch parity remains unfinished. Raw samples are retained in the
+local session evidence directory `/tmp/cv-ab-batch.rIEbZ0`; this temporary path
+is not a durable repository artifact.
