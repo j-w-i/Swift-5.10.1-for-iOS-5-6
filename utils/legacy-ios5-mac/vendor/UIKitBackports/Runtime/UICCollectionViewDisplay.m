@@ -25,6 +25,7 @@
 #define UIC_CF_IOS_8 1140.0
 
 static IMP UICOriginalAddControlledSubview;
+static void UICInstallSelfSizing(Class collectionView);
 
 /// The layout attributes UIKit stored on a reusable view (private accessor present on iOS 6 and 7).
 static UICollectionViewLayoutAttributes *UICAttributesForView(UIView *view) {
@@ -92,6 +93,9 @@ void UICInstallCollectionViewDisplay(void) {
             UICOriginalAddControlledSubview = method_setImplementation(method, (IMP)UICAddControlledSubview);
     }
 
+    // iOS 8 self-sizing: below it, give Apple's flow layout the estimate and the cell the preferred-size method.
+    if (kCFCoreFoundationVersionNumber < UIC_CF_IOS_8) UICInstallSelfSizing(collectionView);
+
     // The iOS 9 accessors, only where UIKit does not already have them.
     SEL visible = sel_registerName("visibleSupplementaryViewsOfKind:");
     if (!class_getInstanceMethod(collectionView, visible))
@@ -99,6 +103,151 @@ void UICInstallCollectionViewDisplay(void) {
     SEL paths = sel_registerName("indexPathsForVisibleSupplementaryElementsOfKind:");
     if (!class_getInstanceMethod(collectionView, paths))
         class_addMethod(collectionView, paths, (IMP)UICIndexPathsForVisibleSupplementaryElements, "@@:@");
+}
+
+#pragma mark - Self-sizing cells on Apple's UICollectionView (iOS 6, 7)
+
+// iOS 8 added UICollectionViewFlowLayout.estimatedItemSize and the cell's preferredLayoutAttributesFitting.
+// Apple's flow layout before that asks the collection view's delegate for every item size, so a layout with an
+// estimate is given sizes through the delegate's class: each answer is the size the cell last reported, else the
+// estimate (and the layout's itemSize when it is not self-sizing, so other collection views sharing the delegate
+// class are unaffected). After each layout pass the visible cells are asked for their preferred size; when any
+// differs the layout is invalidated and laid out again, bounded to a few rounds.
+
+static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey;
+static IMP UICOriginalLayoutSubviews, UICOriginalPrepareLayout, UICOriginalReloadData;
+
+static BOOL UICLayoutIsSelfSizing(id layout) {
+    NSValue *value = objc_getAssociatedObject(layout, &UICEstimateKey);
+    if (!value) return NO;
+    CGSize size = [value CGSizeValue];
+    return size.width > 0 && size.height > 0;
+}
+static CGSize UICSizeForItem(id layout, NSIndexPath *indexPath) {
+    NSValue *measured = [objc_getAssociatedObject(layout, &UICMeasuredKey) objectForKey:indexPath];
+    return measured ? [measured CGSizeValue] : [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
+}
+static void UICResetMeasured(id layout) {
+    objc_setAssociatedObject(layout, &UICMeasuredKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(layout, &UICStableKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+/// The delegate hook: UIKit's flow layout calls this once the delegate responds to it.
+static CGSize UICDelegateSizeForItem(id self, SEL _cmd, UICollectionView *collectionView,
+                                     UICollectionViewFlowLayout *layout, NSIndexPath *indexPath) {
+    if (UICLayoutIsSelfSizing(layout)) return UICSizeForItem(layout, indexPath);
+    return [layout itemSize];
+}
+
+/// Makes the layout's delegate answer sizeForItem, unless it already does (an app-provided answer always wins,
+/// as on iOS 8). Returns YES when the hook was newly installed.
+static BOOL UICInstallSizeHook(UICollectionView *collectionView) {
+    id delegate = [collectionView delegate];
+    if (!delegate) return NO;
+    SEL selector = sel_registerName("collectionView:layout:sizeForItemAtIndexPath:");
+    if ([delegate respondsToSelector:selector]) return NO;
+    Class delegateClass = object_getClass(delegate);
+    char types[64];
+    snprintf(types, sizeof types, "%s@:@@@", @encode(CGSize));
+    BOOL added = class_addMethod(delegateClass, selector, (IMP)UICDelegateSizeForItem, types);
+    if (added) {
+        SEL flags = sel_registerName("_updateDelegateFlags");
+        id layout = [collectionView collectionViewLayout];
+        if ([layout respondsToSelector:flags]) ((void (*)(id, SEL))objc_msgSend)(layout, flags);
+    }
+    return added;
+}
+
+static CGSize UICEstimatedItemSizeGetter(id self, SEL _cmd) {
+    return [objc_getAssociatedObject(self, &UICEstimateKey) CGSizeValue];
+}
+static void UICEstimatedItemSizeSetter(id self, SEL _cmd, CGSize size) {
+    objc_setAssociatedObject(self, &UICEstimateKey, [NSValue valueWithCGSize:size], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UICResetMeasured(self);
+    UICollectionView *collectionView = [(UICollectionViewLayout *)self collectionView];
+    if (collectionView) UICInstallSizeHook(collectionView);
+    [(UICollectionViewLayout *)self invalidateLayout];
+}
+
+static void UICPrepareLayout(id self, SEL _cmd) {
+    if (UICLayoutIsSelfSizing(self)) {
+        UICollectionView *collectionView = [(UICollectionViewLayout *)self collectionView];
+        if (collectionView) UICInstallSizeHook(collectionView);
+    }
+    ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd);
+}
+
+/// iOS 8 default: measure the cell's contentView (or the view itself) with Auto Layout and return a copy of the
+/// proposal carrying that size. Override in a subclass for a custom size.
+static UICollectionViewLayoutAttributes *UICPreferredAttributes(UICollectionReusableView *self, SEL _cmd,
+                                                                UICollectionViewLayoutAttributes *proposal) {
+    UICollectionViewLayoutAttributes *preferred = [proposal copy];
+    UIView *measured = [self isKindOfClass:[UICollectionViewCell class]] ? [(UICollectionViewCell *)self contentView] : self;
+    if (![measured respondsToSelector:@selector(systemLayoutSizeFittingSize:)]) return preferred;
+    CGSize size = [measured systemLayoutSizeFittingSize:proposal.size];
+    if (size.width > 0 && size.height > 0) preferred.size = size;
+    return preferred;
+}
+
+/// After a layout pass: ask every visible cell whether it wants a different size than the layout gave it.
+static BOOL UICMeasureVisibleCells(UICollectionView *collectionView) {
+    id layout = [collectionView collectionViewLayout];
+    if (![layout isKindOfClass:[UICollectionViewFlowLayout class]] || !UICLayoutIsSelfSizing(layout)) return NO;
+    NSMutableDictionary *measured = objc_getAssociatedObject(layout, &UICMeasuredKey);
+    if (!measured) { measured = [NSMutableDictionary dictionary]; objc_setAssociatedObject(layout, &UICMeasuredKey, measured, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    NSMutableSet *stable = objc_getAssociatedObject(layout, &UICStableKey);
+    if (!stable) { stable = [NSMutableSet set]; objc_setAssociatedObject(layout, &UICStableKey, stable, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    BOOL changed = NO;
+    for (UICollectionViewCell *cell in [[collectionView visibleCells] copy]) {
+        NSIndexPath *indexPath = [collectionView indexPathForCell:cell];
+        if (!indexPath || [stable containsObject:indexPath]) continue;
+        UICollectionViewLayoutAttributes *proposal = [layout layoutAttributesForItemAtIndexPath:indexPath];
+        if (!proposal) continue;
+        UICollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:[proposal copy]];
+        CGSize size = preferred ? preferred.size : proposal.size;
+        CGSize current = UICSizeForItem(layout, indexPath);
+        [measured setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+        if (CGSizeEqualToSize(size, current)) [stable addObject:indexPath];
+        else { [stable removeObject:indexPath]; changed = YES; }
+    }
+    return changed;
+}
+
+static void UICLayoutSubviews(UICollectionView *self, SEL _cmd) {
+    ((void (*)(id, SEL))UICOriginalLayoutSubviews)(self, _cmd);
+    NSNumber *running = objc_getAssociatedObject(self, &UICRoundsKey);
+    if (running) return;                                   // already inside the measuring loop
+    objc_setAssociatedObject(self, &UICRoundsKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    for (int round = 0; round < 6 && UICMeasureVisibleCells(self); round++) {
+        [[self collectionViewLayout] invalidateLayout];
+        ((void (*)(id, SEL))UICOriginalLayoutSubviews)(self, _cmd);
+    }
+    objc_setAssociatedObject(self, &UICRoundsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static void UICReloadData(UICollectionView *self, SEL _cmd) {
+    id layout = [self collectionViewLayout];
+    if (UICLayoutIsSelfSizing(layout)) UICResetMeasured(layout);
+    ((void (*)(id, SEL))UICOriginalReloadData)(self, _cmd);
+}
+
+static void UICInstallSelfSizing(Class collectionView) {
+    Class flow = objc_getClass("UICollectionViewFlowLayout");
+    Class reusable = objc_getClass("UICollectionReusableView");
+    if (!flow || !reusable) return;
+    char getter[32], setter[32];
+    snprintf(getter, sizeof getter, "%s@:", @encode(CGSize));
+    snprintf(setter, sizeof setter, "v@:%s", @encode(CGSize));
+    class_addMethod(flow, sel_registerName("estimatedItemSize"), (IMP)UICEstimatedItemSizeGetter, getter);
+    class_addMethod(flow, sel_registerName("setEstimatedItemSize:"), (IMP)UICEstimatedItemSizeSetter, setter);
+    class_addMethod(reusable, sel_registerName("preferredLayoutAttributesFittingAttributes:"), (IMP)UICPreferredAttributes, "@@:@");
+
+    Method prepare = class_getInstanceMethod(flow, sel_registerName("prepareLayout"));
+    if (prepare && !UICOriginalPrepareLayout) UICOriginalPrepareLayout = method_setImplementation(prepare, (IMP)UICPrepareLayout);
+    Method layout = class_getInstanceMethod(collectionView, sel_registerName("layoutSubviews"));
+    if (layout && !UICOriginalLayoutSubviews) UICOriginalLayoutSubviews = method_setImplementation(layout, (IMP)UICLayoutSubviews);
+    Method reload = class_getInstanceMethod(collectionView, sel_registerName("reloadData"));
+    if (reload && !UICOriginalReloadData) UICOriginalReloadData = method_setImplementation(reload, (IMP)UICReloadData);
 }
 
 #pragma mark - UICollectionViewFlowLayoutAutomaticSize (iOS 10)
