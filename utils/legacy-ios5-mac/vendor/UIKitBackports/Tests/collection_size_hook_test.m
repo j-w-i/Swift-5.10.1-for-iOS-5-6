@@ -21,6 +21,11 @@
 @property(nonatomic) CATransform3D transform3D;
 @end
 @implementation LegacyAttributesDouble @end
+// Declarations only: runtime installs the methods. This also exercises normal
+// compiler-selected objc_msgSend[_stret] dispatch, not just typed IMP calls.
+@interface LegacyAttributesDouble (AffineAPI)
+@property(nonatomic) CGAffineTransform transform;
+@end
 
 @interface SharedSizeDelegate : NSObject @end
 @implementation SharedSizeDelegate @end
@@ -84,6 +89,8 @@ int main(void) { @autoreleasepool {
     CGAffineTransform affine=CGAffineTransformMake(2,3,4,5,6,7);
     setAffine(attributes,setTransform,affine);
     require(CGAffineTransformEqualToTransform(getAffine(attributes,getTransform),affine), @"absent affine methods roundtrip");
+    attributes.transform=CGAffineTransformMakeTranslation(13,17);
+    require(CGAffineTransformEqualToTransform(attributes.transform,CGAffineTransformMakeTranslation(13,17)), @"normal Objective-C struct dispatch roundtrip");
     CATransform3D nonaffine=CATransform3DIdentity; nonaffine.m34=-0.01;
     attributes.transform3D=nonaffine;
     require(CGAffineTransformIsIdentity(getAffine(attributes,getTransform)), @"nonaffine getter returns identity");
