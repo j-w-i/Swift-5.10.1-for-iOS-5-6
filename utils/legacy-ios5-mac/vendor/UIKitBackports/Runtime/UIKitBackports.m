@@ -9,6 +9,7 @@
 // Deferred Swift-bridge installation (defined with the image constructor below).
 static void UICEnsureSwiftBridge(void);
 void UICInstallSceneLifecycle(void);
+void UICInstallTraitCollection(void);
 
 NSDictionary *UICDictionaryOfVariableBindings(NSString *names, id firstValue, ...) {
     NSArray *keys = [names componentsSeparatedByString:@","];
@@ -449,6 +450,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallSpinnerStyles();
         UICInstallLegacyLabelTextInvalidation();
         UICInstallConstraintItemUnwrapping();
+        UICInstallTraitCollection();
         UICInstallSceneLifecycle();
     }
 }

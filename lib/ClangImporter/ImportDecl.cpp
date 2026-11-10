@@ -148,6 +148,12 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
       .Cases("UISceneActivationState", "UISceneSessionRole", "UIWindowSceneDismissalAnimation", 13)
       .Cases("UISceneSizeRestrictions", "UIWindowSceneDestructionRequestOptions", 13)
       .Case("UIStatusBarManager", 13)
+      // UITraitCollection (iOS 8) and the enums it vends. Later trait values (iOS 9+ force touch,
+      // iOS 10 gamut/size category, iOS 12 style, iOS 13+ contrast/level/weight) are implemented too.
+      .Cases("UITraitCollection", "UITraitEnvironment", "UIUserInterfaceSizeClass", 8)
+      .Cases("UIForceTouchCapability", "UIDisplayGamut", "UITraitEnvironmentLayoutDirection", 10)
+      .Cases("UIUserInterfaceStyle", "UIAccessibilityContrast", "UIUserInterfaceLevel", 13)
+      .Cases("UILegibilityWeight", "UIUserInterfaceActiveAppearance", 14)
       .Cases("UISceneErrorCode", "UISceneErrorDomain", 15)
       .Cases("UISceneDestructionRequestOptions", "UISceneActivationRequestOptions", 13)
       .Cases("UIWindowSceneActivationRequestOptions", "UIWindowSceneActivationConfiguration", 13)
@@ -169,6 +175,7 @@ static bool isLegacySceneRuntimeClass(StringRef name) {
       .Cases("UISceneDestructionRequestOptions", "UIWindowSceneDestructionRequestOptions", true)
       .Cases("UISceneActivationRequestOptions", "UIWindowSceneActivationRequestOptions", true)
       .Cases("UIWindowSceneActivationConfiguration", "UIStatusBarManager", true)
+      .Case("UITraitCollection", true)
       .Default(false);
 }
 
@@ -180,6 +187,10 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
     // The VFS binds this real UIKit global to the SDK-owned private definition.
     if (variable->getName() == "UIViewNoIntrinsicMetric")
       return 6;
+    if (variable->getName().startswith("UIContentSizeCategory") &&
+        variable->getName() != "UIContentSizeCategoryDidChangeNotification" &&
+        variable->getName() != "UIContentSizeCategoryNewValueKey")
+      return 10;
     if (variable->getName() == "UISceneErrorDomain")
       return 15;
     // UIKit text-attribute names are the CoreText keys the runtime already
@@ -274,6 +285,26 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
          (member == "keyWindow" || member == "activityItemsConfigurationSource" ||
           member == "setActivityItemsConfigurationSource")))
       return 15;   // iOS 15 additions the scene runtime implements
+    if (owner == "UITraitCollection") {
+      // Everything except the dynamic-appearance / image-configuration / current-collection
+      // categories, which the runtime does not implement.
+      if (llvm::StringSwitch<bool>(member)
+              .Cases("currentTraitCollection", "setCurrentTraitCollection", "performAsCurrentTraitCollection", true)
+              .Cases("hasDifferentColorAppearanceComparedToTraitCollection", "imageConfiguration", true)
+              .Cases("traitCollectionWithTraits", "traitCollectionByModifyingTraits", true)
+              .Case("traitCollectionWithActiveAppearance", false)
+              .Default(false))
+        return 0;
+      return 13;
+    }
+    if ((owner == "UIView" || owner == "UIViewController" || owner == "UIScreen" ||
+         owner == "UIWindow" || owner == "UIPresentationController") &&
+        (member == "traitCollection" || member == "traitCollectionDidChange"))
+      return 8;
+    if (owner == "UIViewController" &&
+        (member == "overrideTraitCollectionForChildViewController" ||
+         member == "setOverrideTraitCollection"))
+      return 8;
     if (owner == "UIApplication")
       return llvm::StringSwitch<unsigned>(member)
           .Cases("connectedScenes", "openSessions", "supportsMultipleScenes", 13)

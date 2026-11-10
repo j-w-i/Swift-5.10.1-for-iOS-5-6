@@ -135,10 +135,10 @@ static NSString *UICStateName(NSInteger state) {
     if (self.delegateClass) [coder encodeObject:NSStringFromClass(self.delegateClass) forKey:@"UISceneDelegateClassName"];
 }
 - (instancetype)initWithCoder:(NSCoder *)coder {
-    self = [self initWithName:[coder decodeObjectOfClass:[NSString class] forKey:@"UISceneConfigurationName"]
-                  sessionRole:[coder decodeObjectOfClass:[NSString class] forKey:@"UISceneConfigurationRole"]];
-    NSString *sceneName = [coder decodeObjectOfClass:[NSString class] forKey:@"UISceneClassName"];
-    NSString *delegateName = [coder decodeObjectOfClass:[NSString class] forKey:@"UISceneDelegateClassName"];
+    self = [self initWithName:[coder decodeObjectForKey:@"UISceneConfigurationName"]
+                  sessionRole:[coder decodeObjectForKey:@"UISceneConfigurationRole"]];
+    NSString *sceneName = [coder decodeObjectForKey:@"UISceneClassName"];
+    NSString *delegateName = [coder decodeObjectForKey:@"UISceneDelegateClassName"];
     if (sceneName) self.sceneClass = NSClassFromString(sceneName);
     if (delegateName) self.delegateClass = NSClassFromString(delegateName);
     return self;
@@ -189,8 +189,8 @@ static NSString *UICStateName(NSInteger state) {
 }
 - (instancetype)initWithCoder:(NSCoder *)coder {
     if ((self = [self init])) {
-        NSPredicate *can = [coder decodeObjectOfClass:[NSPredicate class] forKey:@"canActivate"];
-        NSPredicate *prefers = [coder decodeObjectOfClass:[NSPredicate class] forKey:@"prefers"];
+        NSPredicate *can = [coder decodeObjectForKey:@"canActivate"];
+        NSPredicate *prefers = [coder decodeObjectForKey:@"prefers"];
         if (can) self.canActivateForTargetContentIdentifierPredicate = can;
         if (prefers) self.prefersToActivateForTargetContentIdentifierPredicate = prefers;
     }
@@ -248,9 +248,9 @@ static NSString *UICStateName(NSInteger state) {
     if (UICGet(self, @"userInfo")) [coder encodeObject:UICGet(self, @"userInfo") forKey:@"userInfo"];
 }
 - (instancetype)initWithCoder:(NSCoder *)coder {
-    return [self _initWithUICRole:[coder decodeObjectOfClass:[NSString class] forKey:@"role"]
-                     configuration:[coder decodeObjectOfClass:UICClass(@"UISceneConfiguration") forKey:@"configuration"]
-                        identifier:[coder decodeObjectOfClass:[NSString class] forKey:@"persistentIdentifier"]];
+    return [self _initWithUICRole:[coder decodeObjectForKey:@"role"]
+                     configuration:[coder decodeObjectForKey:@"configuration"]
+                        identifier:[coder decodeObjectForKey:@"persistentIdentifier"]];
 }
 @end
 
@@ -554,9 +554,10 @@ static NSString *UICSceneDescription(id scene) {
     }
     return space;
 }
+extern id UICSceneTraitCollection(void);
 - (id)traitCollection {
-    Class traits = UICClass(@"UITraitCollection");   // iOS 8+; absent before
-    return traits ? [(id)self.screen valueForKey:@"traitCollection"] : nil;
+    // A scene reports the traits of a window on its screen (size classes included).
+    return UICSceneTraitCollection();
 }
 - (id)sizeRestrictions { return nil; }
 - (NSArray *)windows {
@@ -845,6 +846,12 @@ static void UICAdaptApplicationDelegate(id delegate) {
 
 #pragma mark - Scene driver
 
+static void UICRestoreInteractionState(id scene, id delegate) {
+    // UIKit calls this on every foreground entry, passing the session's saved activity (nil if none).
+    SEL selector = @selector(scene:restoreInteractionStateWithUserActivity:);
+    if (UICResponds(delegate, selector))
+        ((void (*)(id, SEL, id, id))objc_msgSend)(delegate, selector, scene, [[scene session] stateRestorationActivity]);
+}
 static BOOL UICPostingForegroundNotification;
 static UIInterfaceOrientation UICPreviousOrientation;
 
@@ -939,6 +946,7 @@ static void UICConnectScene(NSDictionary *launchOptions) {
     UICSend1(delegate, @selector(sceneWillEnterForeground:), scene);
     [scene _uic_setActivationState:UICActivationForegroundInactive];
     UICPost(SwiftLegacyUISceneWillEnterForegroundNotification, scene);
+    UICRestoreInteractionState(scene, delegate);
     UICPostingForegroundNotification = YES;
     [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationWillEnterForegroundNotification object:application];
     UICPostingForegroundNotification = NO;
@@ -974,15 +982,21 @@ static void UICWillResignActive(NSNotification *note) {
     [UICScene_ _uic_setActivationState:UICActivationForegroundInactive];
     UICPost(SwiftLegacyUISceneWillDeactivateNotification, UICScene_);
 }
+static void UICSaveRestorationState(void) {
+    id delegate = UICSceneDelegate();
+    SEL selector = @selector(stateRestorationActivityForScene:);
+    if (!UICResponds(delegate, selector)) return;
+    NSUserActivity *activity = ((id (*)(id, SEL, id))objc_msgSend)(delegate, selector, UICScene_);
+    [[UICScene_ session] setStateRestorationActivity:activity];
+}
 static void UICDidEnterBackground(NSNotification *note) {
     if (!UICSceneMode || !UICScene_) return;
+    // UIKit asks for the restoration activity (twice) while the scene is still foreground-inactive,
+    // then reports the background transition.
+    UICSaveRestorationState();
+    UICSaveRestorationState();
     [UICScene_ _uic_setActivationState:UICActivationBackground];
-    id delegate = UICSceneDelegate();
-    UICSend1(delegate, @selector(sceneDidEnterBackground:), UICScene_);
-    if (UICResponds(delegate, @selector(stateRestorationActivityForScene:))) {
-        NSUserActivity *activity = ((id (*)(id, SEL, id))objc_msgSend)(delegate, @selector(stateRestorationActivityForScene:), UICScene_);
-        [[UICScene_ session] setStateRestorationActivity:activity];
-    }
+    UICSend1(UICSceneDelegate(), @selector(sceneDidEnterBackground:), UICScene_);
     UICPost(SwiftLegacyUISceneDidEnterBackgroundNotification, UICScene_);
 }
 static void UICWillEnterForeground(NSNotification *note) {
@@ -990,6 +1004,7 @@ static void UICWillEnterForeground(NSNotification *note) {
     UICSend1(UICSceneDelegate(), @selector(sceneWillEnterForeground:), UICScene_);
     [UICScene_ _uic_setActivationState:UICActivationForegroundInactive];
     UICPost(SwiftLegacyUISceneWillEnterForegroundNotification, UICScene_);
+    UICRestoreInteractionState(UICScene_, UICSceneDelegate());
 }
 static void UICWillTerminate(NSNotification *note) {
     if (!UICSceneMode || !UICScene_) return;

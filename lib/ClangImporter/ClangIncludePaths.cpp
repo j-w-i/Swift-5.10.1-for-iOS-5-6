@@ -219,6 +219,13 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
             .Default(false))
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
           " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
+    // UIContentSizeCategory constants: identical to UIKit's values; the symbols exist from iOS 7,
+    // but the trait collection reads the iOS 8 set, so bind every category to the runtime copies.
+    if (backportFacades && deploymentMajor < 8 && i && spelling(tokens[i - 1]) == "const" &&
+        name.startswith("UIContentSizeCategory") && name != "UIContentSizeCategoryDidChangeNotification" &&
+        name != "UIContentSizeCategoryNewValueKey")
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
     if (backportFacades && name == "NSDirectionalEdgeInsetsZero" && i &&
         spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
@@ -771,7 +778,8 @@ static void getLegacyCollectionFileMapping(
                           "UILayoutGuide.h", "NSLayoutAnchor.h", "UIRefreshControl.h",
                           "UIStackView.h", "UICollectionViewCompositionalLayout.h",
                           "UIGeometry.h", "UIView.h", "NSAttributedString.h",
-                          "UIScene.h", "UIWindowScene.h", "UISceneDefinitions.h"}) {
+                          "UIScene.h", "UIWindowScene.h", "UISceneDefinitions.h",
+                          "UITraitCollection.h", "UIContentSizeCategory.h"}) {
       Path path(headers);
       llvm::sys::path::append(path, file);
       if (auto source = vfs->getBufferForFile(path))
