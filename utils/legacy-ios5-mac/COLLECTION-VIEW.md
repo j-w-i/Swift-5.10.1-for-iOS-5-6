@@ -175,3 +175,19 @@ real 32-bit ARM. The simulator test also passes. Modern native installer IMPs
 remain unchanged in this test. This is **not** the missing iOS 6/7 layout-engine
 integration gate: those hooks are invoked directly using layout test doubles,
 and forwarding/proxy sizing delegates remain unwrapped.
+
+### Round 46: iPod touch 3 sizing-delegate regression
+
+All current PST Objective-C sources were built `-O2 -marm`, armv7, deployment
+5.0, with the sizing-delegate regression and run as mobile on iPod3,1 / iOS
+5.1.1. Estimate-enabled result: delegateCalls=1, fittingCalls=2, final 80x99.
+Fresh zero-estimate control: delegateCalls=1, fittingCalls=0, final 80x31. Both
+assertions passed. This exercises actual PST layout and preferred sizing on iOS
+5, including the recent attribute snapshot change; it is not a displayed-app
+frame test or a complete API regression gate.
+
+Initial test links with the modern SDK omitted `crt1.3.1.o`, warned that the
+linker changed the target to iOS 7, and produced crashing executables. Relinking
+with `-L /Users/jwalr/Developer/Legacy-Build-Inputs` supplied the existing startup
+object and resolved the probe startup failure. Session artifacts:
+`/tmp/pst-ipod3-sizing.EhijAB` (not durable repository artifacts).

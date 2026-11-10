@@ -30,6 +30,7 @@ static NSUInteger fittingCalls, delegateCalls;
 }
 @end
 int main(void) { @autoreleasepool {
+    [UIApplication sharedApplication];
     UICollectionViewFlowLayout *layout=[UICollectionViewFlowLayout new];
     layout.estimatedItemSize=CGSizeMake(80,40);
     UICollectionView *cv=[[UICollectionView alloc]initWithFrame:CGRectMake(0,0,200,200) collectionViewLayout:layout];
