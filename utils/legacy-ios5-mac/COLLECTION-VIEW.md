@@ -204,3 +204,29 @@ assignment while scaled, reset, rotation, translation, and translated-center
 assignment, each also checking copy geometry. These isolate attribute/setter
 behaviour, not app-driven prefetch scheduling or frame delivery. Session build
 artifacts: `/tmp/pst-ipod3-lifecycle.A29JW1` (temporary, not durable evidence).
+
+### Round 52: direct snapshot copy hardware A/B
+
+Compared the immediately pre-`bd65f981` arm64 iPhone benchmark against the same
+objects/harness relinked with only the updated layout implementation. Six
+alternating-order launch pairs on iPhone 6 / iOS 10.3.3; each launch uses nine
+alternating native/PST sample pairs. Median PST after/before ratios:
+
+| Workload | After/before | Improved pairs |
+| --- | ---: | ---: |
+| Cold | 0.988 | 6/6 |
+| Idle | 1.034 | 0/6 |
+| Scroll | 0.986 | 4/6 |
+| Reload | 0.972 | 5/6 |
+| Batch | 0.972 | 5/6 |
+| Item-size change | 0.995 | 4/6 |
+| Bounds change | 0.979 | 5/6 |
+| Multi-section cold | 0.987 | 6/6 |
+| Multi-section scroll | 0.971 | 6/6 |
+
+These modest CPU reductions do not close native parity. Idle regressed in all
+six pairs and needs further investigation; it must not be omitted from the
+result. No displayed frame-delivery test was performed. Raw JSON/summary in
+`/tmp/cv-copy-ab.CLrkuQ` are session-only artifacts. The harness also emits
+availability warnings for `NSJSONWritingSortedKeys` (iOS 11 flag used on iOS 10);
+JSON serialization is outside timing, but that harness portability issue remains.
