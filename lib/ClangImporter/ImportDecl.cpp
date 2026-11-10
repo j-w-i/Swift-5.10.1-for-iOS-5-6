@@ -261,6 +261,11 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       owner = category->getClassInterface()->getName();
     else if (auto named = dyn_cast<clang::NamedDecl>(dc))
       if (named->getIdentifier()) owner = named->getName();
+    if (owner == "UIView" && member == "systemLayoutSizeFittingSize") {
+      // Engine fitting measurement: the one-argument form is iOS 6, the priority form iOS 8.
+      if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))
+        return method->param_size() == 1 ? 6 : 8;
+    }
     if (owner == "UIView")
       // Constraint methods retain their separate unavailable/shim rule below.
       // No readable/content/frame guides or baseline anchors: absent runtime.

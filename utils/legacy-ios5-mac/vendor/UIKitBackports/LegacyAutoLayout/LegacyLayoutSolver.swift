@@ -226,6 +226,11 @@ internal final class LegacyLayoutSolver {
     /// A finite axis is fixed at required strength; nil axes seek their smallest fitting size.
     /// Used by independently measured containers without changing ordinary root layout semantics.
     internal var fittingProposal: (width: CGFloat?, height: CGFloat?)?
+    /// `systemLayoutSizeFitting(_:withHorizontalFittingPriority:verticalFittingPriority:)`: each axis is pulled
+    /// toward its target at the given priority (UILayoutPriorityRequired makes it exact, a lower priority lets
+    /// the content win). When set it replaces the fixed-or-minimised rule `fittingProposal` applies; the
+    /// proposal must still be non-nil so every fitting-mode check in the solver stays in effect.
+    internal var fittingTargets: (width: CGFloat, widthPriority: Float, height: CGFloat, heightPriority: Float)?
     internal private(set) var fittedRootSize: CGSize = .zero
 
     // Per-pass structure; cleared after the result is built.
@@ -917,11 +922,18 @@ internal final class LegacyLayoutSolver {
             if let proposal = fittingProposal {
                 installRequired(Expression(rootVariables.width), .greaterThanOrEqual, name: "fitting width >= 0")
                 installRequired(Expression(rootVariables.height), .greaterThanOrEqual, name: "fitting height >= 0")
+                if let targets = fittingTargets {
+                    _ = install(Expression(rootVariables.width).minus(Expression(constant: Double(targets.width))),
+                                .equal, strength: RRLayoutPriorityMapping.strength(for: RRLayoutPriority(targets.widthPriority)), name: "fitting width")
+                    _ = install(Expression(rootVariables.height).minus(Expression(constant: Double(targets.height))),
+                                .equal, strength: RRLayoutPriorityMapping.strength(for: RRLayoutPriority(targets.heightPriority)), name: "fitting height")
+                } else {
                 let fitting = RRLayoutPriorityMapping.strength(for: RRLayoutPriorityValue.fittingSizeLevel)
                 _ = install(Expression(rootVariables.width).minus(Expression(constant: Double(proposal.width ?? 0))),
                             .equal, strength: proposal.width == nil ? fitting : .required, name: "fitting width")
                 _ = install(Expression(rootVariables.height).minus(Expression(constant: Double(proposal.height ?? 0))),
                             .equal, strength: proposal.height == nil ? fitting : .required, name: "fitting height")
+                }
             } else {
                 rootSizeConstraints = (nil, nil)
                 if frame.width.isFinite {

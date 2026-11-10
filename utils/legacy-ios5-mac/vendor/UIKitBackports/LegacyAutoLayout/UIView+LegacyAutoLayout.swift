@@ -839,6 +839,18 @@ extension UIView {
         LegacyLayoutMutation.bump()
     }
 
+    /// Solves this view's constraints for a size near `target`, each axis pulled at its own priority.
+    /// Nothing is written to the view: this is a measurement.
+    internal func legacyFittingSize(_ target: CGSize, _ horizontal: Float, _ vertical: Float) -> CGSize {
+        if legacyUsesDirectStackLayout { return sizeThatFits(target) }
+        LegacyLayoutLock.shared.lock(); defer { LegacyLayoutLock.shared.unlock() }
+        let fitting = LegacyLayoutSolver(root: self, direction: LegacyAutoLayoutSemanticDirection.current)
+        fitting.fittingProposal = (width: nil, height: nil)
+        fitting.fittingTargets = (width: target.width, widthPriority: horizontal, height: target.height, heightPriority: vertical)
+        _ = fitting.solve(writingFrames: false)
+        return fitting.fittedRootSize
+    }
+
     /// Private, dynamically dispatched bridge so CGRect/CGSize use Objective-C's platform ABI.
     @objc(uic_legacyStackFittingSize:)
     internal func legacyStackFittingSize(_ proposal: CGSize) -> CGSize {

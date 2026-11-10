@@ -262,6 +262,18 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         }
         return explicit
     }
+    /// iOS 6 `systemLayoutSizeFittingSize:`: both axes are pulled toward the target at
+    /// `UILayoutPriorityFittingSizeLevel`, so content compression resistance and hugging win unless the
+    /// caller names a stronger priority. Measured against UIKit on iOS 27: a 200-wide target still
+    /// returns the label's natural width, while an exact (required, required) request is honoured.
+    @objc dynamic func rr_a_systemLayoutSizeFittingSize(_ target: CGSize) -> CGSize {
+        let level = Float(RRLayoutPriorityValue.fittingSizeLevel)
+        return bridgedView(self).legacyFittingSize(target, level, level)
+    }
+    /// iOS 8 `systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority:`.
+    @objc dynamic func rr_a_systemLayoutSizeFittingSize(_ target: CGSize, withHorizontalFittingPriority horizontal: Float, verticalFittingPriority vertical: Float) -> CGSize {
+        return bridgedView(self).legacyFittingSize(target, horizontal, vertical)
+    }
     @objc dynamic func rr_a_invalidateIntrinsicContentSize() {
         let view = bridgedView(self)
         // Explicit intrinsic invalidation must invalidate the engine's cached
@@ -520,6 +532,8 @@ internal enum LegacyAutoLayoutInstaller {
         )
 
         addMethodIfAbsent(selector: NSSelectorFromString("intrinsicContentSize"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_intrinsicContentSize))
+        addMethodIfAbsent(selector: NSSelectorFromString("systemLayoutSizeFittingSize:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:)))
+        addMethodIfAbsent(selector: NSSelectorFromString("systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:withHorizontalFittingPriority:verticalFittingPriority:)))
         addMethodIfAbsent(selector: NSSelectorFromString("invalidateIntrinsicContentSize"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_invalidateIntrinsicContentSize))
         addMethodIfAbsent(selector: NSSelectorFromString("contentHuggingPriorityForAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentHuggingPriorityForAxis(_:)))
         addMethodIfAbsent(selector: NSSelectorFromString("setContentHuggingPriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentHuggingPriority(_:forAxis:)))

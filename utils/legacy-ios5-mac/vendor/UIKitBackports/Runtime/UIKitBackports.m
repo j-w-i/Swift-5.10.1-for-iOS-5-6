@@ -143,6 +143,28 @@ static UIEdgeInsets UICMargins(UIView *view) {
 @interface UICViewAdditions : NSObject @end
 @implementation UICViewAdditions
 UIC_ANCHOR_GETTERS
+// iOS 8 systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority: for iOS 6 and 7,
+// which only have the single-argument form (both axes at UILayoutPriorityFittingSizeLevel). The view is pinned
+// to the target at the requested priorities for the duration of one measurement, then Apple's own solver
+// answers; the temporary constraints are removed before returning. Each axis is pinned at exactly the
+// requested priority, so a low priority loses to content hugging/compression and a high one wins, as in UIKit.
+- (CGSize)systemLayoutSizeFittingSize:(CGSize)target withHorizontalFittingPriority:(float)horizontal verticalFittingPriority:(float)vertical {
+    UIView *view = (UIView *)(id)self;
+    Class constraintClass = objc_getClass("NSLayoutConstraint");
+    NSMutableArray *pins = [NSMutableArray array];
+    if (horizontal > 0) {
+        NSLayoutConstraint *pin = [constraintClass constraintWithItem:view attribute:NSLayoutAttributeWidth relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:target.width];
+        pin.priority = horizontal; [pins addObject:pin];
+    }
+    if (vertical > 0) {
+        NSLayoutConstraint *pin = [constraintClass constraintWithItem:view attribute:NSLayoutAttributeHeight relatedBy:NSLayoutRelationEqual toItem:nil attribute:NSLayoutAttributeNotAnAttribute multiplier:1 constant:target.height];
+        pin.priority = vertical; [pins addObject:pin];
+    }
+    if (pins.count) [view addConstraints:pins];
+    CGSize result = [view systemLayoutSizeFittingSize:target];
+    if (pins.count) [view removeConstraints:pins];
+    return result;
+}
 - (NSArray *)layoutGuides { return [objc_getAssociatedObject(self, &guidesKey) copy] ?: @[]; }
 - (void)addLayoutGuide:(UICLayoutGuide *)guide { UICAddLayoutGuide((UIView *)(id)self, guide); }
 - (void)removeLayoutGuide:(UICLayoutGuide *)guide { UICRemoveLayoutGuide((UIView *)(id)self, guide); }
