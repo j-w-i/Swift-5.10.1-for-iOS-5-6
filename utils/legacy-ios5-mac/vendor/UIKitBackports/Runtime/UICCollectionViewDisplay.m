@@ -80,9 +80,28 @@ static NSArray *UICIndexPathsForVisibleSupplementaryElements(UICollectionView *s
     return result;
 }
 
+// iOS 7 affine convenience property; keep the underlying native 3D state.
+static CGAffineTransform UICAttributesTransform(UICollectionViewLayoutAttributes *self, SEL selector) {
+    CATransform3D transform = [self transform3D];
+    return CATransform3DIsAffine(transform) ? CATransform3DGetAffineTransform(transform) : CGAffineTransformIdentity;
+}
+static void UICSetAttributesTransform(UICollectionViewLayoutAttributes *self, SEL selector, CGAffineTransform transform) {
+    [self setTransform3D:CATransform3DMakeAffineTransform(transform)];
+}
+static void UICInstallAttributesTransform(Class attributes) {
+    if (!attributes) return;
+    char getter[128], setter[128];
+    snprintf(getter, sizeof getter, "%s@:", @encode(CGAffineTransform));
+    snprintf(setter, sizeof setter, "v@:%s", @encode(CGAffineTransform));
+    SEL get = sel_registerName("transform"), set = sel_registerName("setTransform:");
+    if (!class_getInstanceMethod(attributes, get)) class_addMethod(attributes, get, (IMP)UICAttributesTransform, getter);
+    if (!class_getInstanceMethod(attributes, set)) class_addMethod(attributes, set, (IMP)UICSetAttributesTransform, setter);
+}
+
 #pragma mark - Installation
 
 void UICInstallCollectionViewDisplay(void) {
+    UICInstallAttributesTransform(objc_getClass("UICollectionViewLayoutAttributes"));
     Class collectionView = objc_getClass("UICollectionView");
     if (!collectionView) return;                           // iOS 5: PSTCollectionView carries this itself
 

@@ -9,6 +9,6 @@ SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/collection-size-hook.XXXXXX")
 xcrun clang -fobjc-arc -fblocks -arch arm64 -isysroot "$SDK" -mios-simulator-version-min=17.0 \
     -include "$HERE/../Runtime/UICObjCCompatibility.h" \
-    -framework UIKit -framework Foundation -framework CoreGraphics \
+    -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
     "$HERE/collection_size_hook_test.m" -o "$OUT/test"
 xcrun simctl spawn "$SIM" "$OUT/test"

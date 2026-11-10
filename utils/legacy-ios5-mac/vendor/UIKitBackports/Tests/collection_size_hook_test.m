@@ -17,6 +17,11 @@
 - (UICollectionViewLayout *)collectionViewLayout { return self.testLayout; }
 @end
 
+@interface LegacyAttributesDouble : NSObject
+@property(nonatomic) CATransform3D transform3D;
+@end
+@implementation LegacyAttributesDouble @end
+
 @interface SharedSizeDelegate : NSObject @end
 @implementation SharedSizeDelegate @end
 @interface DerivedSizeDelegate : SharedSizeDelegate @end
@@ -66,6 +71,22 @@ static SizeHookCollection *collection(id delegate) {
     return cv;
 }
 int main(void) { @autoreleasepool {
+    Class attributesClass=[UICollectionViewLayoutAttributes class];
+    IMP nativeTransform=class_getMethodImplementation(attributesClass,@selector(transform));
+    IMP nativeSetTransform=class_getMethodImplementation(attributesClass,@selector(setTransform:));
+    UICInstallAttributesTransform(attributesClass);
+    require(nativeTransform==class_getMethodImplementation(attributesClass,@selector(transform)) && nativeSetTransform==class_getMethodImplementation(attributesClass,@selector(setTransform:)), @"native affine property unchanged");
+    UICInstallAttributesTransform([LegacyAttributesDouble class]);
+    LegacyAttributesDouble *attributes=[LegacyAttributesDouble new];
+    SEL getTransform=@selector(transform), setTransform=@selector(setTransform:);
+    void (*setAffine)(id,SEL,CGAffineTransform)=(void *)[attributes methodForSelector:setTransform];
+    CGAffineTransform (*getAffine)(id,SEL)=(void *)[attributes methodForSelector:getTransform];
+    CGAffineTransform affine=CGAffineTransformMake(2,3,4,5,6,7);
+    setAffine(attributes,setTransform,affine);
+    require(CGAffineTransformEqualToTransform(getAffine(attributes,getTransform),affine), @"absent affine methods roundtrip");
+    CATransform3D nonaffine=CATransform3DIdentity; nonaffine.m34=-0.01;
+    attributes.transform3D=nonaffine;
+    require(CGAffineTransformIsIdentity(getAffine(attributes,getTransform)), @"nonaffine getter returns identity");
     Class cvClass = [UICollectionView class], flowClass = [UICollectionViewFlowLayout class];
     SEL selectors[] = { @selector(layoutSubviews), @selector(reloadData), @selector(prefetchDataSource) };
     IMP native[3];
