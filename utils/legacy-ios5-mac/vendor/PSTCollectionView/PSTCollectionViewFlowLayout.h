@@ -36,6 +36,9 @@ __attribute__((swift_name("UICollectionViewFlowLayout")))
 @property (nonatomic) CGFloat minimumLineSpacing;
 @property (nonatomic) CGFloat minimumInteritemSpacing;
 @property (nonatomic) CGSize itemSize; // for the cases the delegate method is not implemented
+// Self-sizing cells (iOS 8). A non-zero estimate makes the layout ask each cell for its preferred size
+// (-preferredLayoutAttributesFittingAttributes:) and lay out with the measured sizes.
+@property (nonatomic) CGSize estimatedItemSize;
 @property (nonatomic) PSTCollectionViewScrollDirection scrollDirection; // default is PSTCollectionViewScrollDirectionVertical
 @property (nonatomic) CGSize headerReferenceSize;
 @property (nonatomic) CGSize footerReferenceSize;
@@ -56,6 +59,9 @@ __attribute__((swift_name("UICollectionViewFlowLayout")))
 
 @end
 
+// iOS 10: pass as itemSize/estimatedItemSize to ask the layout to size items automatically.
+extern const CGSize UICollectionViewFlowLayoutAutomaticSize __asm__("_SwiftLegacyUICollectionViewFlowLayoutAutomaticSize");
+
 // @steipete addition, private API in UICollectionViewFlowLayout
 extern NSString *const PSTFlowLayoutCommonRowHorizontalAlignmentKey;
 extern NSString *const PSTFlowLayoutLastRowHorizontalAlignmentKey;
@@ -68,6 +74,13 @@ typedef NS_ENUM(NSInteger, PSTFlowLayoutHorizontalAlignment) {
     PSTFlowLayoutHorizontalAlignmentJustify // 3; default except for the last row
 };
 // TODO: settings for UIFlowLayoutRowVerticalAlignmentKey
+
+@interface PSTCollectionViewFlowLayout (SelfSizing)
+- (BOOL)pstUsesSelfSizing;
+- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath;
+- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath;
+@end
+
 
 
 /*

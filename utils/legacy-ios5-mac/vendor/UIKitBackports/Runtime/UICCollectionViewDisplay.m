@@ -100,3 +100,8 @@ void UICInstallCollectionViewDisplay(void) {
     if (!class_getInstanceMethod(collectionView, paths))
         class_addMethod(collectionView, paths, (IMP)UICIndexPathsForVisibleSupplementaryElements, "@@:@");
 }
+
+#pragma mark - UICollectionViewFlowLayoutAutomaticSize (iOS 10)
+
+// Same value UIKit exports: the largest CGSize, which a flow layout reads as "size this item automatically".
+const CGSize SwiftLegacyUICollectionViewFlowLayoutAutomaticSize = {CGFLOAT_MAX, CGFLOAT_MAX};

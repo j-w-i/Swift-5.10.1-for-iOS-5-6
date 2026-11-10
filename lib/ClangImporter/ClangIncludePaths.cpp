@@ -226,6 +226,11 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
         name != "UIContentSizeCategoryNewValueKey")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
           " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
+    // UICollectionViewFlowLayoutAutomaticSize (iOS 10): {CGFLOAT_MAX, CGFLOAT_MAX}, exported by the runtime below iOS 10.
+    if (backportFacades && deploymentMajor < 10 && i && spelling(tokens[i - 1]) == "const" &&
+        name == "UICollectionViewFlowLayoutAutomaticSize")
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
     if (backportFacades && name == "NSDirectionalEdgeInsetsZero" && i &&
         spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),

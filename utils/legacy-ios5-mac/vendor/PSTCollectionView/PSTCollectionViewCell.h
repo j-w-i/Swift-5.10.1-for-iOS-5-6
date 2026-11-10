@@ -19,6 +19,10 @@ __attribute__((swift_name("UICollectionReusableView")))
 
 // Apply layout attributes on cell.
 - (void)applyLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes;
+// Self-sizing (iOS 8): returns the attributes this view would like to have, given the ones the layout proposes.
+// The default measures the view with Auto Layout (a cell measures its contentView) and returns a copy of
+// the proposal carrying the measured size. Override to return a custom size.
+- (PSTCollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes;
 - (void)willTransitionFromLayout:(PSTCollectionViewLayout *)oldLayout toLayout:(PSTCollectionViewLayout *)newLayout;
 - (void)didTransitionFromLayout:(PSTCollectionViewLayout *)oldLayout toLayout:(PSTCollectionViewLayout *)newLayout;
 

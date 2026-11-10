@@ -6,6 +6,7 @@
 //
 
 #import "PSTCollectionView.h"
+#import <objc/message.h>
 
 @interface PSTCollectionReusableView () {
     PSTCollectionViewLayoutAttributes *_layoutAttributes;
@@ -76,6 +77,21 @@
             self.layer.opacity = layoutAttributes.alpha;
         }
     }
+}
+
+- (PSTCollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
+    PSTCollectionViewLayoutAttributes *preferred = [layoutAttributes copy];
+    UIView *measured = self;
+    if ([self isKindOfClass:[PSTCollectionViewCell class]]) measured = [(PSTCollectionViewCell *)self contentView];
+    SEL fitting = NSSelectorFromString(@"systemLayoutSizeFittingSize:");
+    if (![measured respondsToSelector:fitting]) return preferred;
+    // Both axes at UILayoutPriorityFittingSizeLevel, as UIKit's default does: the content decides.
+    // Called through the IMP: an 8-byte CGSize is returned through a hidden pointer on 32-bit ARM, which
+    // objc_msgSend (no _stret) would mistake for the receiver.
+    CGSize (*measure)(id, SEL, CGSize) = (CGSize (*)(id, SEL, CGSize))[measured methodForSelector:fitting];
+    CGSize size = measure(measured, fitting, layoutAttributes.size);
+    if (size.width > 0 && size.height > 0) preferred.size = size;
+    return preferred;
 }
 
 - (void)willTransitionFromLayout:(PSTCollectionViewLayout *)oldLayout toLayout:(PSTCollectionViewLayout *)newLayout {

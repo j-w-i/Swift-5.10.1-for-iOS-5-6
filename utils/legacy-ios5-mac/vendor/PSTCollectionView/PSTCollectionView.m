@@ -9,6 +9,7 @@
 #import "PSTCollectionViewData.h"
 #import "PSTCollectionViewLayout+Internals.h"
 #import "PSTCollectionViewItemKey.h"
+#import "PSTCollectionViewFlowLayout.h"
 #import "PSTCollectionViewStats.h"
 
 #import <objc/runtime.h>
@@ -70,6 +71,7 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     CGRect _preRotationBounds;
     CGPoint _rotationBoundsOffset;
     int _rotationAnimationCount;
+    int _pstSelfSizingRounds;
     int _updateCount;
     NSMutableArray *_insertItems;
     NSMutableArray *_deleteItems;
@@ -1695,8 +1697,43 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _pstLastVisibleBounds = self.bounds;
     _pstVisibleViewsMatchAttributes = YES;
     PST_STATS_END_PASS();
+    [self pstMeasureSelfSizingCells];
 }
 #undef PST_STATS_END_PASS
+
+/// Self-sizing cells (flow layout estimatedItemSize). Each visible cell that has not yet reported a size
+/// equal to the laid out one is asked for its preferred attributes. If any answers with a different size
+/// the layout is invalidated so it is rebuilt with the measured sizes; the next pass re-measures, and a
+/// cell whose answer matches what it was given is left alone from then on. Bounded, so a cell whose size
+/// depends on its own frame cannot loop forever.
+- (void)pstMeasureSelfSizingCells {
+    if (![_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) return;
+    PSTCollectionViewFlowLayout *flow = (PSTCollectionViewFlowLayout *)_layout;
+    if (![flow pstUsesSelfSizing]) { _pstSelfSizingRounds = 0; return; }
+    if (_pstSelfSizingRounds >= 6) { _pstSelfSizingRounds = 0; return; }
+    BOOL changed = NO;
+    NSArray *keys = [_allVisibleViewsDict allKeys];
+    for (PSTCollectionViewItemKey *key in keys) {
+        if (key.type != PSTCollectionViewItemTypeCell) continue;
+        if ([flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath]) continue;
+        PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
+        PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
+        if (!cell || !proposed) continue;
+        PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
+        CGSize size = preferred ? preferred.size : proposed.size;
+        if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath]) changed = YES;
+    }
+    if (changed) {
+        _pstSelfSizingRounds++;
+        [_layout invalidateLayout];
+        [_collectionViewData validateLayoutInRect:self.bounds];
+        [self updateVisibleCellsNow:YES];
+        CGSize contentSize = [_collectionViewData collectionViewContentRect].size;
+        if (!CGSizeEqualToSize(self.contentSize, contentSize)) self.contentSize = contentSize;
+    } else {
+        _pstSelfSizingRounds = 0;
+    }
+}
 
 // fetches a cell from the dataSource and sets the layoutAttributes
 - (PSTCollectionViewCell *)createPreparedCellForItemAtIndexPath:(NSIndexPath *)indexPath withLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {

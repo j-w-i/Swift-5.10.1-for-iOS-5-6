@@ -193,6 +193,8 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       return 10;
     if (variable->getName() == "UISceneErrorDomain")
       return 15;
+    if (variable->getName() == "UICollectionViewFlowLayoutAutomaticSize")
+      return 10;
     // UIKit text-attribute names are the CoreText keys the runtime already
     // exports under their own string values; only the iOS 6 symbols are missing.
     if (llvm::StringSwitch<bool>(variable->getName())
@@ -346,6 +348,11 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       // Implemented for the legacy runtime by the UIKit backports: measured with
       // CoreText using the same attribute-name strings UIKit exports.
       return member == "sizeWithAttributes" ? 7 : 0;
+    // Self-sizing cells: iOS 8 estimate and preferred attributes; iOS 10 automatic size constant.
+    if ((owner == "UICollectionViewFlowLayout" &&
+         (member == "estimatedItemSize" || member == "setEstimatedItemSize")) ||
+        (owner == "UICollectionReusableView" && member == "preferredLayoutAttributesFittingAttributes"))
+      return 8;
     if (owner == "UICollectionView") {
       // iOS 9 supplementary-view accessors, implemented by PSTCollectionView and added to Apple's
       // class by UICCollectionViewDisplay.m below the OS that ships them.

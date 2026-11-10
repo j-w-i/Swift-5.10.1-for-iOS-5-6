@@ -41,6 +41,9 @@ NSString *const PSTFlowLayoutRowVerticalAlignmentKey = @"UIFlowLayoutRowVertical
     CGFloat _interitemSpacing;
     CGFloat _lineSpacing;
     CGSize _itemSize;
+    CGSize _estimatedItemSize;
+    NSMutableDictionary *_pstMeasuredItemSizes;    // NSIndexPath -> NSValue(CGSize): sizes the cells reported
+    NSMutableSet *_pstStableMeasuredIndexPaths;    // index paths whose reported size equals the laid out size
     CGSize _headerReferenceSize;
     CGSize _footerReferenceSize;
     UIEdgeInsets _sectionInset;
@@ -350,9 +353,58 @@ static char kPSTCachedItemRectsKey;
 // Dynamic delegate geometry (per-item sizes, per-section insets/spacings and
 // header/footer sizes) can change without any local property changing, so the
 // prepared layout can not be validated cheaply and is always rebuilt.
+- (CGSize)estimatedItemSize { return _estimatedItemSize; }
+- (void)setEstimatedItemSize:(CGSize)size {
+    if (CGSizeEqualToSize(size, _estimatedItemSize)) return;
+    _estimatedItemSize = size;
+    [self pstResetMeasuredSizes];
+    [self invalidateLayout];
+}
+
+- (BOOL)pstUsesSelfSizing {
+    id delegate = self.collectionView.delegate;
+    if ([delegate respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)]) return NO;
+    return _estimatedItemSize.width > 0 && _estimatedItemSize.height > 0;
+}
+
+- (void)pstResetMeasuredSizes {
+    [_pstMeasuredItemSizes removeAllObjects];
+    [_pstStableMeasuredIndexPaths removeAllObjects];
+}
+
+/// The layout's current size for an item: what its cell last reported, else the estimate.
+- (CGSize)pstSizeForSelfSizingItemAtIndexPath:(NSIndexPath *)indexPath {
+    NSValue *measured = [_pstMeasuredItemSizes objectForKey:indexPath];
+    return measured ? [measured CGSizeValue] : _estimatedItemSize;
+}
+
+/// Records a cell's preferred size. Returns YES when it differs from the size currently laid out
+/// (the layout is then invalidated and rebuilt with it). A size equal to the laid out one is marked
+/// stable so the cell is not measured again.
+- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath {
+    if (!_pstMeasuredItemSizes) {
+        _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
+        _pstStableMeasuredIndexPaths = [NSMutableSet set];
+    }
+    CGSize current = [self pstSizeForSelfSizingItemAtIndexPath:indexPath];
+    if (CGSizeEqualToSize(size, current)) {
+        [_pstStableMeasuredIndexPaths addObject:indexPath];
+        [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+        return NO;
+    }
+    [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+    [_pstStableMeasuredIndexPaths removeObject:indexPath];
+    return YES;
+}
+
+- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath {
+    return [_pstStableMeasuredIndexPaths containsObject:indexPath];
+}
+
 - (BOOL)hasDynamicDelegateGeometry {
     id<PSTCollectionViewDelegateFlowLayout> flowDataSource = (id<PSTCollectionViewDelegateFlowLayout>)self.collectionView.delegate;
-    return [flowDataSource respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)] ||
+    return [self pstUsesSelfSizing] ||
+           [flowDataSource respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)] ||
            [flowDataSource respondsToSelector:@selector(collectionView:layout:insetForSectionAtIndex:)] ||
            [flowDataSource respondsToSelector:@selector(collectionView:layout:minimumLineSpacingForSectionAtIndex:)] ||
            [flowDataSource respondsToSelector:@selector(collectionView:layout:minimumInteritemSpacingForSectionAtIndex:)] ||
@@ -485,6 +537,14 @@ static char kPSTCachedItemRectsKey;
 
         NSInteger numberOfItems = [self.collectionView numberOfItemsInSection:section];
 
+        // self-sizing: every item carries the size its cell reported (or the estimate)
+        if ([self pstUsesSelfSizing]) {
+            for (NSInteger item = 0; item < numberOfItems; item++) {
+                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:item inSection:(NSInteger)section];
+                PSTGridLayoutItem *layoutItem = [layoutSection addItem];
+                layoutItem.itemFrame = (CGRect){.size=[self pstSizeForSelfSizingItemAtIndexPath:indexPath]};
+            }
+        } else
         // if delegate implements size delegate, query it for all items
         if (implementsSizeDelegate) {
             for (NSInteger item = 0; item < numberOfItems; item++) {
