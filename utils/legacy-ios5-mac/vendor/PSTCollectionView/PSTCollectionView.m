@@ -866,7 +866,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
 - (void)pstScrollItemFrame:(CGRect)itemFrame targetRect:(CGRect)targetRect position:(PSTCollectionViewScrollPosition)position animated:(BOOL)animated {
     NSUInteger vertical = position & 0x07;
-    if (!vertical || (position & 0x38)) {
+    NSUInteger horizontal = position & 0x38;
+    if (!vertical && !horizontal) {
         [self scrollRectToVisible:targetRect animated:animated];
         return;
     }
@@ -874,15 +875,28 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // scrollRectToVisible to show a full-bounds rect chooses its own edge when
     // that rect is larger than the usable viewport, losing top/center alignment.
     UIEdgeInsets inset = self.contentInset;
-    CGFloat available = MAX(0, self.bounds.size.height - inset.top - inset.bottom);
-    CGFloat y = CGRectGetMinY(itemFrame) - inset.top;
-    if (vertical == PSTCollectionViewScrollPositionCenteredVertically)
-        y = CGRectGetMidY(itemFrame) - inset.top - available / 2;
-    else if (vertical == PSTCollectionViewScrollPositionBottom)
-        y = CGRectGetMaxY(itemFrame) - self.bounds.size.height + inset.bottom;
-    CGFloat maximum = MAX(-inset.top, self.contentSize.height - self.bounds.size.height + inset.bottom);
-    y = MIN(maximum, MAX(-inset.top, y));
-    [self setContentOffset:CGPointMake(self.contentOffset.x, y) animated:animated];
+    CGPoint offset = self.contentOffset;
+    if (vertical) {
+        CGFloat available = MAX(0, self.bounds.size.height - inset.top - inset.bottom);
+        CGFloat y = CGRectGetMinY(itemFrame) - inset.top;
+        if (vertical == PSTCollectionViewScrollPositionCenteredVertically)
+            y = CGRectGetMidY(itemFrame) - inset.top - available / 2;
+        else if (vertical == PSTCollectionViewScrollPositionBottom)
+            y = CGRectGetMaxY(itemFrame) - self.bounds.size.height + inset.bottom;
+        CGFloat maximum = MAX(-inset.top, self.contentSize.height - self.bounds.size.height + inset.bottom);
+        offset.y = MIN(maximum, MAX(-inset.top, y));
+    }
+    if (horizontal) {
+        CGFloat available = MAX(0, self.bounds.size.width - inset.left - inset.right);
+        CGFloat x = CGRectGetMinX(itemFrame) - inset.left;
+        if (horizontal == PSTCollectionViewScrollPositionCenteredHorizontally)
+            x = CGRectGetMidX(itemFrame) - inset.left - available / 2;
+        else if (horizontal == PSTCollectionViewScrollPositionRight)
+            x = CGRectGetMaxX(itemFrame) - self.bounds.size.width + inset.right;
+        CGFloat maximum = MAX(-inset.left, self.contentSize.width - self.bounds.size.width + inset.right);
+        offset.x = MIN(maximum, MAX(-inset.left, x));
+    }
+    [self setContentOffset:offset animated:animated];
 }
 
 - (CGRect)makeRect:(CGRect)targetRect toScrollPosition:(PSTCollectionViewScrollPosition)scrollPosition {

@@ -131,4 +131,40 @@ int main(void) { @autoreleasepool {
         }
     }
     puts("PASS: asymmetric inset top center bottom alignment");
+    // All preferred heights must fit the non-scrolling dimension.
+    cv.frame=CGRectMake(0,0,200,200);
+    layout.scrollDirection=1;
+    cv.contentInset=UIEdgeInsetsMake(0,17,0,31);
+    for (NSUInteger position=8;position<=32;position*=2) {
+        [cv reloadData]; [cv setContentOffset:CGPointZero animated:NO]; [cv layoutIfNeeded];
+        NSIndexPath *target=[NSIndexPath indexPathForItem:20 inSection:0];
+        [cv scrollToItemAtIndexPath:target atScrollPosition:position animated:NO];
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CGRect frame=[layout layoutAttributesForItemAtIndexPath:target].frame;
+        CGFloat usable=cv.bounds.size.width-cv.contentInset.left-cv.contentInset.right;
+        CGFloat expected=position==8 ? CGRectGetMinX(frame)-cv.contentInset.left : position==16 ? CGRectGetMidX(frame)-cv.contentInset.left-usable/2 : CGRectGetMaxX(frame)-cv.bounds.size.width+cv.contentInset.right;
+        if (fabs(cv.contentOffset.x-expected)>1.0/UIScreen.mainScreen.scale+0.0001) {
+            fprintf(stderr,"FAIL: horizontal inset alignment position=%lu expected=%g actual=%g\n",(unsigned long)position,expected,cv.contentOffset.x); return 1;
+        }
+    }
+    puts("PASS: asymmetric inset left center right alignment");
+    cv.contentInset=UIEdgeInsetsMake(7,17,11,31);
+    [cv reloadData]; [cv layoutIfNeeded];
+    NSIndexPath *combinedTarget=[NSIndexPath indexPathForItem:20 inSection:0];
+    [cv scrollToItemAtIndexPath:combinedTarget atScrollPosition:(1|8) animated:NO];
+    [cv setNeedsLayout]; [cv layoutIfNeeded];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+    [cv setNeedsLayout]; [cv layoutIfNeeded];
+    CGRect combined=[layout layoutAttributesForItemAtIndexPath:combinedTarget].frame;
+    CGFloat minY=-cv.contentInset.top;
+    CGFloat maxY=MAX(minY,cv.contentSize.height-cv.bounds.size.height+cv.contentInset.bottom);
+    CGFloat expectedY=MIN(maxY,MAX(minY,CGRectGetMinY(combined)-cv.contentInset.top));
+    CGFloat expectedX=CGRectGetMinX(combined)-cv.contentInset.left;
+    CGFloat tolerance=1.0/UIScreen.mainScreen.scale+0.0001;
+    if (fabs(cv.contentOffset.x-expectedX)>tolerance || fabs(cv.contentOffset.y-expectedY)>tolerance) {
+        fprintf(stderr,"FAIL: combined top-left alignment\n"); return 1;
+    }
+    puts("PASS: combined top-left inset alignment");
 } return 0; }
