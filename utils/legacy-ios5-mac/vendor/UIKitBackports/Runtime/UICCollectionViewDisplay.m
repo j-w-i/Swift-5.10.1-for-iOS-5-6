@@ -149,12 +149,17 @@ static BOOL UICInstallSizeHook(UICollectionView *collectionView) {
     id delegate = [collectionView delegate];
     if (!delegate) return NO;
     SEL selector = sel_registerName("collectionView:layout:sizeForItemAtIndexPath:");
-    if ([delegate respondsToSelector:selector]) return NO;
     Class delegateClass = object_getClass(delegate);
+    Method existing = class_getInstanceMethod(delegateClass, selector);
+    // The shim may already be inherited or have been installed for another collection view.
+    // Each flow layout caches delegate capabilities independently: refresh this layout too.
+    // An app-provided implementation remains authoritative and is never changed here.
+    if (existing && method_getImplementation(existing) != (IMP)UICDelegateSizeForItem) return NO;
+    if (!existing && [delegate respondsToSelector:selector]) return NO; // forwarding/proxy delegate
     char types[64];
     snprintf(types, sizeof types, "%s@:@@@", @encode(CGSize));
-    BOOL added = class_addMethod(delegateClass, selector, (IMP)UICDelegateSizeForItem, types);
-    if (added) {
+    BOOL added = !existing && class_addMethod(delegateClass, selector, (IMP)UICDelegateSizeForItem, types);
+    if (existing || added) {
         SEL flags = sel_registerName("_updateDelegateFlags");
         id layout = [collectionView collectionViewLayout];
         if ([layout respondsToSelector:flags]) ((void (*)(id, SEL))objc_msgSend)(layout, flags);
