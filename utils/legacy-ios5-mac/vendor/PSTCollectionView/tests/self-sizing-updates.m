@@ -39,6 +39,23 @@ static void check(UICollectionView *cv, UpdateData *data, const char *stage) {
     }
     printf("PASS: %s\n",stage);
 }
+static void visit(UICollectionView *cv, UpdateData *data, NSInteger item, const char *stage) {
+    NSIndexPath *path=[NSIndexPath indexPathForItem:item inSection:0];
+    // Measuring earlier items can move the destination. Re-target after each pass
+    // rather than assuming one estimated scroll will leave the item on screen.
+    for (int attempt=0;attempt<4;attempt++) {
+        [cv scrollToItemAtIndexPath:path atScrollPosition:0 animated:NO];
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+    }
+    [cv setNeedsLayout]; [cv layoutIfNeeded];
+    UpdateCell *cell=(UpdateCell *)[cv cellForItemAtIndexPath:path];
+    CGSize size=[cv.collectionViewLayout layoutAttributesForItemAtIndexPath:path].size;
+    CGFloat expected=[[data.heights objectAtIndex:item] doubleValue];
+    if (!cell || cell.wantedHeight!=expected || size.width!=200 || size.height!=expected) {
+        fprintf(stderr,"FAIL: %s item=%ld expected=200x%g actual=%gx%g cell=%p\n",stage,(long)item,expected,size.width,size.height,cell); exit(1);
+    }
+}
 int main(void) { @autoreleasepool {
     [UIView setAnimationsEnabled:NO];
     UICollectionViewFlowLayout *layout=[UICollectionViewFlowLayout new];
@@ -64,4 +81,24 @@ int main(void) { @autoreleasepool {
         [cv reloadItemsAtIndexPaths:@[[NSIndexPath indexPathForItem:0 inSection:0]]];
         check(cv,data,"repeated reload changes preferred height");
     }
+    cv.frame=CGRectMake(0,0,200,120);
+    [data.heights removeAllObjects];
+    for (int i=0;i<40;i++) [data.heights addObject:@(30+i*2)];
+    [cv reloadData]; [cv layoutIfNeeded];
+    visit(cv,data,0,"measure front");
+    visit(cv,data,39,"measure back");
+    [cv performBatchUpdates:^{
+        [data.heights insertObject:@125 atIndex:0];
+        [cv insertItemsAtIndexPaths:@[[NSIndexPath indexPathForItem:0 inSection:0]]];
+    } completion:nil];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.4,false);
+    visit(cv,data,40,"shifted back after insertion");
+    visit(cv,data,0,"new front after insertion");
+    visit(cv,data,1,"shifted front after insertion");
+    puts("PASS: offscreen measured items after insertion");
+    [data.heights replaceObjectAtIndex:40 withObject:@155];
+    [cv reloadItemsAtIndexPaths:@[[NSIndexPath indexPathForItem:40 inSection:0]]];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.4,false);
+    visit(cv,data,40,"offscreen reload");
+    puts("PASS: offscreen item reload");
 } return 0; }
