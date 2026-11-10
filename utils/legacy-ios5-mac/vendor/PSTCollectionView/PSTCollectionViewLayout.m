@@ -173,16 +173,20 @@
 
 - (id)copyWithZone:(NSZone *)zone {
     PSTCollectionViewLayoutAttributes *layoutAttributes = [self.class new];
-    layoutAttributes.indexPath = self.indexPath;
-    layoutAttributes.elementKind = self.elementKind;
-    layoutAttributes.elementCategory = self.elementCategory;
-    layoutAttributes.frame = self.frame;
-    layoutAttributes.center = self.center;
-    layoutAttributes.size = self.size;
-    layoutAttributes.transform3D = self.transform3D;
-    layoutAttributes.alpha = self.alpha;
-    layoutAttributes.zIndex = self.zIndex;
-    layoutAttributes.hidden = self.isHidden;
+    // Copy stored base state once: setter chains recompute frame three times
+    // and transformed frame is derived, not the geometry we need to preserve.
+    // Allocate the dynamic class so subclass copyWithZone: overrides can extend it.
+    layoutAttributes->_indexPath = [_indexPath copy];
+    layoutAttributes->_elementKind = [_elementKind copy];
+    layoutAttributes->_elementCategory = _elementCategory;
+    layoutAttributes->_frame = _frame;
+    layoutAttributes->_center = _center;
+    layoutAttributes->_size = _size;
+    layoutAttributes->_transform3D = _transform3D;
+    layoutAttributes->_alpha = _alpha;
+    layoutAttributes->_zIndex = _zIndex;
+    layoutAttributes->_layoutFlags = _layoutFlags;
+    layoutAttributes->_hidden = _hidden;
     return layoutAttributes;
 }
 
