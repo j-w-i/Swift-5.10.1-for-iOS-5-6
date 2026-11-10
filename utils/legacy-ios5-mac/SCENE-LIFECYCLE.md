@@ -52,7 +52,11 @@ Registered only when UIKit lacks the class (iOS < 8). Oracle: iOS 27 simulator.
   from a binary built against the newer SDK raised unrecognized selector and aborted the app at launch (fixed, verified). Merge,
   containment, equality, coding and override behaviour match; description text is iOS 10's own format, and a detached view controller
   reports empty traits there where iOS 27 reports screen traits.
-* Not run on armv7s. Screen values come from the device (scale 1, sRGB on the iPod), so they differ from the simulator's.
+* iPhone 6 (arm64) final build: launch/resign/background/foreground/activate event sequence IDENTICAL to the simulator (20/20).
+* armv7s: the scene/trait runtime is compiled and linked into the armv7s `libswiftUIKit`, but an armv7s *Swift* app does not run
+  at all on the iPhone 6 — even a hello-world with no scene code SIGSEGVs in `libswiftCore`/`libswiftFoundation` during startup (pre-existing,
+  independent of this work; not investigated). So armv7s scene behaviour is unverified.
+* Not run on armv7s (see above). Screen values come from the device (scale 1, sRGB on the iPod), so they differ from the simulator's.
 
 ## Compile-time drop-out (verified from emitted IR)
 Scene / trait class references are runtime lookups (`objc_lookUpClass`) only while the deployment target predates the OS
