@@ -67,14 +67,15 @@
         if (self.hidden != layoutAttributes.hidden) {
             self.hidden = layoutAttributes.hidden;
         }
-        if (!CATransform3DEqualToTransform(self.layer.transform, layoutAttributes.transform3D)) {
-            self.layer.transform = layoutAttributes.transform3D;
+        CALayer *layer = self.layer;
+        if (!CATransform3DEqualToTransform(layer.transform, layoutAttributes.transform3D)) {
+            layer.transform = layoutAttributes.transform3D;
         }
-        if (self.layer.zPosition != layoutAttributes.zIndex) {
-            self.layer.zPosition = layoutAttributes.zIndex;
+        if (layer.zPosition != layoutAttributes.zIndex) {
+            layer.zPosition = layoutAttributes.zIndex;
         }
-        if (self.layer.opacity != layoutAttributes.alpha) {
-            self.layer.opacity = layoutAttributes.alpha;
+        if (layer.opacity != layoutAttributes.alpha) {
+            layer.opacity = layoutAttributes.alpha;
         }
     }
 }
