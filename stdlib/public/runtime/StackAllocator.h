@@ -133,9 +133,10 @@ private:
       // assignment on other platforms. This is not necessary for
       // correctness, just as an aid to analysis tools, so it's OK if
       // the fallback gets optimized out.
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !defined(SWIFT_LEGACY_IOS5)
       memset_s(&metadata, sizeof(metadata), 0, sizeof(metadata));
 #else
+      // (Legacy iOS 5: memset_s is iOS 7+ and not exported by 5.1.1; this is only an analysis aid.)
       metadata = 0;
 #endif
     }

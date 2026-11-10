@@ -379,6 +379,17 @@ AvailabilityInference::annotatedAvailableRangeForAttr(const SpecializeAttr* attr
 
 AvailabilityContext AvailabilityInference::availableRange(const Decl *D,
                                                           ASTContext &Ctx) {
+  // The legacy backport embeds the Swift and _Concurrency runtimes in the app, so their
+  // OS-version annotations (`SwiftStdlib 5.5` => iOS 15, etc.) describe the *system* copies,
+  // which this program never uses. Everything they declare is available at every deployment target.
+  if (Ctx.usesEmbeddedLegacyRuntime()) {
+    if (auto *module = D->getDeclContext()->getParentModule()) {
+      auto name = module->getName().str();
+      if (name == "Swift" || name == "_Concurrency")
+        return AvailabilityContext::alwaysAvailable();
+    }
+  }
+
   llvm::Optional<AvailabilityContext> AnnotatedRange =
       annotatedAvailableRange(D, Ctx);
   if (AnnotatedRange.has_value()) {
@@ -539,19 +550,31 @@ ASTContext::getIntermodulePrespecializedGenericMetadataAvailability() {
   return getSwift54Availability();
 }
 
+bool ASTContext::usesEmbeddedLegacyRuntime() const {
+  return LangOpts.LegacyIOS5Backports && LangOpts.Target.isiOS();
+}
+
 AvailabilityContext ASTContext::getConcurrencyAvailability() {
+  if (usesEmbeddedLegacyRuntime())
+    return AvailabilityContext::alwaysAvailable();
   return getSwift55Availability();
 }
 
 AvailabilityContext ASTContext::getConcurrencyDiscardingTaskGroupAvailability() {
+  if (usesEmbeddedLegacyRuntime())
+    return AvailabilityContext::alwaysAvailable();
   return getSwift59Availability();
 }
 
 AvailabilityContext ASTContext::getBackDeployedConcurrencyAvailability() {
+  if (usesEmbeddedLegacyRuntime())
+    return AvailabilityContext::alwaysAvailable();
   return getSwift51Availability();
 }
 
 AvailabilityContext ASTContext::getConcurrencyDistributedActorWithCustomExecutorAvailability() {
+  if (usesEmbeddedLegacyRuntime())
+    return AvailabilityContext::alwaysAvailable();
   return getSwift59Availability();
 }
 

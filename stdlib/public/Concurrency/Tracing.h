@@ -112,7 +112,9 @@ void job_run_end(job_run_info info);
 } // namespace concurrency
 } // namespace swift
 
-#if SWIFT_STDLIB_CONCURRENCY_TRACING
+// Legacy iOS 5 has no os_signpost/os_log facilities at all, so tracing is always the no-op stubs
+// there (it is a diagnostic aid, never needed for correctness).
+#if SWIFT_STDLIB_CONCURRENCY_TRACING && !defined(SWIFT_LEGACY_IOS5)
 #include "TracingSignpost.h"
 #else
 #include "TracingStubs.h"

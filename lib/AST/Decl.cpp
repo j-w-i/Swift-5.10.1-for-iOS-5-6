@@ -1126,6 +1126,15 @@ LifetimeAnnotation Decl::getLifetimeAnnotation() const {
 AvailabilityContext Decl::getAvailabilityForLinkage() const {
   ASTContext &ctx = getASTContext();
 
+  // The legacy backport embeds the Swift and _Concurrency runtimes in the app, so symbols they
+  // define are always present and must be linked strongly (a weak import would only hide a
+  // packaging error until the first call).
+  if (ctx.usesEmbeddedLegacyRuntime()) {
+    auto moduleName = getModuleContext()->getName();
+    if (moduleName == ctx.Id_Concurrency || moduleName == ctx.StdlibModuleName)
+      return AvailabilityContext::alwaysAvailable();
+  }
+
   // When computing availability for linkage, use the "before" version from
   // the @backDeployed attribute, if present.
   if (auto backDeployVersion = getBackDeployedBeforeOSVersion(ctx))

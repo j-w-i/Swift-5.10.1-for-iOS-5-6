@@ -34,7 +34,12 @@
 #define SWIFT_DEAD_VOUCHER ((voucher_t)-1)
 
 // The OS has voucher support if it has the header or if it has ObjC interop.
-#if (SWIFT_HAS_VOUCHER_HEADER || SWIFT_OBJC_INTEROP) && !SWIFT_THREADING_NONE
+// The legacy iOS 5 runtime never has vouchers: `voucher_copy`/`voucher_adopt` are iOS 12+
+// libSystem symbols that iOS 5.1.1 does not export, so a strong import would make dyld refuse
+// the library. A job simply carries no voucher there, which is exactly the non-Apple behaviour.
+#if defined(SWIFT_LEGACY_IOS5)
+// (intentionally no SWIFT_HAS_VOUCHERS)
+#elif (SWIFT_HAS_VOUCHER_HEADER || SWIFT_OBJC_INTEROP) && !SWIFT_THREADING_NONE
 #define SWIFT_HAS_VOUCHERS 1
 #endif
 
@@ -74,16 +79,16 @@ static inline void swift_voucher_release(voucher_t _Nullable voucher) {
   os_release(voucher);
 }
 
-#else  // __APPLE__
+#else  // !SWIFT_HAS_VOUCHERS
 
-// Declare some do-nothing stubs for OSes without voucher support.
+// Declare some do-nothing stubs for OSes without voucher support (non-Apple, and legacy iOS 5).
 typedef void *voucher_t;
 static inline voucher_t _Nullable voucher_copy(void) { return nullptr; }
 static inline voucher_t _Nullable voucher_adopt(voucher_t _Nullable voucher) {
   return nullptr;
 }
 static inline void swift_voucher_release(voucher_t _Nullable voucher) {}
-#endif // __APPLE__
+#endif // SWIFT_HAS_VOUCHERS
 
 // Declare our own voucher_needs_adopt for when we don't get it from the SDK.
 // This declaration deliberately takes `void *` instead of `voucher_t`. When the

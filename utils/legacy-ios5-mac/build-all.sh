@@ -200,6 +200,9 @@ overlays() { # prepare + build + link the rewritten overlays
   rm -rf "$ARMV7_BASE"; mkdir -p "$ARMV7_BASE"
   cp "$ROOT/bootstrap/probes/linked510-legacy/"libswift*.dylib "$ARMV7_BASE/"
   for MOD in Core Darwin SwiftOnoneSupport; do cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
+  # Swift Concurrency (async/await, actors, tasks) built for the iOS 5.0 floor from the same sources.
+  cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/armv7/libswift_Concurrency.dylib" "$ARMV7_BASE/" 2>/dev/null \
+    || cp "$ROOT/build/runtime510-ios5/lib/swift/iphoneos/libswift_Concurrency.dylib" "$ARMV7_BASE/"
   for MOD in ObjectiveC CoreFoundation; do cp "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$MOD.dylib" "$ARMV7_BASE/"; done
   ARMV7_MEDIA="$ROOT/out/armv7-media"
   rm -rf "$ARMV7_MEDIA"

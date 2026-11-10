@@ -285,6 +285,14 @@ JobPriority swift::swift_task_getCurrentThreadPriority() {
   return JobPriority::UserInitiated;
 #elif SWIFT_CONCURRENCY_TASK_TO_THREAD_MODEL
   return JobPriority::Unspecified;
+#elif defined(SWIFT_LEGACY_IOS5)
+  // qos_class_self() is iOS 8+. It is imported weakly: use it when the OS has it, otherwise
+  // report the old behaviour (main thread is user-initiated, everything else unspecified).
+  if (&qos_class_self != nullptr)
+    return static_cast<JobPriority>(qos_class_self());
+  if (isExecutingOnMainThread())
+    return JobPriority::UserInitiated;
+  return JobPriority::Unspecified;
 #elif defined(__APPLE__)
   return static_cast<JobPriority>(qos_class_self());
 #else
@@ -1988,6 +1996,13 @@ static void swift_task_enqueueImpl(Job *job, ExecutorRef executor) {
   // For main actor or actors with custom executors
   auto wtable = executor.getSerialExecutorWitnessTable();
   auto executorObject = executor.getIdentity();
+#if defined(SWIFT_LEGACY_IOS5) && SWIFT_CONCURRENCY_ENABLE_DISPATCH
+  // Before iOS 6 a dispatch queue is a plain C struct, not an Objective-C object, so asking it
+  // for its dynamic type (swift_getObjectType -> object_getClass) reads garbage and crashes.
+  // The queue executor needs no metadata at all: enqueue straight onto the queue.
+  if (wtable == _swift_task_getDispatchQueueSerialExecutorWitnessTable())
+    return swift_task_enqueueOnDispatchQueue(job, executorObject);
+#endif
   auto executorType = swift_getObjectType(executorObject);
   _swift_task_enqueueOnExecutor(job, executorObject, executorType, wtable);
 }

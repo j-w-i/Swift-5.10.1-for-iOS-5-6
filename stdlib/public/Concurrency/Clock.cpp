@@ -25,12 +25,42 @@
 
 using namespace swift;
 
+#if defined(SWIFT_LEGACY_IOS5)
+#include <mach/mach_time.h>
+#include <sys/time.h>
+// clock_gettime/clock_getres are iOS 10+ (weakly imported); iOS 5.1.1 has neither. Use them when
+// the running OS exports them, otherwise fall back to mach_absolute_time. Decided per call from
+// the symbol itself, never from a version number.
+//
+// LIMITATION (documented): mach_absolute_time stops while the device sleeps, so on an OS without
+// clock_gettime the "continuous" clock cannot include sleep time and behaves like the suspending one.
+static void legacyMachTime(long long *seconds, long long *nanoseconds) {
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  unsigned long long ns = mach_absolute_time() * tb.numer / tb.denom;
+  *seconds = (long long)(ns / 1000000000ull);
+  *nanoseconds = (long long)(ns % 1000000000ull);
+}
+static void legacyMachRes(long long *seconds, long long *nanoseconds) {
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  unsigned long long ns = tb.numer / tb.denom ? tb.numer / tb.denom : 1;
+  *seconds = 0; *nanoseconds = (long long)ns;
+}
+#endif
+
 SWIFT_EXPORT_FROM(swift_Concurrency)
 SWIFT_CC(swift)
 void swift_get_time(
   long long *seconds,
   long long *nanoseconds,
   swift_clock_id clock_id) {
+#if defined(SWIFT_LEGACY_IOS5)
+  if (&clock_gettime == nullptr) {
+    legacyMachTime(seconds, nanoseconds);
+    return;
+  }
+#endif
   switch (clock_id) {
     case swift_clock_id_continuous: {
       struct timespec continuous;
@@ -118,6 +148,12 @@ void swift_get_clock_res(
   long long *seconds,
   long long *nanoseconds,
   swift_clock_id clock_id) {
+#if defined(SWIFT_LEGACY_IOS5)
+  if (&clock_getres == nullptr) {
+    legacyMachRes(seconds, nanoseconds);
+    return;
+  }
+#endif
 switch (clock_id) {
     case swift_clock_id_continuous: {
       struct timespec continuous;

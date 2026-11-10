@@ -75,6 +75,14 @@ endif()
 list(APPEND SWIFT_RUNTIME_CONCURRENCY_C_FLAGS
   "-D__STDC_WANT_LIB_EXT1__=1")
 
+# The legacy iOS 5 runtime must compile _Concurrency with the same switch as the core
+# (class-marking ABI + iOS 5 OS-support paths such as the no-voucher stubs); this target has
+# its own flag list and otherwise never sees SWIFT_RUNTIME_CXX_FLAGS.
+if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
+  list(APPEND SWIFT_RUNTIME_CONCURRENCY_C_FLAGS
+    "-DSWIFT_LEGACY_IOS5_CLASS_MARKING=1" "-DSWIFT_LEGACY_IOS5=1")
+endif()
+
 add_swift_target_library(swift_Concurrency ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} IS_STDLIB
   ../CompatibilityOverride/CompatibilityOverride.cpp
   Actor.cpp

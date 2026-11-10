@@ -117,6 +117,42 @@ static constexpr size_t globalQueueCacheCount =
     static_cast<size_t>(JobPriority::UserInteractive) + 1;
 static std::atomic<dispatch_queue_t> globalQueueCache[globalQueueCacheCount];
 
+#if defined(SWIFT_LEGACY_IOS5)
+// ---- Legacy iOS 5 support -------------------------------------------------------------------
+// libdispatch before iOS 8 has no QoS classes: dispatch_get_global_queue takes the old
+// DISPATCH_QUEUE_PRIORITY_* constants (and returns NULL for anything else, including flags), and
+// sources are created suspended and started with dispatch_resume (dispatch_activate is iOS 10).
+// Every decision is made at run time from what the OS actually exports, never from a version
+// number, so the same binary uses the native QoS path wherever it exists.
+static inline bool legacyOSHasQoS() { return &qos_class_self != nullptr; }
+
+static inline long legacyDispatchPriority(JobPriority priority) {
+  auto p = static_cast<size_t>(priority);
+  if (p >= 0x19) return 2;          // DISPATCH_QUEUE_PRIORITY_HIGH      (user-initiated / interactive)
+  if (p >= 0x15 || p == 0) return 0; // DISPATCH_QUEUE_PRIORITY_DEFAULT
+  if (p >= 0x11) return -2;         // DISPATCH_QUEUE_PRIORITY_LOW       (utility)
+  return -32768;                    // DISPATCH_QUEUE_PRIORITY_BACKGROUND
+}
+
+static dispatch_queue_t legacyGlobalQueue(JobPriority priority) {
+  if (legacyOSHasQoS())
+    return dispatch_get_global_queue((dispatch_qos_class_t)priority, /*flags*/ 0);
+  return dispatch_get_global_queue(legacyDispatchPriority(priority), /*flags*/ 0);
+}
+
+static inline void legacyActivateSource(dispatch_source_t source) {
+  if (&dispatch_activate != nullptr)
+#if defined(SWIFT_LEGACY_IOS5)
+    legacyActivateSource(source);
+#else
+    dispatch_activate(source);
+#endif
+  else
+    dispatch_resume(source);
+}
+#endif
+
+
 static constexpr size_t dispatchQueueCooperativeFlag = 4;
 
 #if defined(SWIFT_CONCURRENCY_BACK_DEPLOYMENT) || !defined(__APPLE__)
@@ -138,6 +174,13 @@ static dispatch_queue_t getGlobalQueue(JobPriority priority) {
   auto queue = ptr->load(loadOrder);
   if (SWIFT_LIKELY(queue))
     return queue;
+
+#if defined(SWIFT_LEGACY_IOS5)
+  // No cooperative queues (iOS 15+) and, before iOS 8, no QoS: plain global queue for the priority.
+  queue = legacyGlobalQueue(priority);
+  ptr->store(queue, std::memory_order_relaxed);
+  return queue;
+#endif
 
 #if defined(SWIFT_CONCURRENCY_BACK_DEPLOYMENT) || !defined(__APPLE__)
   const int DISPATCH_QUEUE_WIDTH_MAX_LOGICAL_CPUS = -3;
@@ -182,6 +225,9 @@ static dispatch_queue_t getGlobalQueue(JobPriority priority) {
 // versions where they work with dispatch_after, and use a standard global
 // queue where cooperative queues don't work.
 static dispatch_queue_t getTimerQueue(JobPriority priority) {
+#if defined(SWIFT_LEGACY_IOS5)
+  return legacyGlobalQueue(priority);
+#endif
   // On newer OSes, we can use the cooperative queues.
   if (__builtin_available(macOS 12.3, iOS 15.4, tvOS 15.4, watchOS 8.5, *))
     return getGlobalQueue(priority);
@@ -276,7 +322,21 @@ static void _swift_run_job_leeway(struct __swift_job_source *jobSource) {
 #define TIME_UNIT_USES_NANOSECONDS 0
 #endif
 
-#if TIME_UNIT_USES_NANOSECONDS
+#if defined(SWIFT_LEGACY_IOS5)
+// Older Apple ARM hardware (A4/A5: iPod touch 3, iPhone 4 ...) does NOT use the 125/3 timebase that
+// current devices use, so read the real mach timebase instead of assuming one.
+#include <mach/mach_time.h>
+static inline uint64_t
+platform_time(uint64_t nsec) {
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  if (!nsec) return nsec;
+  if (nsec >= (uint64_t)INT64_MAX) return INT64_MAX;
+  // host ticks = ns * denom / numer, guarding the multiplication
+  if (nsec >= UINT64_MAX / tb.denom) return (nsec / tb.numer) * tb.denom;
+  return (nsec * tb.denom) / tb.numer;
+}
+#elif TIME_UNIT_USES_NANOSECONDS
 // x86 currently implements mach time in nanoseconds
 // this is NOT likely to change
 static inline uint64_t
@@ -308,6 +368,19 @@ platform_time(uint64_t nsec) {
 
 static inline dispatch_time_t
 clock_and_value_to_time(int clock, long long deadline) {
+#if defined(SWIFT_LEGACY_IOS5)
+  // Old libdispatch only understands "host time since boot" (mach_absolute_time) and wall time; the
+  // "continuous" (up-or-monotonic) flag is an iOS 10-era addition. Both Swift clocks are read on
+  // such a system from mach_absolute_time (see Clock.cpp), so a deadline is simply "now + (deadline - now)".
+  // When the OS does have clock_gettime the normal path below is used instead.
+  if (&clock_gettime == nullptr) {
+    mach_timebase_info_data_t tb;
+    mach_timebase_info(&tb);
+    uint64_t nowNs = mach_absolute_time() * tb.numer / tb.denom;
+    uint64_t delta = (uint64_t)deadline > nowNs ? (uint64_t)deadline - nowNs : 0;
+    return dispatch_time(DISPATCH_TIME_NOW, (int64_t)delta);
+  }
+#endif
   uint64_t value = platform_time((uint64_t)deadline);
   if (value >= DISPATCH_TIME_MAX_VALUE) {
     return DISPATCH_TIME_FOREVER;

@@ -24,7 +24,7 @@ HOST_SWIFT="$B/host/swift-5.10.1-RELEASE.xctoolchain/usr/bin/swiftc"
 for p in "$CM" "$NINJA" "$S/bin/swift-frontend" "$S/bin/swiftc" "$LIBCXX" "$CRT" "$HOST_SWIFT"; do
   [ -e "$p" ] || { echo "missing: $p" >&2; exit 1; }
 done
-[ ! -d "$O/lib/swift/iphoneos/armv7" ] || { echo "legacy core: present"; exit 0; }
+[ ! -f "$O/lib/swift/iphoneos/armv7/libswift_Concurrency.dylib" ] || { echo "legacy core + _Concurrency: present"; exit 0; }
 
 # Target compiler: the driver with the legacy opt-ins, as an executable path (CMake needs one file).
 W="$B/tools/ios5-native"; mkdir -p "$W"
@@ -60,7 +60,7 @@ mkdir -p "$O"
   -DSWIFT_INCLUDE_TEST_BINARIES=OFF -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_SDK_OVERLAY=ON \
   -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=ON -DSWIFT_INCLUDE_APINOTES=ON \
   -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF \
-  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=OFF -DSWIFT_ENABLE_EXPERIMENTAL_STRING_PROCESSING=OFF \
+  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON -DSWIFT_ENABLE_EXPERIMENTAL_STRING_PROCESSING=OFF \
   -DSWIFT_ENABLE_EXPERIMENTAL_DIFFERENTIABLE_PROGRAMMING=OFF -DSWIFT_ENABLE_EXPERIMENTAL_DISTRIBUTED=OFF \
   -DSWIFT_ENABLE_EXPERIMENTAL_OBSERVATION=OFF -DSWIFT_ENABLE_EXPERIMENTAL_CXX_INTEROP=OFF \
   -DSWIFT_ENABLE_BACKTRACING=OFF \
@@ -70,5 +70,9 @@ mkdir -p "$O"
   -DSWIFT_PATH_TO_STRING_PROCESSING_SOURCE="$B/src/string-processing" \
   -DSWIFT_NATIVE_LLVM_TOOLS_PATH="$L/bin" -DSWIFT_NATIVE_CLANG_TOOLS_PATH="$L/bin" -DSWIFT_NATIVE_SWIFT_TOOLS_PATH="$W"
 /usr/bin/arch -x86_64 "$NINJA" -C "$O" -j"$JOBS" swift-stdlib-iphoneos-armv7
+# Swift Concurrency for the iOS 5.0 floor: the runtime is built from the same sources with the
+# SWIFT_LEGACY_IOS5 switch (see RUNTIME-510-PATCHES.md), not taken from the OS.
+/usr/bin/arch -x86_64 "$NINJA" -C "$O" -j"$JOBS" swift_Concurrency-iphoneos-armv7
+[ -f "$O/lib/swift/iphoneos/armv7/libswift_Concurrency.dylib" ] || { echo "legacy _Concurrency was not produced" >&2; exit 1; }
 [ -f "$O/lib/swift/iphoneos/armv7/libswiftCore.dylib" ] || { echo "legacy core was not produced" >&2; exit 1; }
 echo "legacy iOS 5.0 armv7 core: $O/lib/swift/iphoneos/armv7/libswiftCore.dylib"

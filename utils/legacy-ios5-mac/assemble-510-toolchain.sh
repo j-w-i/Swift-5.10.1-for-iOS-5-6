@@ -160,7 +160,13 @@ try:
     dependencies(frontend, baseline / 'usr/bin/swift-frontend')
     dependencies(driver, baseline / 'usr/bin/swift-driver')
 
-    for name in ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation'):
+    _fat_probe = Path(os.environ['LEGACY_FAT_RUNTIME']) if os.environ.get('LEGACY_FAT_RUNTIME') else None
+    for name in ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation', '_Concurrency'):
+        # _Concurrency exists only in the 5.10 generation: it is built with the rebuilt armv7 core and
+        # merged into the fat runtime, never part of the old 5.1.5 base runtime directory.
+        if name == '_Concurrency':
+            nonempty((_fat_probe / 'libswift_Concurrency.dylib') if _fat_probe else (oldlib / 'libswift_Concurrency.dylib'))
+            continue
         nonempty(oldlib / ('libswift' + name + '.dylib'))
         # ObjectiveC/CoreFoundation import from the real selected SDK (Clang or
         # SDK overlay), not fabricated local Swift modules. Core/Darwin ship
@@ -360,13 +366,15 @@ try:
     # OLD_RUNTIME_DIR now holds the base runtime of the *matching* Swift 5.10
     # generation (Core, Darwin, ObjectiveC, CoreFoundation, Dispatch). Copy only
     # those, so no stale sibling dylib from another compiler generation ships.
-    base_runtime = ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation')
+    base_runtime = ('Core', 'SwiftOnoneSupport', 'Darwin', 'ObjectiveC', 'CoreFoundation', '_Concurrency')
     def pick(fat_name, fallback):
         if fat_dir is not None and (fat_dir / fat_name).is_file():
             return fat_dir / fat_name
         return fallback
     for name in base_runtime:
         source = pick('libswift' + name + '.dylib', oldlib / ('libswift' + name + '.dylib'))
+        if name == '_Concurrency' and not source.is_file():
+            fail('No _Concurrency runtime to ship (LEGACY_FAT_RUNTIME must provide libswift_Concurrency.dylib)')
         nonempty(source)
         replace_copy(source, ios / source.name)
     for name in OVERLAYS:

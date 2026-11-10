@@ -895,6 +895,11 @@ public:
   AvailabilityContext getIntermodulePrespecializedGenericMetadataAvailability();
 
   /// Get the runtime availability of support for concurrency.
+  /// True when the program ships its own Swift runtime and never binds the system's
+  /// (the legacy iOS 5 backport toolchain): availability of declarations that live in the
+  /// embedded runtime modules (Swift, _Concurrency) then says nothing about the OS.
+  bool usesEmbeddedLegacyRuntime() const;
+
   AvailabilityContext getConcurrencyAvailability();
 
   /// Get the runtime availability of the `DiscardingTaskGroup`,
