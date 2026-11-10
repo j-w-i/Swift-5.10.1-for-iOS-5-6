@@ -2065,9 +2065,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     NSMutableArray *animations = [[NSMutableArray alloc] init];
     NSMutableDictionary *newAllVisibleView = [[NSMutableDictionary alloc] init];
-    // Keyed membership replaces the O(n) [newAllVisibleView allKeys] allocation
-    // that used to run once per newly visible attribute.
-    NSMutableSet *newAllVisibleViewKeys = [NSMutableSet set];
+    // Dictionary lookup supplies keyed membership as well as the view, without
+    // allocating an allKeys array or maintaining a second hash table of the keys.
     // The update machinery asks the layout for the same item/visible attributes
     // repeatedly; fetch everything visible once and reuse it.
     NSArray *allNewlyVisibleItems = [_layout layoutAttributesForElementsInRect:self.visibleBoundRects];
@@ -2157,7 +2156,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self pstNotifyWillDisplayView:view forKey:key];
 
                 [newAllVisibleView setObject:view forKey:key];
-                [newAllVisibleViewKeys addObject:key];
                 [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs, @"newLayoutInfos" : finalAttrs}];
             }
         }
@@ -2181,7 +2179,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 startAttrs = view.layoutAttributes;
                 [_allVisibleViewsDict removeObjectForKey:keyBefore];
                 [newAllVisibleView setObject:view forKey:keyAfter];
-                [newAllVisibleViewKeys addObject:keyAfter];
             }
             else {
                 startAttrs = [finalAttrs copy];
@@ -2190,7 +2187,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self addControlledSubview:view];
                 [self pstNotifyWillDisplayView:view forKey:keyAfter];
                 [newAllVisibleView setObject:view forKey:keyAfter];
-                [newAllVisibleViewKeys addObject:keyAfter];
             }
 
             [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs, @"newLayoutInfos" : finalAttrs}];
@@ -2234,7 +2230,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
                 [animations addObject:dic];
                 [newAllVisibleView setObject:view forKey:newKey];
-                [newAllVisibleViewKeys addObject:newKey];
 
             }
         }else if (key.type == PSTCollectionViewItemTypeSupplementaryView) {
@@ -2251,14 +2246,13 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             [animations addObject:dic];
             PSTCollectionViewItemKey *newKey = [key copy];
             [newAllVisibleView setObject:view forKey:newKey];
-            [newAllVisibleViewKeys addObject:newKey];
 
         }
     }
     for (PSTCollectionViewLayoutAttributes *attrs in allNewlyVisibleItems) {
         PSTCollectionViewItemKey *key = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:attrs];
 
-        if (key.type == PSTCollectionViewItemTypeCell && ![newAllVisibleViewKeys containsObject:key]) {
+        if (key.type == PSTCollectionViewItemTypeCell && ![newAllVisibleView objectForKey:key]) {
             PSTCollectionViewLayoutAttributes *startAttrs =
                     [_layout initialLayoutAttributesForAppearingItemAtIndexPath:attrs.indexPath];
 
@@ -2267,7 +2261,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             [self addControlledSubview:view];
             [self pstNotifyWillDisplayView:view forKey:key];
             [newAllVisibleView setObject:view forKey:key];
-            [newAllVisibleViewKeys addObject:key];
 
             [animations addObject:@{@"view" : view, @"previousLayoutInfos" : startAttrs ? startAttrs : attrs, @"newLayoutInfos" : attrs}];
         }
