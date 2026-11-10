@@ -98,4 +98,21 @@ int main(void) { @autoreleasepool {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.4,false);
     visit(cv,data,40,"offscreen reload");
     puts("PASS: offscreen item reload");
+    // Interior target avoids clamping at content boundaries. Its preferred height
+    // differs from the estimate, so check alignment using the resolved frame.
+    for (NSUInteger position=1;position<=4;position*=2) {
+        [cv reloadData];
+        [cv setContentOffset:CGPointZero animated:NO]; [cv layoutIfNeeded];
+        NSIndexPath *target=[NSIndexPath indexPathForItem:20 inSection:0];
+        [cv scrollToItemAtIndexPath:target atScrollPosition:position animated:NO];
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CGRect frame=[layout layoutAttributesForItemAtIndexPath:target].frame;
+        CGFloat expected=position==1 ? CGRectGetMinY(frame) : position==2 ? CGRectGetMidY(frame)-cv.bounds.size.height/2 : CGRectGetMaxY(frame)-cv.bounds.size.height;
+        if (fabs(cv.contentOffset.y-expected)>1.0/UIScreen.mainScreen.scale+0.0001) {
+            fprintf(stderr,"FAIL: alignment position=%lu expected=%g actual=%g\n",(unsigned long)position,expected,cv.contentOffset.y); return 1;
+        }
+    }
+    puts("PASS: single-call top center bottom alignment");
 } return 0; }
