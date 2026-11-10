@@ -252,6 +252,13 @@ set(swift_core_framework_depends)
 set(swift_core_private_link_libraries)
 set(swift_stdlib_compile_flags "${SWIFT_RUNTIME_SWIFT_COMPILE_FLAGS}")
 
+if(SWIFT_LEGACY_OS_SHIMS AND NOT SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING AND SWIFT_PRIMARY_VARIANT_SDK IN_LIST SWIFT_APPLE_PLATFORMS)
+  # Wide legacy slices (iOS 7.0 floor) compile the runtime with SWIFT_LEGACY_IOS5 (pthread mutexes,
+  # plist-based OS version), which needs CoreFoundation; the Swift-side LEGACY_IOS5 source switch
+  # (iOS 5-only string bridging) stays off because these slices run the standard object model.
+  list(APPEND swift_core_framework_depends CoreFoundation)
+endif()
+
 if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING AND SWIFT_PRIMARY_VARIANT_SDK IN_LIST SWIFT_APPLE_PLATFORMS)
   # The legacy runtime reads the OS version with CoreFoundation and the object
   # model comes from Foundation's NSObject; these are linked explicitly rather

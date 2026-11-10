@@ -81,6 +81,10 @@ list(APPEND SWIFT_RUNTIME_CONCURRENCY_C_FLAGS
 if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
   list(APPEND SWIFT_RUNTIME_CONCURRENCY_C_FLAGS
     "-DSWIFT_LEGACY_IOS5_CLASS_MARKING=1" "-DSWIFT_LEGACY_IOS5=1")
+elseif(SWIFT_LEGACY_OS_SHIMS)
+  # armv7s/arm64 legacy slices (iOS 7.0 floor): standard ABI, same run-time-checked OS shims
+  # (the system may be as old as iOS 7: no qos_class_self/vouchers/dispatch_activate/...).
+  list(APPEND SWIFT_RUNTIME_CONCURRENCY_C_FLAGS "-DSWIFT_LEGACY_IOS5=1")
 endif()
 
 add_swift_target_library(swift_Concurrency ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} IS_STDLIB

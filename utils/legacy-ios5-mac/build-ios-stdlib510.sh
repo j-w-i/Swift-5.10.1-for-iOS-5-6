@@ -97,6 +97,10 @@ for ARCH in $ARCHS; do
     HAVE_DYN=0; grep -q 'SWIFT_DYNAMIC_CLASS_IS_SWIFT_MASK' "$O/CMakeCache.txt" && HAVE_DYN=1
     WANT_DYN=0; [ -n "$WIDE_MASK" ] && WANT_DYN=1
     if [ "$HAVE_DYN" != "$WANT_DYN" ]; then echo "stdlib $ARCH: class-bit configuration changed; rebuilding"; rm -rf "$O"; fi
+    # Wide slices must carry the OS-support shims (iOS 7-9 lack os_unfair_lock, QoS, vouchers ...).
+    if [ "$ARCH" != armv7 ] && [ -d "$O" ] && ! grep -q 'SWIFT_LEGACY_OS_SHIMS:BOOL=ON' "$O/CMakeCache.txt" 2>/dev/null; then
+      echo "stdlib $ARCH: built without the legacy OS shims; rebuilding"; rm -rf "$O"
+    fi
   fi
   [ -d "$O/lib/swift/iphoneos/$ARCH" ] && { echo "stdlib $ARCH: present"; continue; }
   echo "== Swift stdlib $ARCH"
@@ -111,7 +115,7 @@ for ARCH in $ARCHS; do
     -DSWIFT_DARWIN_STDLIB_INSTALL_NAME_DIR=@rpath -DSWIFT_DARWIN_STDLIB_PRIVATE_INSTALL_NAME_DIR=@rpath \
     -DSWIFT_SDKS=IOS -DSWIFT_SDK_IOS_PATH="$SDK" -DSWIFT_DARWIN_DEPLOYMENT_VERSION_IOS=7.0 \
     -DSWIFT_DARWIN_SUPPORTED_ARCHS="$ARCH" -DSWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING=OFF \
-    -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON -DSWIFT_ENABLE_EXPERIMENTAL_STRING_PROCESSING=ON \
+    -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON -DSWIFT_LEGACY_OS_SHIMS=ON -DSWIFT_ENABLE_EXPERIMENTAL_STRING_PROCESSING=ON \
     -DSWIFT_ENABLE_EXPERIMENTAL_DIFFERENTIABLE_PROGRAMMING=ON -DSWIFT_ENABLE_EXPERIMENTAL_DISTRIBUTED=ON \
     -DSWIFT_ENABLE_EXPERIMENTAL_OBSERVATION=ON -DSWIFT_ENABLE_EXPERIMENTAL_CXX_INTEROP=ON \
     -DSWIFT_ENABLE_BACKTRACING=ON \

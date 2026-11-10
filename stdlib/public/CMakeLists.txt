@@ -35,6 +35,14 @@ if(SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
        "-DSWIFT_LEGACY_IOS5_CLASS_MARKING=1" "-DSWIFT_LEGACY_IOS5=1")
 endif()
 
+if(SWIFT_LEGACY_OS_SHIMS AND NOT SWIFT_ENABLE_LEGACY_IOS5_CLASS_MARKING)
+  # armv7s/arm64 legacy slices (iOS 7.0 floor): the standard ABI, but the same OS-support paths as the
+  # iOS 5 slice (pthread mutexes instead of os_unfair_lock, no objc_readClassPair, plist-based OS
+  # version, no-voucher / run-time-checked dispatch shims), because those slices also run on systems
+  # that lack the newer facilities (iOS 7-9).
+  list(APPEND SWIFT_RUNTIME_CXX_FLAGS "-DSWIFT_LEGACY_IOS5=1")
+endif()
+
 set(SWIFT_RUNTIME_CORE_CXX_FLAGS "${SWIFT_RUNTIME_CXX_FLAGS}")
 set(SWIFT_RUNTIME_CORE_LINK_FLAGS "${SWIFT_RUNTIME_LINK_FLAGS}")
 
