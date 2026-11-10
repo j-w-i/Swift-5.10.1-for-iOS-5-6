@@ -63,3 +63,10 @@ Scene / trait class references are runtime lookups (`objc_lookUpClass`) only whi
 that ships the class (scene classes < 13, `UITraitCollection` < 8). At or above that deployment the compiler links the SDK's own
 class directly (`OBJC_CLASS_$_UIWindowScene` at 13.0, `OBJC_CLASS_$_UITraitCollection` at 8.0 and 10.0). Before this check the
 trait/scene classes were runtime-only at every deployment — a bug, now fixed.
+
+## Deferred: armv7s
+Decision (user): armv7s work is deferred. armv7s devices run the armv7 slice, so scene/trait support reaches them through armv7.
+Known, not fixed: an armv7s *Swift* app SIGSEGVs at startup on an iPhone 6 (any app, no scene code), in
+`cacheCanonicalSpecializedMetadata` reached from `swift_getCanonicalPrespecializedGenericMetadata` on the first `Dictionary` bridge.
+armv7 and arm64 are unaffected. Lead to try later: build the armv7s stdlib with `SWIFT_STDLIB_ENABLE_PRESPECIALIZATION=OFF`
+(`build-ios-stdlib510.sh`, per-arch setting; the cache is currently ON for all three). Untested.
