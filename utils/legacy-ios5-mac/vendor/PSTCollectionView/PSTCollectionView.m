@@ -2517,9 +2517,13 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     NSMutableArray *newModel = [NSMutableArray array];
     for (NSInteger i = 0; i < [oldCollectionViewData numberOfSections]; i++) {
-        NSMutableArray *sectionArr = [NSMutableArray array];
-        for (NSInteger j = 0; j < [oldCollectionViewData numberOfItemsInSection:i]; j++)
-            [sectionArr addObject:@([oldCollectionViewData globalIndexForItemAtIndexPath:[NSIndexPath indexPathForRow:j inSection:i]])];
+        NSInteger count = [oldCollectionViewData numberOfItemsInSection:i];
+        NSUInteger base = [oldCollectionViewData numberOfItemsBeforeSection:i];
+        NSMutableArray *sectionArr = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+        // Global indexes are contiguous within a section. Avoid constructing an
+        // NSIndexPath and querying the section prefix again for every old item.
+        for (NSInteger j = 0; j < count; j++)
+            [sectionArr addObject:@(base + (NSUInteger)j)];
         [newModel addObject:sectionArr];
     }
 
@@ -2575,8 +2579,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     for (NSUInteger i = 0; i < newModel.count; i++) {
         NSMutableArray *section = [newModel objectAtIndex:i];
+        NSUInteger base = [_collectionViewData numberOfItemsBeforeSection:(NSInteger)i];
         for (NSUInteger j = 0; j < section.count; j++) {
-            NSUInteger newGlobalIndex = [_collectionViewData globalIndexForItemAtIndexPath:[NSIndexPath indexPathForRow:(NSInteger)j inSection:(NSInteger)i]];
+            NSUInteger newGlobalIndex = base + j;
             if ([[section objectAtIndex:j] integerValue] != NSNotFound)
                 [oldToNewMap replaceObjectAtIndex:[[section objectAtIndex:j] unsignedIntegerValue] withObject:@(newGlobalIndex)];
             if (newGlobalIndex != NSNotFound)
