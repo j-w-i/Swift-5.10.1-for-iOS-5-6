@@ -594,7 +594,14 @@ __attribute__((constructor)) static void OAStackViewPatchEntry(void) {
     return;
   }
 
-  Class class = objc_allocateClassPair(OAStackView.class, "UIStackView", 0);
+  // The toolchain facade installs the lazy iOS 5 Auto Layout bridge before
+  // entering OAStackView's initializers. Registering the public class directly
+  // under OAStackView bypassed that first-use bootstrap (the facade's allocator
+  // redirects to UIStackView), so arranged subviews received missing UIView
+  // layout selectors unless some unrelated constraint had initialized it first.
+  // Standalone OAStackView users without the toolchain facade retain its base.
+  Class base = objc_getClass("UICStackView") ?: OAStackView.class;
+  Class class = objc_allocateClassPair(base, "UIStackView", 0);
   if (class) {
     objc_registerClassPair(class);
   }

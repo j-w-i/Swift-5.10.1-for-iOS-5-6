@@ -1,0 +1,20 @@
+Device: iPod touch 3, iOS 5.1.1 (9B206), armv7
+Application: TestingAPIs, UIStackView(arrangedSubviews:) before any other Auto Layout operation
+
+Before fix:
+NSInvalidArgumentException: -[UILabel setTranslatesAutoresizingMaskIntoConstraints:]: unrecognized selector sent to instance
+Symbolicated stack: OAStackView addViewsAsSubviews -> commonInitWithInitalSubviews -> initWithArrangedSubviews
+
+After fix, automated UIControl touchUpInside on the real Run Async Test button:
+t=0 labels=["Starting...", "Run Async Test"] buttonEnabled=false main=true
+t=1 labels=["Step 1/5", "Run Async Test"] buttonEnabled=false main=true
+t=2 labels=["Step 2/5", "Run Async Test"] buttonEnabled=false main=true
+t=3 labels=["Step 3/5", "Run Async Test"] buttonEnabled=false main=true
+t=4 labels=["Step 4/5", "Run Async Test"] buttonEnabled=false main=true
+t=5 labels=["Step 5/5", "Run Async Test"] buttonEnabled=false main=true
+t=6 labels=["Async/Await works!", "Run Async Test"] buttonEnabled=true main=true
+t=7 labels=["Async/Await works!", "Run Async Test"] buttonEnabled=true main=true
+killall -0 TestingAPIs returned 0; no crash report newer than pre-fix 18:18:50.
+
+Temporary test automation and exception logging were removed from the user's AppDelegate after this execution.
+The user's ViewController and async loop were not changed to avoid the crash.

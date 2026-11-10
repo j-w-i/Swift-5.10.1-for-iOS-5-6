@@ -41,3 +41,10 @@ initializer, setter and animation. UIKit system image tables are unavailable bef
 the direct CLI harness is therefore not a valid spinner test. Old UIKit
 can throw with an absurd array capacity when given value 101; the backport maps medium/large to
 gray/whiteLarge only when UIKit lacks its modern dynamic-color capability. Modern UIKit stays native.
+
+`UIKitStackFirstUse.swift` is an app regression where `UIStackView(arrangedSubviews:)` is deliberately
+the first Auto Layout operation. It checks arranged subviews, anchor constraints, button dispatch and
+five main-actor async updates. Creating an unrelated constraint first would hide the original defect.
+`check-stack-first-use-registration.py` also runs the actual Objective-C class-registration/facade
+code with a minimal host mock; its negative control restores the old OA-only parent and must fail.
+The public fallback class must inherit the bootstrap facade, not skip it through allocation redirection.
