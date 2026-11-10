@@ -19,7 +19,11 @@ for mode in native pst; do
     EXTRA=()
     if [[ "$mode" == pst ]]; then EXTRA=(-DTEST_PST=1 "${OBJECTS[@]}"); fi
     xcrun clang "${FLAGS[@]}" "$HERE/self-sizing-updates.m" ${EXTRA[@]+"${EXTRA[@]}"} -framework UIKit -framework QuartzCore -framework CoreGraphics -o "$OUT/$mode"
-    xcrun simctl spawn "$SIM" "$OUT/$mode" > "$OUT/$mode.txt"
+    xcrun simctl spawn "$SIM" "$OUT/$mode" > "$OUT/$mode.txt" 2> "$OUT/$mode.err"
+    if grep -q 'not defined\|InvalidSizes' "$OUT/$mode.err"; then
+        echo "FAIL: $mode emitted undefined flow-layout geometry diagnostics; see $OUT/$mode.err" >&2
+        exit 1
+    fi
     echo "=== $mode"
     cat "$OUT/$mode.txt"
 done

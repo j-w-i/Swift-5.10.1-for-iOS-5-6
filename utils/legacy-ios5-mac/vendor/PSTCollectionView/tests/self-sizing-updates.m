@@ -167,4 +167,36 @@ int main(void) { @autoreleasepool {
         fprintf(stderr,"FAIL: combined top-left alignment\n"); return 1;
     }
     puts("PASS: combined top-left inset alignment");
+    // 200-point cells must fit after the 17/31 horizontal insets too.
+    cv.frame=CGRectMake(0,0,260,200);
+    for (int horizontal=0;horizontal<2;horizontal++) {
+        layout.scrollDirection=horizontal;
+        cv.contentInset=UIEdgeInsetsMake(7,17,11,31);
+        for (int edge=0;edge<2;edge++) {
+            for (NSUInteger alignment=1;alignment<=4;alignment*=2) {
+                [cv reloadData]; [cv layoutIfNeeded];
+                NSInteger item=edge ? data.heights.count-1 : 0;
+                NSIndexPath *target=[NSIndexPath indexPathForItem:item inSection:0];
+                NSUInteger position=horizontal ? alignment<<3 : alignment;
+                [cv scrollToItemAtIndexPath:target atScrollPosition:position animated:NO];
+                [cv setNeedsLayout]; [cv layoutIfNeeded];
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+                [cv setNeedsLayout]; [cv layoutIfNeeded];
+                CGRect frame=[layout layoutAttributesForItemAtIndexPath:target].frame;
+                CGFloat leading=horizontal ? cv.contentInset.left : cv.contentInset.top;
+                CGFloat trailing=horizontal ? cv.contentInset.right : cv.contentInset.bottom;
+                CGFloat viewport=horizontal ? cv.bounds.size.width : cv.bounds.size.height;
+                CGFloat start=horizontal ? CGRectGetMinX(frame) : CGRectGetMinY(frame);
+                CGFloat length=horizontal ? frame.size.width : frame.size.height;
+                CGFloat content=horizontal ? cv.contentSize.width : cv.contentSize.height;
+                CGFloat expected=alignment==1 ? start-leading : alignment==2 ? start+length/2-leading-(viewport-leading-trailing)/2 : start+length-viewport+trailing;
+                expected=MIN(MAX(-leading,content-viewport+trailing),MAX(-leading,expected));
+                CGFloat actual=horizontal ? cv.contentOffset.x : cv.contentOffset.y;
+                if (fabs(actual-expected)>tolerance) {
+                    fprintf(stderr,"FAIL: boundary axis=%d edge=%d position=%lu expected=%g actual=%g\n",horizontal,edge,(unsigned long)position,expected,actual); return 1;
+                }
+            }
+        }
+    }
+    puts("PASS: first last item alignment clamps on both axes");
 } return 0; }
