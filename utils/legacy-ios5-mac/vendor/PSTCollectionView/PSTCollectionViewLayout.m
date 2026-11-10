@@ -92,6 +92,7 @@
 }
 
 - (BOOL)isEqual:(id)other {
+    if (other == self) return YES;
     if ([other isKindOfClass:self.class]) {
         PSTCollectionViewLayoutAttributes *otherLayoutAttributes = (PSTCollectionViewLayoutAttributes *)other;
         if (_elementCategory == otherLayoutAttributes.elementCategory && [_elementKind isEqual:otherLayoutAttributes.elementKind] && [_indexPath isEqual:otherLayoutAttributes.indexPath]) {

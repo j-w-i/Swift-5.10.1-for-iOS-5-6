@@ -14,6 +14,11 @@ static void expect(NSString *name, void (^change)(UICollectionViewLayoutAttribut
     if (actual!=equal || reverse!=equal || (equal && a.hash!=b.hash)) exit(1);
 }
 int main(void) { @autoreleasepool {
+    UICollectionViewLayoutAttributes *empty=[UICollectionViewLayoutAttributes new];
+    UICollectionViewLayoutAttributes *emptyCopy=[empty copy];
+    printf("default self=%d copy=%d\n",[empty isEqual:empty],[empty isEqual:emptyCopy]);
+    if (![empty isEqual:empty] || [empty isEqual:emptyCopy] || [emptyCopy isEqual:empty]) return 1;
+    expect(@"indexPath",^(UICollectionViewLayoutAttributes*a){a.indexPath=[NSIndexPath indexPathForItem:3 inSection:1];},NO);
     expect(@"copy",^(id a){},YES);
     expect(@"frame",^(UICollectionViewLayoutAttributes*a){a.frame=CGRectMake(11,20,80,30);},NO);
     expect(@"size",^(UICollectionViewLayoutAttributes*a){a.size=CGSizeMake(81,30);},NO);
