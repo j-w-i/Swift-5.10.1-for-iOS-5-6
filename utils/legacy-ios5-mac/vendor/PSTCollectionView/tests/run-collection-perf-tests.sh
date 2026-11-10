@@ -107,11 +107,11 @@ reference = doc.get('nativeReference')
 if not reference:
     raise SystemExit(0)
 print(f"\nnative UIKit reference vs PST (reps={reference['reps']}, synchronous mutation + layout, ns; ratio = pst/native):")
-print(f"{'scenario':28} {'native min':>12} {'native med':>12} {'pst min':>12} {'pst med':>12} {'ratio med':>10} {'ratio min':>10}")
+print(f"{'scenario':28} {'native min':>12} {'native med':>12} {'pst min':>12} {'pst med':>12} {'ratio med':>10} {'ratio min':>10} {'paired med':>10}")
 for row in reference['scenarios']:
     native = row['native']
     pst = row['pst']
-    print(f"{row['name']:28} {native['min']:12.0f} {native['median']:12.0f} {pst['min']:12.0f} {pst['median']:12.0f} {row['ratioMedian']:10.2f} {row['ratioMin']:10.2f}")
+    print(f"{row['name']:28} {native['min']:12.0f} {native['median']:12.0f} {pst['min']:12.0f} {pst['median']:12.0f} {row['ratioMedian']:10.2f} {row['ratioMin']:10.2f} {row['pairedRatioMedian']:10.2f}")
 PY2
 
 if [ "$status" -ne 0 ]; then

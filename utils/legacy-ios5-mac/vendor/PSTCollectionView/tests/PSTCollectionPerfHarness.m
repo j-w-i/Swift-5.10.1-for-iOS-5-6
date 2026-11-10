@@ -652,8 +652,32 @@ static NSDictionary *HarnessMeasureEngine(HarnessEngine engine, HarnessTimingCon
 
 static void HarnessAddComparison(NSMutableArray<NSDictionary *> *rows, NSString *name, int reps,
                                  HarnessTimingConfig *config, uint64_t (^operation)(HarnessTimingBundle *)) {
-    NSDictionary *native = HarnessMeasureEngine(HarnessEngineNative, config, reps, operation);
-    NSDictionary *pst = HarnessMeasureEngine(HarnessEnginePST, config, reps, operation);
+    NSMutableArray *nativeSamples = [NSMutableArray arrayWithCapacity:(NSUInteger)reps];
+    NSMutableArray *pstSamples = [NSMutableArray arrayWithCapacity:(NSUInteger)reps];
+    NSMutableArray *pairedRatios = [NSMutableArray arrayWithCapacity:(NSUInteger)reps];
+    NSMutableArray *orders = [NSMutableArray arrayWithCapacity:(NSUInteger)reps];
+    NSDictionary *lastNative = nil, *lastPST = nil;
+    for (int repetition = 0; repetition < reps; repetition++) {
+        // Each pair uses fresh views. Alternate who goes first to avoid always
+        // assigning process warmup/cache/thermal drift to the same engine.
+        BOOL nativeFirst = repetition % 2 == 0;
+        if (nativeFirst) {
+            lastNative = HarnessMeasureEngine(HarnessEngineNative, config, 1, operation);
+            lastPST = HarnessMeasureEngine(HarnessEnginePST, config, 1, operation);
+        } else {
+            lastPST = HarnessMeasureEngine(HarnessEnginePST, config, 1, operation);
+            lastNative = HarnessMeasureEngine(HarnessEngineNative, config, 1, operation);
+        }
+        NSNumber *n = [lastNative[@"ns"] objectAtIndex:0];
+        NSNumber *p = [lastPST[@"ns"] objectAtIndex:0];
+        [nativeSamples addObject:n]; [pstSamples addObject:p];
+        [pairedRatios addObject:@(n.doubleValue > 0 ? p.doubleValue / n.doubleValue : 0)];
+        [orders addObject:nativeFirst ? @"native,pst" : @"pst,native"];
+    }
+    NSMutableDictionary *native = [lastNative mutableCopy];
+    NSMutableDictionary *pst = [lastPST mutableCopy];
+    native[@"ns"] = nativeSamples; native[@"min"] = @(HarnessMin(nativeSamples)); native[@"median"] = @(HarnessMedian(nativeSamples));
+    pst[@"ns"] = pstSamples; pst[@"min"] = @(HarnessMin(pstSamples)); pst[@"median"] = @(HarnessMedian(pstSamples));
     double nativeMedian = [native[@"median"] doubleValue];
     double pstMedian = [pst[@"median"] doubleValue];
     double nativeMin = [native[@"min"] doubleValue];
@@ -663,6 +687,9 @@ static void HarnessAddComparison(NSMutableArray<NSDictionary *> *rows, NSString 
         @"reps" : @(reps),
         @"native" : native,
         @"pst" : pst,
+        @"sampleOrder" : orders,
+        @"pairedRatios" : pairedRatios,
+        @"pairedRatioMedian" : @(HarnessMedian(pairedRatios)),
         @"ratioMedian" : @(nativeMedian > 0 ? pstMedian / nativeMedian : 0),
         @"ratioMin" : @(nativeMin > 0 ? pstMin / nativeMin : 0),
     }];
@@ -831,7 +858,7 @@ int main(int argc, char *argv[]) {
             @"format" : @"pst-collection-perf-v1",
             @"scenarios" : recorder.scenarios,
             @"counters" : counters,
-            @"nativeReference" : @{@"reps" : @9, @"timingScope" : @"synchronous-mutation-and-layout-v2", @"scenarios" : nativeReference},
+            @"nativeReference" : @{@"reps" : @9, @"timingScope" : @"synchronous-mutation-and-layout-v2", @"sampling" : @"alternating-engine-pairs-v1", @"scenarios" : nativeReference},
         };
         NSError *error = nil;
         NSData *data = [NSJSONSerialization dataWithJSONObject:payload
