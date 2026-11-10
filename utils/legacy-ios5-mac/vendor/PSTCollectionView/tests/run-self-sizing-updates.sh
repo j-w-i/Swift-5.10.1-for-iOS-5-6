@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage: bash run-self-sizing-updates.sh BOOTED_SIM_UUID
 # Visible/offscreen mutation sizing gate. Animations disabled; not an animation/performance gate.
-# Offscreen visits retarget scrolling to isolate sizing from pending scroll-position parity.
+# Each offscreen visit makes one nonanimated public scroll call; destination must remain visible.
 set -euo pipefail
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 SRC="$HERE/.."
@@ -24,4 +24,4 @@ for mode in native pst; do
     cat "$OUT/$mode.txt"
 done
 diff -u "$OUT/native.txt" "$OUT/pst.txt"
-echo "PASS: visible/offscreen self-sizing mutation checks agree (scroll retargeting allowed); artifacts: $OUT"
+echo "PASS: visible/offscreen self-sizing mutation checks agree (single-call nonanimated visits); artifacts: $OUT"

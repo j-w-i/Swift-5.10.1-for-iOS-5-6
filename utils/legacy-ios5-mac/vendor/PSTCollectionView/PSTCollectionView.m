@@ -846,6 +846,21 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (layoutAttributes) {
         CGRect targetRect = [self makeRect:layoutAttributes.frame toScrollPosition:scrollPosition];
         [self scrollRectToVisible:targetRect animated:animated];
+        if (!animated && [_layout isKindOfClass:[PSTCollectionViewFlowLayout class]] &&
+            [(PSTCollectionViewFlowLayout *)_layout pstUsesSelfSizing]) {
+            // The first offset uses estimates. Measuring the newly visible cells can
+            // shift the requested item's frame past that viewport; settle and retarget
+            // the same item, without requiring the caller to issue another scroll.
+            for (NSUInteger attempt = 0; attempt < 6; attempt++) {
+                [self layoutSubviews];
+                PSTCollectionViewLayoutAttributes *resolved = [_layout layoutAttributesForItemAtIndexPath:indexPath];
+                if (!resolved) break;
+                CGRect resolvedRect = [self makeRect:resolved.frame toScrollPosition:scrollPosition];
+                CGPoint previousOffset = self.contentOffset;
+                [self scrollRectToVisible:resolvedRect animated:NO];
+                if (CGPointEqualToPoint(previousOffset, self.contentOffset)) break;
+            }
+        }
     }
 }
 

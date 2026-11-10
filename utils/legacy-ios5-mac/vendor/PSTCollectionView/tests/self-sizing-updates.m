@@ -41,13 +41,10 @@ static void check(UICollectionView *cv, UpdateData *data, const char *stage) {
 }
 static void visit(UICollectionView *cv, UpdateData *data, NSInteger item, const char *stage) {
     NSIndexPath *path=[NSIndexPath indexPathForItem:item inSection:0];
-    // Measuring earlier items can move the destination. Re-target after each pass
-    // rather than assuming one estimated scroll will leave the item on screen.
-    for (int attempt=0;attempt<4;attempt++) {
-        [cv scrollToItemAtIndexPath:path atScrollPosition:0 animated:NO];
-        [cv setNeedsLayout]; [cv layoutIfNeeded];
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
-    }
+    // One public call must keep its destination visible as estimates are measured.
+    [cv scrollToItemAtIndexPath:path atScrollPosition:0 animated:NO];
+    [cv setNeedsLayout]; [cv layoutIfNeeded];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
     [cv setNeedsLayout]; [cv layoutIfNeeded];
     UpdateCell *cell=(UpdateCell *)[cv cellForItemAtIndexPath:path];
     CGSize size=[cv.collectionViewLayout layoutAttributesForItemAtIndexPath:path].size;
