@@ -191,3 +191,16 @@ linker changed the target to iOS 7, and produced crashing executables. Relinking
 with `-L /Users/jwalr/Developer/Legacy-Build-Inputs` supplied the existing startup
 object and resolved the probe startup failure. Session artifacts:
 `/tmp/pst-ipod3-sizing.EhijAB` (not durable repository artifacts).
+
+### Round 47: iOS 5 attribute and prefetch lifecycle checks
+
+Using the same current armv7 PST objects and legacy startup object, additional
+command-line tests passed on iPod touch 3 / iOS 5.1.1: copy/equality symmetry and
+all seven geometry/presentation inequality cases; disabling prefetch cancels
+outstanding paths once despite reentrancy; replacing the source retains paths
+and cancellation reaches the current source. A new numeric affine-frame test
+passes on both native iOS 27 simulator and iOS 5 PST: identity, scale, frame
+assignment while scaled, reset, rotation, translation, and translated-center
+assignment, each also checking copy geometry. These isolate attribute/setter
+behaviour, not app-driven prefetch scheduling or frame delivery. Session build
+artifacts: `/tmp/pst-ipod3-lifecycle.A29JW1` (temporary, not durable evidence).
