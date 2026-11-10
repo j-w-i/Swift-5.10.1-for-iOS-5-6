@@ -367,8 +367,6 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (BOOL)pstUsesSelfSizing {
-    id delegate = self.collectionView.delegate;
-    if ([delegate respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)]) return NO;
     return _estimatedItemSize.width > 0 && _estimatedItemSize.height > 0;
 }
 
@@ -381,6 +379,15 @@ static char kPSTCachedItemRectsKey;
 - (CGSize)pstSizeForSelfSizingItemAtIndexPath:(NSIndexPath *)indexPath {
     NSValue *measured = [_pstMeasuredItemSizes objectForKey:indexPath];
     if (measured) return [measured CGSizeValue];
+    id<PSTCollectionViewDelegateFlowLayout> delegate = (id)self.collectionView.delegate;
+    if ([delegate respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)]) {
+        // Native flow layout treats the app's size as the initial proposal, not
+        // as an opt-out from preferredLayoutAttributesFitting when estimates exist.
+        CGSize seed = [delegate collectionView:self.collectionView layout:self sizeForItemAtIndexPath:indexPath];
+        if (!_pstMeasuredItemSizes) _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
+        [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:seed] forKey:indexPath];
+        return seed;
+    }
     // automaticSize is a sentinel, not a geometric size. Native UIKit proposes 50x50
     // on both axes, independently of itemSize; retain the sentinel in the public getter.
     if (CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)))
@@ -392,10 +399,8 @@ static char kPSTCachedItemRectsKey;
 /// (the layout is then invalidated and rebuilt with it). A size equal to the laid out one is marked
 /// stable so the cell is not measured again.
 - (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath {
-    if (!_pstMeasuredItemSizes) {
-        _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
-        _pstStableMeasuredIndexPaths = [NSMutableSet set];
-    }
+    if (!_pstMeasuredItemSizes) _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
+    if (!_pstStableMeasuredIndexPaths) _pstStableMeasuredIndexPaths = [NSMutableSet set];
     CGSize current = [self pstSizeForSelfSizingItemAtIndexPath:indexPath];
     if (CGSizeEqualToSize(size, current)) {
         [_pstStableMeasuredIndexPaths addObject:indexPath];
