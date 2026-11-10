@@ -351,8 +351,39 @@ static void UICAddIfMissing(Class target, SEL targetSelector, Class template, SE
     class_addMethod(target, targetSelector, method_getImplementation(m), method_getTypeEncoding(m));
 }
 
+/// Apple's class on iOS 8..12 lacks the traits added later (style 12, contrast/level/weight 13, active
+/// appearance 14). Add the accessors it is missing as "unspecified" so code written against the newer
+/// SDK reads defined values instead of raising unrecognized selector. Strictly additive.
+static NSInteger UICUnspecifiedMinusOne(id self, SEL _cmd) { return -1; }
+static NSInteger UICUnspecifiedZero(id self, SEL _cmd) { return 0; }
+static id UICFactoryReturningEmpty(id self, SEL _cmd, NSInteger value) {
+    // A trait this OS cannot carry: the collection is returned unspecified rather than raising.
+    return [[self alloc] init];
+}
+static void UICExtendNativeTraitCollection(Class cls) {
+    struct { const char *getter; IMP imp; } missing[] = {
+        { "userInterfaceStyle", (IMP)UICUnspecifiedZero },
+        { "accessibilityContrast", (IMP)UICUnspecifiedMinusOne },
+        { "userInterfaceLevel", (IMP)UICUnspecifiedMinusOne },
+        { "legibilityWeight", (IMP)UICUnspecifiedMinusOne },
+        { "activeAppearance", (IMP)UICUnspecifiedMinusOne },
+    };
+    for (size_t i = 0; i < sizeof(missing) / sizeof(missing[0]); i++) {
+        SEL sel = sel_registerName(missing[i].getter);
+        if (!class_getInstanceMethod(cls, sel)) class_addMethod(cls, sel, missing[i].imp, "q@:");
+    }
+    Class meta = object_getClass(cls);
+    const char *factories[] = { "traitCollectionWithUserInterfaceStyle:", "traitCollectionWithAccessibilityContrast:",
+        "traitCollectionWithUserInterfaceLevel:", "traitCollectionWithLegibilityWeight:", "traitCollectionWithActiveAppearance:" };
+    for (size_t i = 0; i < sizeof(factories) / sizeof(factories[0]); i++) {
+        SEL sel = sel_registerName(factories[i]);
+        if (!class_getInstanceMethod(meta, sel)) class_addMethod(meta, sel, (IMP)UICFactoryReturningEmpty, "@@:q");
+    }
+}
+
 void UICInstallTraitCollection(void) {
-    if (objc_getClass("UITraitCollection")) return;      // iOS 8+: Apple's implementation is used as-is.
+    Class native = objc_getClass("UITraitCollection");
+    if (native) { UICExtendNativeTraitCollection(native); return; }   // iOS 8+: Apple's implementation, extended only where it lacks newer accessors.
 
     Class created = objc_allocateClassPair([NSObject class], "UITraitCollection", 0);
     if (!created) return;

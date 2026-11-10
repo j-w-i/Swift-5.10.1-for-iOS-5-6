@@ -39,4 +39,9 @@ Registered only when UIKit lacks the class (iOS < 8). Oracle: iOS 27 simulator.
   `traitCollectionDidChange:` on rotation (controller + view).
 * Not replicated: `currentTraitCollection`/`performAsCurrentTraitCollection:`, dynamic appearance, image configuration,
   `traitCollectionWithTraits:`/`ByModifyingTraits:`, and Apple's private traits (image dynamic range, HDR headroom, scene capture).
-* Not run on: iPhone 6, armv7s. Screen values come from the device (scale 1, sRGB on the iPod) so they differ from the simulator's.
+* iPhone 6 (iOS 10.3.3): Apple's real class is used. It lacks the newer accessors (`userInterfaceStyle`, `accessibilityContrast`,
+  `userInterfaceLevel`, `legibilityWeight`, `activeAppearance`), which the runtime adds as "unspecified"; without that, reading them
+  from a binary built against the newer SDK raised unrecognized selector and aborted the app at launch (fixed, verified). Merge,
+  containment, equality, coding and override behaviour match; description text is iOS 10's own format, and a detached view controller
+  reports empty traits there where iOS 27 reports screen traits.
+* Not run on armv7s. Screen values come from the device (scale 1, sRGB on the iPod), so they differ from the simulator's.
