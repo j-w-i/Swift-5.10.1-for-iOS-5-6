@@ -125,3 +125,30 @@ not a confidence bound, a hardware result, or equality with native UIKit.
 Native/PST batch parity remains unfinished. Raw samples are retained in the
 local session evidence directory `/tmp/cv-ab-batch.rIEbZ0`; this temporary path
 is not a durable repository artifact.
+
+### Round 33: same-device iPhone 6 CPU baseline
+
+Current PST Objective-C sources and the native-reference harness were compiled
+with Xcode 13.4.1 clang, `-O2`, arm64, deployment 10.0, and run as mobile on the
+connected iPhone 6 (iOS 10.3.3). Both PST and native UIKit execute in the same
+binary. Three launches each used nine alternating native/PST pairs per workload.
+Median paired PST/native ratios across launches:
+
+| Workload | Ratio | Launch range |
+| --- | ---: | ---: |
+| Cold 200 items | 1.02 | 1.01–1.02 |
+| Idle ×8 | 0.75 | 0.74–0.78 |
+| Scroll ×10 | 1.29 | 1.27–1.29 |
+| Reload | 1.53 | 1.53–1.54 |
+| Batch insert/delete | 0.70 | 0.69–0.70 |
+| Item-size change | 1.79 | 1.73–1.79 |
+| Bounds change | 0.94 | 0.93–0.94 |
+| Four-section cold | 1.05 | 1.03–1.06 |
+| Four-section scroll ×6 | 1.08 | 1.05–1.09 |
+
+This is a command-line UIKit synchronous CPU microbenchmark, not a visible
+UIApplication frame-delivery measurement. It proves neither smoothness nor iOS 6
+performance parity. It does establish that simulator advantages do not transfer
+to device scrolling/reload: those real-device gaps remain to be closed. Raw
+session outputs were retained under `/tmp/cv-phone-perf.kMMIVt`. The required
+iPod touch 5 iOS 6 baseline remains pending while that device is absent.
