@@ -5594,12 +5594,17 @@ namespace {
            name.str() == "NSLayoutConstraint" &&
            result->getParentModule()->getName().str() == "UIKit") ||
           // Scene classes: every legacy tier below iOS 13 resolves them by name.
+          // The class is only runtime-resolved while the deployment target predates the
+          // OS that ships it; at or above that OS the SDK's own class is linked directly.
           (usesLegacyUIKitBackportDeclarations(Impl.SwiftContext) &&
            isLegacySceneRuntimeClass(name.str()) &&
+           legacyDeploymentMajor(Impl.SwiftContext) <
+               (name.str() == "UITraitCollection" ? 8u : 13u) &&
            result->getParentModule()->getName().str() == "UIKit") ||
           // NSUserActivity (iOS 8) is supplied by the scene runtime below iOS 8.
           (usesLegacyUIKitBackportDeclarations(Impl.SwiftContext) &&
            name.str() == "NSUserActivity" &&
+           legacyDeploymentMajor(Impl.SwiftContext) < 8 &&
            result->getParentModule()->getName().str() == "Foundation")) {
         // The iOS 5 Auto Layout runtime supplies this missing ObjC class before
         // first use. Resolve it by name rather than emitting an unavailable

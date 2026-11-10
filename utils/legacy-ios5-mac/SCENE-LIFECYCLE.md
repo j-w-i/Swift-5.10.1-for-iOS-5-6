@@ -45,3 +45,9 @@ Registered only when UIKit lacks the class (iOS < 8). Oracle: iOS 27 simulator.
   containment, equality, coding and override behaviour match; description text is iOS 10's own format, and a detached view controller
   reports empty traits there where iOS 27 reports screen traits.
 * Not run on armv7s. Screen values come from the device (scale 1, sRGB on the iPod), so they differ from the simulator's.
+
+## Compile-time drop-out (verified from emitted IR)
+Scene / trait class references are runtime lookups (`objc_lookUpClass`) only while the deployment target predates the OS
+that ships the class (scene classes < 13, `UITraitCollection` < 8). At or above that deployment the compiler links the SDK's own
+class directly (`OBJC_CLASS_$_UIWindowScene` at 13.0, `OBJC_CLASS_$_UITraitCollection` at 8.0 and 10.0). Before this check the
+trait/scene classes were runtime-only at every deployment — a bug, now fixed.
