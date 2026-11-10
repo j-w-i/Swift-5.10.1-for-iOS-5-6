@@ -152,3 +152,14 @@ performance parity. It does establish that simulator advantages do not transfer
 to device scrolling/reload: those real-device gaps remain to be closed. Raw
 session outputs were retained under `/tmp/cv-phone-perf.kMMIVt`. The required
 iPod touch 5 iOS 6 baseline remains pending while that device is absent.
+
+### Round 35: reload retirement change hardware A/B
+
+Compared the round-33 iPhone benchmark binary with the same harness rebuilt after
+`4293517a` (detach the retirement dictionary instead of copy-and-clear). Six
+before/after launch pairs alternated order on the same iPhone 6. The after/before
+PST reload ratios were 0.992, 0.984, 1.015, 0.982, 1.017, and 0.988; median 0.990,
+with improvement in 4/6 pairs. This mixed roughly one-percent result does **not**
+establish a meaningful speedup. The structural allocation reduction is retained,
+but the native/PST reload gap is not closed. Session samples were retained under
+`/tmp/cv-phone-reload-ab.m8Q1Jn`; these temporary files are not durable artifacts.
