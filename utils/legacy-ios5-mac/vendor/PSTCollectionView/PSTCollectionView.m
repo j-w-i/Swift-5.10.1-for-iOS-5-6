@@ -2162,18 +2162,22 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }
     }
 
+    PSTCollectionViewData *oldModel = [_update objectForKey:@"oldModel"];
+    PSTCollectionViewData *newModel = [_update objectForKey:@"newModel"];
+    NSArray *oldToNewIndexMap = [_update objectForKey:@"oldToNewIndexMap"];
     for (PSTCollectionViewItemKey *key in [_allVisibleViewsDict keyEnumerator]) {
         PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:key];
 
         if (key.type == PSTCollectionViewItemTypeCell) {
-            NSUInteger oldGlobalIndex = [[_update objectForKey:@"oldModel"] globalIndexForItemAtIndexPath:key.indexPath];
-            NSArray *oldToNewIndexMap = [_update objectForKey:@"oldToNewIndexMap"];
+            NSUInteger oldGlobalIndex = [oldModel globalIndexForItemAtIndexPath:key.indexPath];
             NSUInteger newGlobalIndex = NSNotFound;
             if (NSNotFound != oldGlobalIndex && oldGlobalIndex < oldToNewIndexMap.count) {
                 newGlobalIndex = [[oldToNewIndexMap objectAtIndex:oldGlobalIndex] unsignedIntegerValue];
             }
-            NSIndexPath *newIndexPath = newGlobalIndex == NSNotFound ? nil : [[_update objectForKey:@"newModel"] indexPathForItemAtGlobalIndex:(int)newGlobalIndex];
-            NSIndexPath *oldIndexPath = oldGlobalIndex == NSNotFound ? nil : [[_update objectForKey:@"oldModel"] indexPathForItemAtGlobalIndex:(int)oldGlobalIndex];
+            NSIndexPath *newIndexPath = newGlobalIndex == NSNotFound ? nil : [newModel indexPathForItemAtGlobalIndex:(int)newGlobalIndex];
+            // The visible dictionary key already is the old index path. Avoid a
+            // global-index round trip (prefix search plus NSIndexPath creation).
+            NSIndexPath *oldIndexPath = oldGlobalIndex == NSNotFound ? nil : key.indexPath;
 
             if (newIndexPath) {
                 PSTCollectionViewLayoutAttributes *startAttrs = nil;
