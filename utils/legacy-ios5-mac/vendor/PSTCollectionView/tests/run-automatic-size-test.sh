@@ -1,6 +1,7 @@
 #!/bin/bash
 # Usage: bash run-automatic-size-test.sh BOOTED_SIM_UUID
-# Checks sentinel/proposal/cell sizes; prints remaining native/PST geometry differences.
+# Checks sentinel/proposal/cell sizes and bounds the explicitly recorded geometry gaps.
+# Unexpected geometry changes fail; known gaps still mean this is NOT exact parity.
 set -euo pipefail
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 SRC="$HERE/.."
@@ -21,9 +22,6 @@ for mode in native pst; do
     xcrun simctl spawn "$SIM" "$OUT/$mode" > "$OUT/$mode.txt"
 done
 echo 'PASS: sentinel preserved; initial proposal 50x50 and preferred cell sizes 80x30 on both axes'
-if diff -u "$OUT/native.txt" "$OUT/pst.txt"; then
-    echo 'PASS: exact geometry parity'
-else
-    echo 'KNOWN GAPS: sole-item centering/vertical content width and item-position rounding differ (not an exact parity pass)'
-fi
+SCALE=$(xcrun simctl spawn "$SIM" "$OUT/native" --scale)
+python3 "$HERE/check-automatic-size.py" "$OUT/native.txt" "$OUT/pst.txt" "$SCALE"
 echo "Artifacts: $OUT"

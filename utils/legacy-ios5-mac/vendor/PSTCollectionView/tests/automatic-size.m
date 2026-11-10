@@ -26,7 +26,8 @@ static NSInteger itemCount = 2;
     return [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:p];
 }
 @end
-int main(void) { @autoreleasepool {
+int main(int argc, char **argv) { @autoreleasepool {
+ if (argc == 2 && strcmp(argv[1], "--scale") == 0) { printf("%g\n", UIScreen.mainScreen.scale); return 0; }
  for (itemCount=1;itemCount<=3;itemCount++) {
  for (int horizontal=0;horizontal<2;horizontal++) {
     firstProposal=NO;
