@@ -711,8 +711,11 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     [self invalidateLayout];
     // Retire every visible view the way UIKit does: remove it, tell the delegate it stopped being
     // displayed, and return it to its reuse queue (so the next pass dequeues instead of allocating).
-    NSDictionary *retiring = [_allVisibleViewsDict copy];
-    [_allVisibleViewsDict removeAllObjects];
+    // Detach the old dictionary before callbacks. Its entries are already the
+    // retirement snapshot; copying them and then clearing the original doubles
+    // the key/value retain-and-release work on every reload.
+    NSDictionary *retiring = _allVisibleViewsDict;
+    _allVisibleViewsDict = [NSMutableDictionary new];
     [retiring enumerateKeysAndObjectsUsingBlock:^(PSTCollectionViewItemKey *key, id obj, BOOL *stop) {
         if (![obj isKindOfClass:UIView.class]) return;
         PSTCollectionReusableView *view = obj;
