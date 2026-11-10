@@ -207,6 +207,18 @@ static std::string legacyCollectionHeader(StringRef text, bool backportFacades,
          name == "NSUnderlineStyleAttributeName"))
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
           " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
+    // Scene-lifecycle string constants: values are identical to UIKit's own, but
+    // the symbols do not exist before iOS 13, so they bind to the runtime copy.
+    if (backportFacades && deploymentMajor < 13 && i && spelling(tokens[i - 1]) == "const" &&
+        llvm::StringSwitch<bool>(name)
+            .Cases("UISceneWillConnectNotification", "UISceneDidDisconnectNotification", true)
+            .Cases("UISceneDidActivateNotification", "UISceneWillDeactivateNotification", true)
+            .Cases("UISceneWillEnterForegroundNotification", "UISceneDidEnterBackgroundNotification", true)
+            .Cases("UIWindowSceneSessionRoleApplication", "UIWindowSceneSessionRoleExternalDisplay", true)
+            .Case("UISceneErrorDomain", true)
+            .Default(false))
+      edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
+          " __asm__(\"_SwiftLegacy" + name.str() + "\")"});
     if (backportFacades && name == "NSDirectionalEdgeInsetsZero" && i &&
         spelling(tokens[i - 1]) == "NSDirectionalEdgeInsets")
       edits.push_back({tokens[i].getLocation().getRawEncoding() - 1 + name.size(),
@@ -758,7 +770,8 @@ static void getLegacyCollectionFileMapping(
                           "UICollectionViewController.h", "UICollectionViewUpdateItem.h",
                           "UILayoutGuide.h", "NSLayoutAnchor.h", "UIRefreshControl.h",
                           "UIStackView.h", "UICollectionViewCompositionalLayout.h",
-                          "UIGeometry.h", "UIView.h", "NSAttributedString.h"}) {
+                          "UIGeometry.h", "UIView.h", "NSAttributedString.h",
+                          "UIScene.h", "UIWindowScene.h", "UISceneDefinitions.h"}) {
       Path path(headers);
       llvm::sys::path::append(path, file);
       if (auto source = vfs->getBufferForFile(path))

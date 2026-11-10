@@ -139,7 +139,37 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
       .Cases("NSDirectionalRectEdge", "NSRectAlignment", 13)
       .Case("NSDirectionalEdgeInsetsZero", 13)
       .Cases("NSDirectionalEdgeInsetsMake", "NSDirectionalEdgeInsetsEqualToDirectionalEdgeInsets", 13)
+      // UIScene lifecycle (iOS 13 contract): registered by the backports
+      // runtime only while UIKit lacks the class. Later-introduced members
+      // (iOS 14+ activation/geometry additions) keep their native availability.
+      .Cases("UIScene", "UIWindowScene", "UISceneSession", "UISceneConfiguration", 13)
+      .Cases("UISceneConnectionOptions", "UIOpenURLContext", "UISceneOpenURLOptions", 13)
+      .Cases("UISceneActivationConditions", "UISceneDelegate", "UIWindowSceneDelegate", 13)
+      .Cases("UISceneActivationState", "UISceneSessionRole", "UIWindowSceneDismissalAnimation", 13)
+      .Cases("UISceneSizeRestrictions", "UIWindowSceneDestructionRequestOptions", 13)
+      .Case("UIStatusBarManager", 13)
+      .Cases("UISceneErrorCode", "UISceneErrorDomain", 15)
+      .Cases("UISceneDestructionRequestOptions", "UISceneActivationRequestOptions", 13)
+      .Cases("UIWindowSceneActivationRequestOptions", "UIWindowSceneActivationConfiguration", 13)
+      .Cases("UISceneWillConnectNotification", "UISceneDidDisconnectNotification", 13)
+      .Cases("UISceneDidActivateNotification", "UISceneWillDeactivateNotification", 13)
+      .Cases("UISceneWillEnterForegroundNotification", "UISceneDidEnterBackgroundNotification", 13)
+      .Cases("UIWindowSceneSessionRoleApplication", "UIWindowSceneSessionRoleExternalDisplay", 13)
       .Default(0);
+}
+
+/// UIScene-family classes supplied by the backports runtime below iOS 13. They
+/// are resolved by name at run time: an OBJC_CLASS_$ reference would not bind on
+/// an OS that lacks them, and on iOS 13+ the name resolves to Apple's class.
+static bool isLegacySceneRuntimeClass(StringRef name) {
+  return llvm::StringSwitch<bool>(name)
+      .Cases("UIScene", "UIWindowScene", "UISceneSession", "UISceneConfiguration", true)
+      .Cases("UISceneConnectionOptions", "UIOpenURLContext", "UISceneOpenURLOptions", true)
+      .Cases("UISceneActivationConditions", "UISceneSizeRestrictions", true)
+      .Cases("UISceneDestructionRequestOptions", "UIWindowSceneDestructionRequestOptions", true)
+      .Cases("UISceneActivationRequestOptions", "UIWindowSceneActivationRequestOptions", true)
+      .Cases("UIWindowSceneActivationConfiguration", "UIStatusBarManager", true)
+      .Default(false);
 }
 
 static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
@@ -150,6 +180,8 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
     // The VFS binds this real UIKit global to the SDK-owned private definition.
     if (variable->getName() == "UIViewNoIntrinsicMetric")
       return 6;
+    if (variable->getName() == "UISceneErrorDomain")
+      return 15;
     // UIKit text-attribute names are the CoreText keys the runtime already
     // exports under their own string values; only the iOS 6 symbols are missing.
     if (llvm::StringSwitch<bool>(variable->getName())
@@ -236,6 +268,29 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
           // iOS 11 safe-area guide: the backport returns the target-appropriate
           // guide (backport class below 9, Apple's UILayoutGuide at 9..10).
           .Case("safeAreaLayoutGuide", 11).Default(0);
+    // UIScene lifecycle members added to existing classes/protocols (iOS 13).
+    if ((owner == "UIScene" && (member == "subtitle" || member == "setSubtitle")) ||
+        (owner == "UIWindowScene" &&
+         (member == "keyWindow" || member == "activityItemsConfigurationSource" ||
+          member == "setActivityItemsConfigurationSource")))
+      return 15;   // iOS 15 additions the scene runtime implements
+    if (owner == "UIApplication")
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("connectedScenes", "openSessions", "supportsMultipleScenes", 13)
+          .Cases("requestSceneSessionActivation", "requestSceneSessionDestruction", 13)
+          .Case("requestSceneSessionRefresh", 13).Default(0);
+    if (owner == "UIWindow")
+      return (member == "initWithWindowScene" || member == "windowScene" ||
+              member == "setWindowScene") ? 13 : 0;
+    if (owner == "UIApplicationDelegate") {
+      if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl)) {
+        std::string full = method->getSelector().getAsString();
+        if (full == "application:configurationForConnectingSceneSession:options:" ||
+            full == "application:didDiscardSceneSessions:")
+          return 13;
+      }
+      return 0;
+    }
     if (owner == "UIActivityViewController")
       return llvm::StringSwitch<unsigned>(member)
           .Case("initWithActivityItems", 6)
@@ -295,6 +350,7 @@ static unsigned legacyFoundationFamilyCeiling(StringRef name) {
   return llvm::StringSwitch<unsigned>(name)
       .Case("NSURLComponents", 8)
       .Case("NSURLQueryItem", 8)
+      .Case("NSUserActivity", 8)
       .Cases("NSISO8601DateFormatter", "NSISO8601DateFormatOptions", 10)
       .Cases("NSURLSession", "NSURLSessionConfiguration", "NSURLSessionTask", 7)
       .Cases("NSURLSessionDataTask", "NSURLSessionUploadTask", "NSURLSessionDownloadTask", 7)
@@ -382,6 +438,15 @@ static unsigned legacyFoundationDeclarationCeiling(const clang::Decl *decl) {
       return llvm::StringSwitch<unsigned>(member)
           .Cases("init", "stringFromDate:", "dateFromString:", 10)
           .Case("stringFromDate:timeZone:formatOptions:", 10).Default(0);
+    }
+    if (owner == "NSUserActivity") {
+      // The iOS 8 core: type, title, user info, web page, delegate, currency and
+      // invalidation. Handoff transport / search indexing members stay unavailable.
+      if (property({"activityType", "title", "userInfo", "needsSave", "webpageURL",
+                    "supportsContinuationStreams", "delegate"})) return 8;
+      return llvm::StringSwitch<unsigned>(member)
+          .Cases("initWithActivityType:", "addUserInfoEntriesFromDictionary:", 8)
+          .Cases("becomeCurrent", "invalidate", 8).Default(0);
     }
     if (owner == "NSTimer")
       return llvm::StringSwitch<unsigned>(member)
@@ -5496,7 +5561,15 @@ namespace {
            Impl.SwiftContext.LangOpts.Target.isiOS() &&
            Impl.SwiftContext.LangOpts.Target.isOSVersionLT(6) &&
            name.str() == "NSLayoutConstraint" &&
-           result->getParentModule()->getName().str() == "UIKit")) {
+           result->getParentModule()->getName().str() == "UIKit") ||
+          // Scene classes: every legacy tier below iOS 13 resolves them by name.
+          (usesLegacyUIKitBackportDeclarations(Impl.SwiftContext) &&
+           isLegacySceneRuntimeClass(name.str()) &&
+           result->getParentModule()->getName().str() == "UIKit") ||
+          // NSUserActivity (iOS 8) is supplied by the scene runtime below iOS 8.
+          (usesLegacyUIKitBackportDeclarations(Impl.SwiftContext) &&
+           name.str() == "NSUserActivity" &&
+           result->getParentModule()->getName().str() == "Foundation")) {
         // The iOS 5 Auto Layout runtime supplies this missing ObjC class before
         // first use. Resolve it by name rather than emitting an unavailable
         // OBJC_CLASS_$_NSLayoutConstraint reference into an iOS 5 executable.
