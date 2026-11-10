@@ -10,3 +10,6 @@ links the toolchain's own `libswift_Concurrency.dylib`, ships it over the USB br
 
 The test must drain the main queue with `CFRunLoopRun()` (an app's UIApplication run loop does this);
 `dispatchMain()` is not equivalent on iOS 5 for `@MainActor` work.
+* `ConcurrencyAsyncSequences.swift` – 12 checks: custom `AsyncSequence`, `map`/`filter`/`prefix`/`dropFirst`/
+  `reduce`/`contains`/`first(where:)`, `AsyncStream` buffering policies and `makeStream`, `AsyncThrowingStream`,
+  termination, `withTaskCancellationHandler`, task priority, 2000 child tasks, `cancelAll`.
