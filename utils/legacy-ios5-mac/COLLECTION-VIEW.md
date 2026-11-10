@@ -83,6 +83,10 @@ iOS 5 device and on iOS 6 before claiming runtime qualification; the profile's
 | iPod touch 5, iOS 6.1.3 | Apple's UICollectionView + runtime hooks | same |
 | iPhone 6, iOS 10.3.3 | Apple's native implementation (hooks inactive) | counts and sizes match the iOS 27 simulator within font-metric differences; native prefetch fired 8 batches and 1 cancel |
 
-Known unresolved: an arm64 app built with a deployment target of 10.0 aborted at launch on the iPhone 6 inside
-libswiftFoundation's NSDictionary bridge (`cacheCanonicalSpecializedMetadata`), the same stack as the armv7s
-startup crash recorded in SCENE-LIFECYCLE.md. The deployment-5.0 fat build's arm64 slice runs.
+Resolved (round 8): an arm64-only app at deployment 10.0 aborted at launch on the iPhone 6 inside libswiftFoundation's
+NSDictionary bridge (`cacheCanonicalSpecializedMetadata`). Cause: with no armv7 slice requested the Kit falls back to the
+modern retarget route, which embeds the stock Swift 5.10.1 runtime (environment `5.10.1.xctoolchain`, `__text` 0x3637a0) instead
+of the source-built stdlib (`out/ios-stdlib`, `__text` 0x364284). The stock runtime crashes on iOS 10; the source-built one does
+not. The same app built for armv7+arm64 at deployment 10 uses the native legacy route and passes a ten-step Foundation bridge
+check on the phone. So this is a routing limit for arm64-only builds, not a collection-view or stdlib-prespecialization bug,
+and it is separate from the armv7s startup crash in SCENE-LIFECYCLE.md (that one is in the source-built armv7s slice).
