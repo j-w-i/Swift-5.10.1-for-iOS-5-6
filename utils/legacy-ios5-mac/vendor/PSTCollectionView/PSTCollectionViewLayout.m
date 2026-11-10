@@ -95,7 +95,11 @@
     if ([other isKindOfClass:self.class]) {
         PSTCollectionViewLayoutAttributes *otherLayoutAttributes = (PSTCollectionViewLayoutAttributes *)other;
         if (_elementCategory == otherLayoutAttributes.elementCategory && [_elementKind isEqual:otherLayoutAttributes.elementKind] && [_indexPath isEqual:otherLayoutAttributes.indexPath]) {
-            return YES;
+            return CGSizeEqualToSize(_size, otherLayoutAttributes.size) &&
+                CGPointEqualToPoint(_center, otherLayoutAttributes.center) &&
+                CATransform3DEqualToTransform(_transform3D, otherLayoutAttributes.transform3D) &&
+                _alpha == otherLayoutAttributes.alpha && _zIndex == otherLayoutAttributes.zIndex &&
+                self.isHidden == otherLayoutAttributes.isHidden;
         }
     }
     return NO;
