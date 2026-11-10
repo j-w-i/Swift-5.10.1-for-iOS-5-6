@@ -129,7 +129,11 @@ static BOOL UICLayoutIsSelfSizing(id layout) {
 }
 static CGSize UICSizeForItem(id layout, NSIndexPath *indexPath) {
     NSValue *measured = [objc_getAssociatedObject(layout, &UICMeasuredKey) objectForKey:indexPath];
-    return measured ? [measured CGSizeValue] : [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
+    if (measured) return [measured CGSizeValue];
+    CGSize estimate = [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
+    // UIKit uses a 50x50 seed for automaticSize, even when itemSize was changed.
+    // Never feed the CGFLOAT_MAX sentinel to the iOS 6/7 layout engine.
+    return CGSizeEqualToSize(estimate, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)) ? CGSizeMake(50, 50) : estimate;
 }
 static void UICResetMeasured(id layout) {
     objc_setAssociatedObject(layout, &UICMeasuredKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);

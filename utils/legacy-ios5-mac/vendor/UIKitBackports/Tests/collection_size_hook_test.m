@@ -53,6 +53,11 @@ int main(void) { @autoreleasepool {
     UICInstallCollectionViewDisplay();
     for (int i = 0; i < 3; i++) require(native[i] == class_getMethodImplementation(cvClass, selectors[i]), @"native collection IMP unchanged");
     require(nativeEstimate == class_getMethodImplementation(flowClass, @selector(estimatedItemSize)), @"native self-sizing IMP unchanged");
+    UICollectionViewFlowLayout *automatic = [UICollectionViewFlowLayout new];
+    automatic.itemSize = CGSizeMake(77, 33);
+    UICEstimatedItemSizeSetter(automatic, NULL, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX));
+    require(CGSizeEqualToSize(UICEstimatedItemSizeGetter(automatic, NULL), CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)), @"automatic sentinel getter preserved");
+    require(CGSizeEqualToSize(UICSizeForItem(automatic, [NSIndexPath indexPathForItem:0 inSection:0]), CGSizeMake(50, 50)), @"automatic estimate normalized");
     SharedSizeDelegate *delegate = [SharedSizeDelegate new];
     SizeHookCollection *first = collection(delegate), *second = collection(delegate);
     require(UICInstallSizeHook(first), @"first collection installs shim");

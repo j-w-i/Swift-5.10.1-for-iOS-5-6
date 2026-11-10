@@ -1,0 +1,47 @@
+#import <UIKit/UIKit.h>
+#ifdef TEST_PST
+#import "PSTCollectionView.h"
+#define UICollectionView PSTCollectionView
+#define UICollectionViewCell PSTCollectionViewCell
+#define UICollectionViewFlowLayout PSTCollectionViewFlowLayout
+#define UICollectionViewLayoutAttributes PSTCollectionViewLayoutAttributes
+#define UICollectionViewDataSource PSTCollectionViewDataSource
+#endif
+static BOOL firstProposal;
+@interface AutomaticCell : UICollectionViewCell @end
+@implementation AutomaticCell
+- (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a {
+    if (!firstProposal) {
+        firstProposal = YES;
+        if (!CGSizeEqualToSize(a.size, CGSizeMake(50,50))) abort();
+    }
+    UICollectionViewLayoutAttributes *r=[a copy]; r.size=CGSizeMake(80,30); return r;
+}
+@end
+@interface AutomaticData : NSObject<UICollectionViewDataSource> @end
+@implementation AutomaticData
+- (NSInteger)collectionView:(UICollectionView*)cv numberOfItemsInSection:(NSInteger)s { return 2; }
+- (UICollectionViewCell*)collectionView:(UICollectionView*)cv cellForItemAtIndexPath:(NSIndexPath*)p {
+    return [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:p];
+}
+@end
+int main(void) { @autoreleasepool {
+ for (int horizontal=0;horizontal<2;horizontal++) {
+    firstProposal=NO;
+    UICollectionViewFlowLayout *fl=[UICollectionViewFlowLayout new];
+    fl.scrollDirection=horizontal;
+    fl.itemSize=CGSizeMake(77,33); fl.estimatedItemSize=CGSizeMake(CGFLOAT_MAX,CGFLOAT_MAX);
+    if (!CGSizeEqualToSize(fl.estimatedItemSize,CGSizeMake(CGFLOAT_MAX,CGFLOAT_MAX))) abort();
+    UICollectionView *cv=[[UICollectionView alloc]initWithFrame:CGRectMake(0,0,200,200) collectionViewLayout:fl];
+    [cv registerClass:[AutomaticCell class] forCellWithReuseIdentifier:@"c"];
+    AutomaticData*d=[AutomaticData new]; cv.dataSource=d;
+    [cv layoutIfNeeded];
+    if (!firstProposal || !isfinite(cv.contentSize.width) || !isfinite(cv.contentSize.height)) abort();
+    printf("axis=%d content=%gx%g\n",horizontal,cv.contentSize.width,cv.contentSize.height);
+    for (int i=0;i<2;i++) {
+        CGRect frame=[fl layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]].frame;
+        if (!CGSizeEqualToSize(frame.size,CGSizeMake(80,30))) abort();
+        printf("cell=%d frame=%g,%g,%g,%g\n",i,frame.origin.x,frame.origin.y,frame.size.width,frame.size.height);
+    }
+ }
+} return 0; }

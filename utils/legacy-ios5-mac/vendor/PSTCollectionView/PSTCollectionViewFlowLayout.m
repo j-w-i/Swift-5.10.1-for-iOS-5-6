@@ -375,7 +375,12 @@ static char kPSTCachedItemRectsKey;
 /// The layout's current size for an item: what its cell last reported, else the estimate.
 - (CGSize)pstSizeForSelfSizingItemAtIndexPath:(NSIndexPath *)indexPath {
     NSValue *measured = [_pstMeasuredItemSizes objectForKey:indexPath];
-    return measured ? [measured CGSizeValue] : _estimatedItemSize;
+    if (measured) return [measured CGSizeValue];
+    // automaticSize is a sentinel, not a geometric size. Native UIKit proposes 50x50
+    // on both axes, independently of itemSize; retain the sentinel in the public getter.
+    if (CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)))
+        return CGSizeMake(50, 50);
+    return _estimatedItemSize;
 }
 
 /// Records a cell's preferred size. Returns YES when it differs from the size currently laid out
