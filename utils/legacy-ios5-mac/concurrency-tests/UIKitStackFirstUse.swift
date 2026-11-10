@@ -7,11 +7,14 @@ import Darwin
 final class StackFirstUseController: UIViewController {
     private let label = UILabel()
     private let button = UIButton(type: UIButton.ButtonType(rawValue: 1)!) // roundedRect/system ABI value
+    private var stack: UIStackView?
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .white
         label.text = "Ready"
+        label.font = .systemFont(ofSize: 24)
         button.setTitle("Run Async Test", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 20)
         button.addTarget(self, action: #selector(runTest), for: .touchUpInside)
         let stack = UIStackView(arrangedSubviews: [label, button])
         precondition(stack.arrangedSubviews.count == 2)
@@ -21,6 +24,7 @@ final class StackFirstUseController: UIViewController {
         stack.spacing = 24
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
+        self.stack = stack
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
@@ -30,7 +34,20 @@ final class StackFirstUseController: UIViewController {
     }
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        button.sendActions(for: .touchUpInside)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            // No manual layoutIfNeeded/setNeedsLayout: validate normal UIKit delivery,
+            // actual visible geometry, and hit testing rather than just label state.
+            guard let stack = self.stack, let window = self.view.window else { preconditionFailure("missing stack/window") }
+            precondition(stack.frame.width > 0 && stack.frame.height > 0)
+            precondition(self.label.frame.width > 0 && self.label.frame.height > 0)
+            precondition(self.button.frame.width > 0 && self.button.frame.height > 0)
+            let center = CGPoint(x: self.button.bounds.midX, y: self.button.bounds.midY)
+            let point = self.button.convert(center, to: window as UIView?)
+            guard let hit = window.hitTest(point, with: nil) else { preconditionFailure("button not hittable") }
+            precondition(hit === self.button || hit.isDescendant(of: self.button))
+            print("PASS nonzero visible stack geometry and button hit testing"); fflush(stdout)
+            self.button.sendActions(for: .touchUpInside)
+        }
     }
     @objc private func runTest() {
         button.isEnabled = false
@@ -43,7 +60,10 @@ final class StackFirstUseController: UIViewController {
             label.text = "Async/Await works!"
             button.isEnabled = true
             precondition(Thread.isMainThread && button.isEnabled)
-            print("PASS five async main-actor steps and button re-enable"); fflush(stdout)
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            let natural = label.sizeThatFits(CGSize(width: 10000, height: 10000))
+            precondition(label.frame.width + 0.5 >= natural.width, "final label must grow, not truncate")
+            print("PASS five async main-actor steps, button re-enable and readable final label"); fflush(stdout)
             try? "STACK FIRST USE PASS".write(toFile: NSHomeDirectory() + "/Documents/stack-first-use-result.txt", atomically: true, encoding: .utf8)
         }
     }

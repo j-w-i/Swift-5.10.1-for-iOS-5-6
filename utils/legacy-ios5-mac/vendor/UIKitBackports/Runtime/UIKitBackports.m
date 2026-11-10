@@ -413,6 +413,26 @@ static void UICInstallSpinnerStyles(void) {
     if (setter) UICOriginalSpinnerSet = (void *)method_setImplementation(setter, (IMP)UICSpinnerSet);
 }
 
+// UILabel predates intrinsic-size invalidation. iOS 5's native text setter
+// need not call UIView's public display/layout hooks, so arranged labels could
+// keep the size measured for their original text. Invalidate through the lazy
+// bridge only after it exists; do not run Swift during label/application startup.
+static void (*UICOriginalLabelSetText)(id, SEL, NSString *);
+static void UICLabelSetText(id self, SEL cmd, NSString *text) {
+    NSString *old = [(UILabel *)self text];
+    BOOL changed = old != text && ![old isEqualToString:text];
+    UICOriginalLabelSetText(self, cmd, text);
+    SEL invalidate = sel_registerName("invalidateIntrinsicContentSize");
+    if (changed && [self respondsToSelector:invalidate]) ((void (*)(id, SEL))objc_msgSend)(self, invalidate);
+}
+static void UICInstallLegacyLabelTextInvalidation(void) {
+    Class viewMeta = object_getClass(objc_getClass("UIView"));
+    if (class_getInstanceMethod(viewMeta, sel_registerName("requiresConstraintBasedLayout"))) return;
+    Class label = objc_getClass("UILabel");
+    Method setter = class_getInstanceMethod(label, sel_registerName("setText:"));
+    if (setter) UICOriginalLabelSetText = (void *)method_setImplementation(setter, (IMP)UICLabelSetText);
+}
+
 __attribute__((constructor)) static void UICInstallBackportMethods(void) {
     @autoreleasepool {
         // Constructor work is limited to Objective-C runtime registration: no
@@ -426,6 +446,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallNativeSafeAreaGuide();
         UICInstallSemanticBackgroundColors();
         UICInstallSpinnerStyles();
+        UICInstallLegacyLabelTextInvalidation();
         UICInstallConstraintItemUnwrapping();
     }
 }

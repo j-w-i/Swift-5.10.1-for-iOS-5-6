@@ -446,9 +446,21 @@ extension UIView {
     private func legacyMarkNeedsConstraintsUpdate(_ state: LegacyViewState) {
         state.needsConstraintUpdateCallback = true
         state.constraintsAreClean = false
+        // A constraint update is not a layout pass. The layer's update walk can
+        // clear constraintsAreClean before -layoutSubviews; preserve this view's
+        // pending solve independently or a detached controller root stays at its
+        // children's zero authoring frames after it is attached to the window.
+        state.needsLayout = true
         state.stackFittingResult = nil
         legacyPropagateGeometryParticipation()
-        guard let superview = superview else { return }
+        guard let superview = superview else {
+            if !state.containerInvalidated {
+                state.containerInvalidated = true
+                LegacyAutoLayoutRuntime.containerLayoutInvalidationCount += 1
+                setNeedsLayout()
+            }
+            return
+        }
         // Every ancestor must see the change. UIKit lays the root view out once before
         // the controller adds its subviews and constraints, which leaves the root
         // flagged clean; the layoutSubviews hook and the constraint walk both start
@@ -635,10 +647,9 @@ internal enum LegacyAutoLayoutSemanticDirection {
 /// out of scope: constraints that reference a non-UIView item simply have no layout item behind the
 /// `Any?` reference and are ignored by the engine, exactly as they are by RRAutoLayout).
 ///
-/// `layoutSetFrame(_:)` writes `bounds` + `center` instead of `frame`, exactly like RRAutoLayout's
-/// ad-hoc pass did: `setFrame:` rounds through `setBounds:`/`setCenter:` and would re-enter the
-/// swizzled invalidation hooks (and is wrong under a non-identity transform), whereas
-/// `bounds`/`center` are the two primitives UIKit itself uses.
+/// Geometry uses bounds/center, like native Auto Layout: public frame setters
+/// can clamp control sizes and are undefined under non-identity transforms.
+/// Native controls retain ownership of their internal subview layout.
 @MainActor
 extension UIView: LegacyLayoutItem {
 
@@ -651,6 +662,18 @@ extension UIView: LegacyLayoutItem {
         // of an ancestor) and every cell is laid out as its own root by its own layoutSubviews. Descending into
         // them made each ancestor pass re-solve hundreds of unrelated variables whenever cells were recycled.
         if LegacyCollectionViewClass.isCollectionView(self) || legacyUsesDirectStackLayout { return [] }
+        if self is UITextView || self is UIControl || legacyProvidesSystemIntrinsicSize {
+            // UIKit owns the internal geometry of its composite leaf controls:
+            // text canvases, progress tracks, slider thumbs and button labels.
+            // Solving those implementation details as authoring-time autoresizing
+            // children replays stale sizes over the native control's layout.
+            // Explicitly opted-in client overlay subviews still participate.
+            return subviews.filter { child in
+                guard let state = LegacyViewState.existing(of: child) else { return false }
+                return state.translatesAutoresizingMaskIntoConstraints == false
+                    || !state.constraints.isEmpty || state.intrinsicContentSize != nil
+            }
+        }
         return subviews
     }
 
@@ -697,10 +720,22 @@ extension UIView: LegacyLayoutItem {
         if LegacyLayoutStats.enabled, NSStringFromClass(type(of: self)).contains("InputView") {
             FileHandle.standardError.write(Data("legacy-write: \(type(of: self)) \(bounds.size.width)x\(bounds.size.height) -> \(size.width)x\(size.height) at t=\(CFAbsoluteTimeGetCurrent())\n".utf8))
         }
+        if let text = self as? UITextView, transform.isIdentity,
+           !text.responds(to: NSSelectorFromString("textContainer")) {
+            LegacyAutoLayoutInstaller.resizeLegacyTextViewport(text, frame: CGRect(origin: frame.origin, size: size))
+        }
+        // Notify normal control geometry setters (UISlider resizes its owned
+        // implementation view there). If a legacy setter clamps a required
+        // dimension, finish through UIView's native primitives so the layout
+        // result, not the control's authoring-time default, wins.
         var newBounds = bounds
         newBounds.size = size
         bounds = newBounds
         center = targetCenter
+        if abs(bounds.width - size.width) >= 0.0001 || abs(bounds.height - size.height) >= 0.0001
+            || abs(center.x - targetCenter.x) >= 0.0001 || abs(center.y - targetCenter.y) >= 0.0001 {
+            LegacyAutoLayoutInstaller.writeLayoutGeometry(to: self, bounds: newBounds, center: targetCenter)
+        }
     }
 
     var layoutConstraints: [RRLayoutConstraint] {

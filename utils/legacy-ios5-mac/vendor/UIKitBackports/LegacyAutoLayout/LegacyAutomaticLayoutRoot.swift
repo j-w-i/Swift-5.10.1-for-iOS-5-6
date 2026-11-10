@@ -79,7 +79,20 @@ extension UIView {
         }
         let promoteWidth = sizedByContent.width && !pinnedByEquality.width
         let promoteHeight = sizedByContent.height && !pinnedByEquality.height
-        return (promoteWidth || promoteHeight) ? parent : nil
+        // Direct stacks omit their arranged-view equations. With only center
+        // anchors the parent's equations, not the stack's incumbent bounds, must
+        // position its changing natural size. A local pass would pin the old
+        // width and discard the very equations that must let a label grow.
+        let centeredDirectStack = legacyUsesDirectStackLayout && parent.legacyConstraints.contains { constraint in
+            guard constraint.relation == .equal else { return false }
+            let first = constraint.firstItem as? UIView
+            let second = constraint.secondItem as? UIView
+            let attribute = first === self ? constraint.firstAttribute : constraint.secondAttribute
+            guard first === self || second === self else { return false }
+            return (attribute == .centerX && !pinnedByEquality.width)
+                || (attribute == .centerY && !pinnedByEquality.height)
+        }
+        return (promoteWidth || promoteHeight || centeredDirectStack) ? parent : nil
     }
 
     /// Only the automatic callback path changes root. Explicit

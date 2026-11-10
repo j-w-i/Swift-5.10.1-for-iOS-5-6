@@ -141,7 +141,7 @@ BOOL __NSDataWriteToURL(NSData * _Nonnull data NS_RELEASES_ARGUMENT, NSURL * _No
     __block BOOL writingFailed = NO;
     __block int32_t saveerr = 0;
     NSUInteger dataLength = [data length];
-    [data enumerateByteRangesUsingBlock:^(const void *bytes, NSRange byteRange, BOOL *stop) {
+    void (^writeRange)(const void *, NSRange, BOOL *) = ^(const void *bytes, NSRange byteRange, BOOL *stop) {
         NSUInteger length = byteRange.length;
         BOOL success = NO;
         if (length > 0) {
@@ -155,7 +155,16 @@ BOOL __NSDataWriteToURL(NSData * _Nonnull data NS_RELEASES_ARGUMENT, NSURL * _No
             writingFailed = YES;
             *stop = YES;
         }
-    }];
+    };
+    // Byte-range enumeration arrived in iOS 7. Older NSData implementations
+    // still provide the contiguous bytes/length primitives; use the same write
+    // and error path instead of messaging an unavailable selector.
+    if ([data respondsToSelector:@selector(enumerateByteRangesUsingBlock:)]) {
+        [data enumerateByteRangesUsingBlock:writeRange];
+    } else {
+        BOOL stop = NO;
+        writeRange([data bytes], NSMakeRange(0, dataLength), &stop);
+    }
     if (dataLength && !writingFailed) {
         if (fsync(fd) < 0) {
             writingFailed = YES;

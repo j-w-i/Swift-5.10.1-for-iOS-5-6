@@ -539,6 +539,33 @@ internal enum LegacyAutoLayoutInstaller {
         }
     }
 
+    // MARK: Native Auto Layout geometry
+
+    /// Pre-TextKit UITextView invalidates its WebKit viewport from setFrame:,
+    /// not from the UIView geometry primitives used by the layout engine.
+    /// Call the native class implementation, without invoking app overrides.
+    internal static func resizeLegacyTextViewport(_ view: UITextView, frame: CGRect) {
+        let selector = NSSelectorFromString("setFrame:")
+        let implementation = class_getMethodImplementation(UITextView.self, selector)!
+        typealias Setter = @convention(c) (AnyObject, Selector, CGRect) -> Void
+        unsafeBitCast(implementation, to: Setter.self)(view, selector, frame)
+    }
+
+    /// Auto Layout applies geometry below public subclass setters. Controls such
+    /// as UIProgressView clamp setFrame:/setBounds: to their intrinsic height;
+    /// dispatching those overrides would silently violate a required height.
+    /// Use UIView's native primitives, retaining its layer/autoresizing work.
+    internal static func writeLayoutGeometry(to view: UIView, bounds: CGRect, center: CGPoint) {
+        let boundsSelector = NSSelectorFromString("setBounds:")
+        let centerSelector = NSSelectorFromString("setCenter:")
+        let boundsIMP = originalImplementations[boundsSelector] ?? class_getMethodImplementation(UIView.self, boundsSelector)!
+        let centerIMP = originalImplementations[centerSelector] ?? class_getMethodImplementation(UIView.self, centerSelector)!
+        typealias BoundsSetter = @convention(c) (AnyObject, Selector, CGRect) -> Void
+        typealias CenterSetter = @convention(c) (AnyObject, Selector, CGPoint) -> Void
+        unsafeBitCast(boundsIMP, to: BoundsSetter.self)(view, boundsSelector, bounds)
+        unsafeBitCast(centerIMP, to: CenterSetter.self)(view, centerSelector, center)
+    }
+
     // MARK: Original IMP forwarding
 
     internal static func callOriginalVoid(selector: Selector, receiver: AnyObject) {

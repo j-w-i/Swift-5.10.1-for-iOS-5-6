@@ -1,18 +1,28 @@
 #import <UIKit/UIKit.h>
 #import "OAStackView.h"
 #include <math.h>
+static NSUInteger fittingCalls;
+static BOOL benchmarkGeneration;
+@interface UICLegacyConstraintGeneration : NSObject
++ (NSInteger)current;
+@end
+@implementation UICLegacyConstraintGeneration
++ (NSInteger)current { return benchmarkGeneration ? 0 : -1; }
+@end
 @interface OAStackView (TestPrivate)
 - (BOOL)uic_directLayoutEligible;
 - (BOOL)uic_usesDirectStackLayout;
 - (BOOL)uic_hasExternalArrangedConstraints;
+- (BOOL)uic_directAllocationSupported;
 @end
 @interface UIView (TestFitting)
 - (CGSize)uic_legacyStackFittingSize:(CGSize)proposal;
 @end
 @implementation UIView (TestFitting)
 - (CGSize)uic_legacyStackFittingSize:(CGSize)proposal {
+  fittingCalls++;
   if ([self isKindOfClass:[UILabel class]]) {
-    return [self sizeThatFits:CGSizeMake(proposal.width, 100000)];
+    return [self sizeThatFits:CGSizeMake(proposal.width >= 0 ? proposal.width : 100000, 100000)];
   }
   CGSize target = CGSizeMake(proposal.width >= 0 ? proposal.width : 0, proposal.height >= 0 ? proposal.height : 0);
   return [self systemLayoutSizeFittingSize:target withHorizontalFittingPriority:proposal.width >= 0 ? 1000 : 50 verticalFittingPriority:proposal.height >= 0 ? 1000 : 50];
@@ -30,7 +40,7 @@
 @implementation DirectTestStack
 - (BOOL)uic_directLayoutEligible {
   return self.axis == UILayoutConstraintAxisVertical && self.distribution == OAStackViewDistributionFill &&
-    self.alignment == OAStackViewAlignmentFill && ![self uic_hasExternalArrangedConstraints];
+    self.alignment == OAStackViewAlignmentFill && ![self uic_hasExternalArrangedConstraints] && [self uic_directAllocationSupported];
 }
 @end
 static void check(BOOL condition, NSString *message) {
@@ -100,5 +110,42 @@ int main(void) { @autoreleasepool {
   CGFloat wide = [textStack sizeThatFits:CGSizeMake(240,-1)].height;
   CGFloat narrow = [textStack sizeThatFits:CGSizeMake(100,-1)].height;
   check(narrow > wide && wide > 0, @"wrapping height respects allocated width");
-  NSLog(@"direct-stack: PASS (native fill priority parity, explicit size and width-dependent wrapping)");
+  for (NSNumber *useTextView in @[@NO, @YES]) {
+    DirectTestStack *direct = [DirectTestStack new]; direct.axis = UILayoutConstraintAxisVertical; direct.spacing = 16;
+    UIStackView *native = [UIStackView new]; native.axis = UILayoutConstraintAxisVertical; native.spacing = 16;
+    direct.frame = native.frame = CGRectMake(0,0,280,440);
+    NSMutableArray *dv = [NSMutableArray array], *nv = [NSMutableArray array];
+    for (NSNumber *height in @[@30,@20,@9,@35]) {
+      FixedView *d = [FixedView new], *n = [FixedView new]; d.measuredHeight = n.measuredHeight = height.doubleValue;
+      [direct addArrangedSubview:d]; [native addArrangedSubview:n]; [dv addObject:d]; [nv addObject:n];
+    }
+    UIView *dlog = useTextView.boolValue ? [UITextView new] : [UIView new];
+    UIView *nlog = useTextView.boolValue ? [UITextView new] : [UIView new];
+    [direct addArrangedSubview:dlog]; [native addArrangedSubview:nlog]; [dv addObject:dlog]; [nv addObject:nlog];
+    [native setNeedsLayout]; [native layoutIfNeeded]; [direct layoutSubviews]; [direct setNeedsLayout]; [direct layoutIfNeeded];
+    check(![direct uic_usesDirectStackLayout], @"no-metric slack uses constraint path");
+    for (NSUInteger i=0;i<dv.count;i++) rect(dv[i],[(UIView *)nv[i] frame]);
+    check(dlog.frame.size.height == 282 && [(UIView *)dv[0] frame].size.height == 30, @"log gets slack, title keeps natural height");
+  }
+  benchmarkGeneration = YES;
+  DirectTestStack *bd = [DirectTestStack new]; bd.axis = UILayoutConstraintAxisVertical; bd.spacing = 12;
+  UIStackView *bn = [UIStackView new]; bn.axis = UILayoutConstraintAxisVertical; bn.spacing = 12;
+  bd.frame = bn.frame = CGRectMake(0,0,300,66);
+  for (NSNumber *h in @[@21,@33]) {
+    FixedView *d = [FixedView new], *n = [FixedView new]; d.measuredHeight = n.measuredHeight = h.doubleValue;
+    [bd addArrangedSubview:d]; [bn addArrangedSubview:n];
+  }
+  [bd setNeedsLayout]; [bd layoutIfNeeded]; [bn setNeedsLayout]; [bn layoutIfNeeded];
+  for (NSUInteger mode=0;mode<2;mode++) {
+    UIView *v = mode ? (UIView *)bd : (UIView *)bn;
+    CFTimeInterval start = CFAbsoluteTimeGetCurrent();
+    for (NSUInteger i=0;i<2000;i++) { [v setNeedsLayout]; [v layoutIfNeeded]; }
+    double dirty = (CFAbsoluteTimeGetCurrent()-start)*1000;
+    NSUInteger before=fittingCalls; start=CFAbsoluteTimeGetCurrent();
+    for (NSUInteger i=0;i<2000;i++) [v layoutIfNeeded];
+    double idle=(CFAbsoluteTimeGetCurrent()-start)*1000;
+    if (mode) check(fittingCalls == before, @"idle direct stack performs no fitting work");
+    fprintf(stderr,"stack-benchmark %s: 2000 dirty=%.3fms idle=%.3fms\n",mode ? "direct" : "native",dirty,idle);
+  }
+  NSLog(@"direct-stack: PASS (native fill priorities, free text view, explicit size, wrapping, idle-work gate)");
 } return 0; }

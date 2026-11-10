@@ -231,4 +231,68 @@ func dynamic() {
         print("settled\troot-dirty-after-idle-passes=\(dirty)")
     } else { print("settled\troot-dirty-after-idle-passes=false") }
 }
-MainActor.assumeIsolated { run(); dynamic() }
+@MainActor func textViewport() {
+    let s = Scene()
+    let text = s.add(UITextView())
+    text.isEditable = false
+    text.font = .systemFont(ofSize: 13)
+    text.text = String(repeating: "A long log message should wrap within the text view rather than outside its visible viewport. ", count: 8)
+    s.pin(text, .left, s.root, .left, 1, 20)
+    s.pin(text, .top, s.root, .top, 1, 20)
+    s.pin(text, .width, s.root, .width, 1, -40)
+    s.pin(text, .height, nil, .notAnAttribute, 1, 260)
+    for width: CGFloat in [320, 240, 400] {
+        s.root.frame.size.width = width
+        s.solve(); text.layoutIfNeeded()
+        report("text-viewport-\(Int(width))", [("text", text)])
+        func rounded(_ x: CGFloat) -> String { String(format: "%.1f", (x * 2).rounded() / 2) }
+        print("text-content-\(Int(width))\t\(rounded(text.contentSize.width)),\(rounded(text.contentSize.height))")
+        precondition(text.contentSize.width <= text.bounds.width + 1, "text content must wrap at the viewport width")
+    }
+}
+@MainActor func nativeOwnedControls() {
+    let factories: [(String, () -> UIView)] = [
+        ("progress", { let v = UIProgressView(progressViewStyle: .default); v.progress = 0.25; return v }),
+        ("slider", { let v = UISlider(); v.value = 0.25; return v }),
+        ("button", { let v = UIButton(type: .system); v.setTitle("Control", for: .normal); return v }),
+        ("field", { let v = UITextField(); v.borderStyle = .roundedRect; v.text = "Control"; return v }),
+        ("label", { let v = UILabel(); v.text = "Control"; return v })
+    ]
+    for (name, factory) in factories {
+        let s = Scene()
+        let control = s.add(factory())
+        s.pin(control, .left, s.root, .left, 1, 20)
+        s.pin(control, .top, s.root, .top, 1, 20)
+        s.pin(control, .width, s.root, .width, 1, -40)
+        s.pin(control, .height, nil, .notAnAttribute, 1, 32)
+        for width: CGFloat in [320, 240, 400] {
+            s.root.frame.size.width = width
+            s.solve(); control.layoutIfNeeded()
+            func emit(_ view: UIView, _ path: String) {
+                report("owned-\(name)-\(Int(width))", [(path, view)])
+                for (index, child) in view.subviews.enumerated() { emit(child, path + "/" + String(index)) }
+            }
+            emit(control, "control")
+        }
+    }
+}
+@MainActor private final class GeometrySetterProbe: UIView {
+    var frameWrites = 0, boundsWrites = 0, centerWrites = 0
+    override var frame: CGRect { didSet { frameWrites += 1 } }
+    override var bounds: CGRect { didSet { boundsWrites += 1 } }
+    override var center: CGPoint { didSet { centerWrites += 1 } }
+}
+@MainActor func geometrySetterParity() {
+    let s = Scene()
+    let probe = s.add(GeometrySetterProbe())
+    s.pin(probe, .left, s.root, .left, 1, 20)
+    s.pin(probe, .top, s.root, .top, 1, 20)
+    s.pin(probe, .width, nil, .notAnAttribute, 1, 100)
+    s.pin(probe, .height, nil, .notAnAttribute, 1, 60)
+    probe.frameWrites = 0; probe.boundsWrites = 0; probe.centerWrites = 0
+    s.solve()
+    report("geometry-setters", [("probe", probe)])
+    print("geometry-setter-calls\t\(probe.frameWrites),\(probe.boundsWrites),\(probe.centerWrites)")
+}
+@MainActor func runNativeParitySuite() { run(); dynamic(); textViewport(); nativeOwnedControls(); geometrySetterParity() }
+MainActor.assumeIsolated { runNativeParitySuite() }

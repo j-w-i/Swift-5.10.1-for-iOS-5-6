@@ -1886,7 +1886,10 @@ internal final class LegacyLayoutSolver {
     private func installIntrinsicContentConstraints() {
         for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
-            guard let vars = variables[identifier], !vars.isRoot else {
+            // Fitting leaves the root's size variable; its own intrinsic metrics
+            // participate just like those of its descendants. Only an ordinary
+            // fixed-boundary layout root omits them.
+            guard let vars = variables[identifier], !vars.isRoot || fittingProposal != nil else {
                 continue
             }
             let plan = intrinsicPlan(for: item, vars: vars)
@@ -1908,7 +1911,7 @@ internal final class LegacyLayoutSolver {
         var seen: Set<ObjectIdentifier> = []
         for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
-            guard let vars = variables[identifier], !vars.isRoot else { continue }
+            guard let vars = variables[identifier], !vars.isRoot || fittingProposal != nil else { continue }
             seen.insert(identifier)
             let inputs = intrinsicInputs(for: item)
             if let installed = installedIntrinsicConstraints[identifier] {

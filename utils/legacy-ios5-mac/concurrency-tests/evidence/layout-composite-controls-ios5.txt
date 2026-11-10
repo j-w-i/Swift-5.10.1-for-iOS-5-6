@@ -1,0 +1,24 @@
+Device: iPod touch 3, iOS 5.1.1 (9B206), armv7
+App: user's current TestingAPIs six-test UI (progress, nested buttons, UITextView).
+Final probe run UUID: 886E5CFE-1DC2-4A1C-9B7B-F310648CB69A
+Collector requires matching current/completed launch markers before accepting files.
+
+Verified together after the final pre-TextKit adapter:
+- UIProgressView initial frame width: 280; native track UIImageView width: 280.
+- UITextView frame: (0,158,280,282); UIWebDocumentView width: 280 (formerly480).
+- All sampled text content widths remain within the 280-point viewport.
+- Real button hit testing and six-test completion are recorded in the same launch.
+- Sequential await, async-let, throwing task group, error propagation, detached work and cancellation checkpoint complete; status All tests passed; app remains alive.
+- Rendered screenshot inspected: long result/log lines wrap at the visible viewport, full-width progress track, visible controls.
+- User removed the unsupported monospaced font request; no new font backport was added. User ViewController was not replaced with the old single-button fixture.
+- Temporary AppDelegate diagnostics/automatic test invocation removed after verification; clean build/install is separately checked.
+
+Native simulator conformance (proper UIKit/scene lifecycle): 116 half-point-normalized observations agree, including progress track/fill, slider/button/text-field internals, label geometry, text viewport/content size through three widths and geometry setter callback counts (0,1,1). First-use bootstrap positive and old-parent negative controls pass. Callback ordering, centered content-sized stack growth, private arranged-item fitting, detached/windowed roots and standard frame regressions pass.
+
+A pre-correction public geometry writer is rejected by actual native progress-control differences. Fresh completion markers and required-case assertions prevent stale app sandbox output or partially executed suites from passing.
+
+Direct-stack native fill/CHCR, hidden/insert/remove, explicit dimensions, wrapping and free UIView/UITextView allocation checks pass; idle 2000 layoutIfNeeded calls perform no fitting work. Tiny simulator timing fixture: native dirty72.204ms/idle0.116ms, direct dirty2.888ms/idle0.102ms. These are not device performance or universal native-parity claims.
+
+Foundation async 57/57 and seven native-matching file I/O checks pass. Data.write URL's old-system missing enumerateByteRangesUsingBlock selector has a bytes/length fallback.
+
+Coverage limits: no exhaustive pixel, animation, accessibility, every-class/every-OS parity claim; armv7s physical execution and iOS6-9 device coverage remain absent. No iOS27 phone testing performed. Generic qualification profile deviceExecution remains pending rather than inheriting unrelated/stale evidence.

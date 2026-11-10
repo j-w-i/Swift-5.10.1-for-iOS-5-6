@@ -13,6 +13,12 @@ import Foundation
     let root = UIView(frame: CGRect(x: 0,y: 0,width: 320,height: 436))
     let scroll = UIScrollView(), content = UIView(), bio = UIView(), bg = UIView()
     root.addSubview(scroll); scroll.addSubview(content); content.addSubview(bio); content.addSubview(bg)
+    check("detached hierarchy uses topmost temporary-engine root", content.legacyAutomaticLayoutRoot() === root)
+    // The narrow-boundary expectations below describe windowed layout. Without
+    // a window, UIKit's temporary-engine path deliberately promotes to the top.
+    let window = UIWindow(frame: root.frame)
+    window.addSubview(root)
+    defer { withExtendedLifetime(window) {} }
     for v in [scroll,content,bio,bg] { v.legacyTranslatesAutoresizingMaskIntoConstraints = false }
     bio.legacyIntrinsicContentSize = CGSize(width: 215,height: 0)
     pin(scroll,root); pin(content,scroll); row(scroll,content,.width,scroll,.width)
@@ -41,11 +47,11 @@ import Foundation
     check("nested label stays self",label.legacyAutomaticLayoutRoot() === label)
     let unbound = UIView(); scroll.addSubview(unbound); unbound.legacyTranslatesAutoresizingMaskIntoConstraints = false
     check("direct scroll child without bottom equation stays self",unbound.legacyAutomaticLayoutRoot() === unbound)
-    let text = UITextView(), textContent = UIView(); text.addSubview(textContent); textContent.legacyTranslatesAutoresizingMaskIntoConstraints = false
+    let text = UITextView(), textContent = UIView(); window.addSubview(text); text.addSubview(textContent); textContent.legacyTranslatesAutoresizingMaskIntoConstraints = false
     row(text,textContent,.bottom,text,.bottom)
     check("text view excluded",textContent.legacyAutomaticLayoutRoot() === textContent)
     let collection = UICollectionView(frame: .zero,collectionViewLayout: UICollectionViewFlowLayout()), collectionContent = UIView()
-    collection.addSubview(collectionContent); collectionContent.legacyTranslatesAutoresizingMaskIntoConstraints = false
+    window.addSubview(collection); collection.addSubview(collectionContent); collectionContent.legacyTranslatesAutoresizingMaskIntoConstraints = false
     row(collection,collectionContent,.bottom,collection,.bottom)
     check("collection excluded",collectionContent.legacyAutomaticLayoutRoot() === collectionContent)
     print("scroll-root frames empty24->\(bio.frame.height) content=\(content.frame) scrollContent=\(scroll.contentSize)")

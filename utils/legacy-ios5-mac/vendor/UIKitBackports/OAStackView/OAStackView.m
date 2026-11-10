@@ -33,6 +33,10 @@
 @property(nonatomic) BOOL uic_directLayoutActive;
 @property(nonatomic) BOOL uic_directLayoutInProgress;
 @property(nonatomic) NSInteger uic_directEligibilityGeneration;
+@property(nonatomic) CGSize uic_directEligibilitySize;
+- (BOOL)uic_directAllocationSupported;
+- (CGFloat)uic_directStackNaturalWidth;
+- (CGSize)uic_directStackSizeForWidth:(CGFloat)width apply:(BOOL)apply;
 
 // Not implemented but needed for backward compatibility with UIStackView
 @property(nonatomic,getter=isBaselineRelativeArrangement) BOOL baselineRelativeArrangement;
@@ -203,7 +207,15 @@
 // Like UIKit, a stack with nothing to show has a zero natural size; otherwise its size comes from its
 // constraints. Must not call super: the backport's UIView method forwards to this override.
 - (CGSize)intrinsicContentSize {
-  if (self.uic_directLayoutActive) return [self sizeThatFits:CGSizeMake(CGRectGetWidth(self.bounds), -1)];
+  if (self.uic_directLayoutActive) {
+    CGFloat naturalWidth = [self uic_directStackNaturalWidth];
+    CGFloat width = CGRectGetWidth(self.bounds) > 0 ? CGRectGetWidth(self.bounds) : naturalWidth;
+    CGSize fitted = [self uic_directStackSizeForWidth:width apply:NO];
+    // Bounds are output, not the cross-axis content size. A centered stack with
+    // no width equality must be able to grow from its initial zero bounds and
+    // later remeasure when an arranged label changes.
+    return CGSizeMake(naturalWidth, fitted.height);
+  }
   for (UIView *view in self.arrangedSubviews) if (!view.hidden) return CGSizeMake(-1.0, -1.0) /* UIViewNoIntrinsicMetric; the extern symbol is absent on iOS 5 */;
   return CGSizeZero;
 }
@@ -235,11 +247,12 @@
       UIView *aa = a ? [self uic_arrangedOwnerOfView:a] : nil;
       UIView *bb = b ? [self uic_arrangedOwnerOfView:b] : nil;
       if ((aa || bb) && a && b && aa != bb) return YES;
-      // The simple fill allocator below does not yet model explicit required main-axis limits.
-      // Keep those stacks on the constraint implementation rather than violating the requirement.
-      if (constraint.priority >= 1000 &&
-          ((aa == a && constraint.firstAttribute == NSLayoutAttributeHeight) ||
-           (bb == b && b && constraint.secondAttribute == NSLayoutAttributeHeight))) return YES;
+      // Explicit dimension preferences (including optional ones) need the
+      // constraint implementation; the direct allocator does not model their
+      // competition with alignment, hugging and compression rows.
+      if (constraint.priority > 0 &&
+          ((aa == a && (constraint.firstAttribute == NSLayoutAttributeHeight || constraint.firstAttribute == NSLayoutAttributeWidth)) ||
+           (bb == b && b && (constraint.secondAttribute == NSLayoutAttributeHeight || constraint.secondAttribute == NSLayoutAttributeWidth)))) return YES;
     }
   }
   return NO;
@@ -253,6 +266,24 @@
   return f(cls, @selector(current));
 }
 
+- (BOOL)uic_directAllocationSupported {
+  if (CGRectGetHeight(self.bounds) <= 0) return YES; // no allocation yet
+  BOOL hasUnmodeledMetric = NO;
+  for (UIView *view in self.arrangedSubviews) {
+    if (view.hidden) continue;
+    CGFloat height = view.intrinsicContentSize.height;
+    if (!isfinite(height) || height < 0) { hasUnmodeledMetric = YES; break; }
+  }
+  if (!hasUnmodeledMetric) return YES;
+  // Content-hugging priorities constrain only axes with an intrinsic metric.
+  // A UITextView/scroll view has none; a nested stack derives preferences from
+  // its children. Treating either as a normal 250/750 row assigns spare height
+  // to a label and can collapse the log view. Keep tight-fitting fast layouts,
+  // but let the constraint engine resolve slack/compression in these cases.
+  CGFloat natural = [self uic_directStackSizeForWidth:CGRectGetWidth(self.bounds) apply:NO].height;
+  return fabs(CGRectGetHeight(self.bounds) - natural) <= 0.0001;
+}
+
 - (BOOL)uic_directLayoutEligible {
   // On by default below iOS 6 (where every stack otherwise becomes hundreds of rows in the legacy solver and long chats stop
   // loading); LEGACY_AUTOLAYOUT_DIRECT_STACK=0 switches it off. Only the simple vertical fill/fill case qualifies and any
@@ -263,7 +294,7 @@
     self.axis == UILayoutConstraintAxisVertical &&
     self.distribution == OAStackViewDistributionFill &&
     self.alignment == OAStackViewAlignmentFill && !self.baselineRelativeArrangement &&
-    ![self uic_hasExternalArrangedConstraints];
+    ![self uic_hasExternalArrangedConstraints] && [self uic_directAllocationSupported];
 }
 
 - (void)uic_invalidateDirectLayout {
@@ -273,6 +304,17 @@
   // tall until an unrelated ancestor pass happens to re-measure).
   if ([self respondsToSelector:@selector(uic_clearStackFittingCaches)]) [self uic_clearStackFittingCaches];
   [self setNeedsLayout];
+}
+
+- (CGFloat)uic_directStackNaturalWidth {
+  UIEdgeInsets margins = self.layoutMarginsRelativeArrangement ? self.layoutMargins : UIEdgeInsetsZero;
+  CGFloat width = 0;
+  for (UIView *view in self.arrangedSubviews) {
+    if (view.hidden) continue;
+    CGSize fit = [view uic_legacyStackFittingSize:CGSizeMake(-1, -1)];
+    if (isfinite(fit.width)) width = MAX(width, MAX(0, fit.width));
+  }
+  return width + margins.left + margins.right;
 }
 
 - (CGSize)uic_directStackSizeForWidth:(CGFloat)width apply:(BOOL)apply {
@@ -331,7 +373,10 @@
 - (CGSize)sizeThatFits:(CGSize)proposal {
   if (!self.uic_directLayoutActive) return [super sizeThatFits:proposal];
   CGFloat width = proposal.width;
-  if (!isfinite(width) || width > 100000 || width <= 0) width = CGRectGetWidth(self.bounds);
+  if (!isfinite(width) || width > 100000 || width <= 0) {
+    width = CGRectGetWidth(self.bounds);
+    if (width <= 0) width = [self uic_directStackNaturalWidth];
+  }
   return [self uic_directStackSizeForWidth:MAX(0, width) apply:NO];
 }
 
@@ -342,8 +387,10 @@
   // changed no constraint cannot have changed eligibility.
   if (self.uic_directLayoutActive) {
     NSInteger generation = [self uic_constraintGeneration];
-    if (generation < 0 || generation != self.uic_directEligibilityGeneration) {
+    if (generation < 0 || generation != self.uic_directEligibilityGeneration ||
+        !CGSizeEqualToSize(self.uic_directEligibilitySize, self.bounds.size)) {
       self.uic_directEligibilityGeneration = generation;
+      self.uic_directEligibilitySize = self.bounds.size;
       if (![self uic_directLayoutEligible]) { [self layoutArrangedViews]; return; }
     }
   }
@@ -554,6 +601,7 @@
 - (void)layoutArrangedViews {
   BOOL direct = [self uic_directLayoutEligible];
   self.uic_directEligibilityGeneration = [self uic_constraintGeneration];
+  self.uic_directEligibilitySize = self.bounds.size;
   if (direct) {
     [self.alignmentStrategy removeAddedConstraints];
     [self.distributionStrategy removeAddedConstraints];
