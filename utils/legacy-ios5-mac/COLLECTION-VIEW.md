@@ -75,7 +75,10 @@ Static compilation and linkage are not device-execution proof. Test on a real
 iOS 5 device and on iOS 6 before claiming runtime qualification; the profile's
 `deviceExecution` remains `pending` until separately observed.
 
-## Hardware verification of the iOS 8-10 additions (round 7)
+## Hardware smoke coverage of the iOS 8-10 additions (round 7)
+
+These are scenario-specific smoke tests, not complete behavioural parity or
+performance qualification. Later changes require their own device reruns.
 
 | Device | Route | Verified |
 | --- | --- | --- |
@@ -90,3 +93,21 @@ of the source-built stdlib (`out/ios-stdlib`, `__text` 0x364284). The stock runt
 not. The same app built for armv7+arm64 at deployment 10 uses the native legacy route and passes a ten-step Foundation bridge
 check on the phone. So this is a routing limit for arm64-only builds, not a collection-view or stdlib-prespecialization bug,
 and it is separate from the armv7s startup crash in SCENE-LIFECYCLE.md (that one is in the source-built armv7s slice).
+
+### Round 25: current-source iPod touch 3 rerun
+
+The full runtime/toolchain rebuild and deployment-5/6 probe builds succeeded.
+The deployment-5 probe completed on iPod touch 3, iOS 5.1.1, with these checks
+passing on both axes: automatic-size initial proposal 50x50; sole preferred-size
+80x30 item centered in a 200x200 viewport; reload remeasured height 30 to 60;
+explicit layout invalidation remeasured height 60 to 45. This does not cover
+animated scrolling, arbitrary invalidation contexts, supplementary self-sizing,
+or every batch-update combination. The same-source Auto Layout direct-update
+simulator differential also passed.
+
+The iPod touch 5 was absent from USB for this rerun; the recent Apple iOS 6/7
+invalidation hook and shared-delegate changes are not newly hardware-qualified.
+The probe's historical timing output is not the corrected paired benchmark and
+must not be used to claim PST/native performance parity. Simulator benchmark
+results now include offset-setter work and alternate engine order, but remain
+CPU microbenchmarks rather than hardware frame-delivery measurements.
