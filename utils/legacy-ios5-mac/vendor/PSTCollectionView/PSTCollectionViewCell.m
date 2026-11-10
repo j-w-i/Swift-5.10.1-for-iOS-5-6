@@ -53,7 +53,10 @@
 
 - (void)applyLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
     if (layoutAttributes != _layoutAttributes) {
-        _layoutAttributes = layoutAttributes;
+        // A layout may mutate/reuse its attributes object after application.
+        // Keep an independent snapshot, as UIKit does, so equality checks and
+        // disappearing-item animations still refer to the applied geometry.
+        _layoutAttributes = [layoutAttributes copy];
 
         // Skip property writes whose value is already correct.  This matters for
         // freshly created cells (size/centre already match, everything else is a
