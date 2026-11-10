@@ -1769,7 +1769,14 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 - (BOOL)isPrefetchingEnabled { return !_pstPrefetchDisabled; }
 - (void)setPrefetchingEnabled:(BOOL)enabled {
     _pstPrefetchDisabled = !enabled;
-    if (!enabled) [_pstPrefetchedIndexPaths removeAllObjects];
+    if (!enabled) {
+        NSArray *cancelled = [[_pstPrefetchedIndexPaths allObjects] sortedArrayUsingSelector:@selector(compare:)];
+        // Clear before calling app code so reentrant disable does not cancel twice.
+        [_pstPrefetchedIndexPaths removeAllObjects];
+        id<PSTCollectionViewDataSourcePrefetching> source = _prefetchDataSource;
+        if (cancelled.count && [source respondsToSelector:@selector(collectionView:cancelPrefetchingForItemsAtIndexPaths:)])
+            [source collectionView:self cancelPrefetchingForItemsAtIndexPaths:cancelled];
+    }
 }
 
 /// UICollectionViewDataSourcePrefetching. While the bounds are moving, the items just beyond the visible

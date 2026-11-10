@@ -35,6 +35,17 @@
 }
 @end
 
+@interface CancelSource : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic,strong) NSArray *cancelled;
+@end
+@implementation CancelSource
+- (void)collectionView:(id)cv cancelPrefetchingForItemsAtIndexPaths:(NSArray *)paths {
+    self.calls++; self.cancelled=paths;
+    UICSetPrefetchingEnabled(cv, NULL, NO); // reentrant disable must not duplicate
+}
+@end
+
 static void require(BOOL condition, NSString *message) {
     if (!condition) { fprintf(stderr, "FAIL: %s\n", message.UTF8String); exit(1); }
 }
@@ -85,5 +96,14 @@ int main(void) { @autoreleasepool {
     SizeHookCollection *proxy = collection([ForwardingSizeDelegate new]);
     require(!UICInstallSizeHook(proxy), @"forwarding delegate not modified");
     require(class_getInstanceMethod([ForwardingSizeDelegate class], selector) == NULL, @"forwarding remains available");
-    puts("PASS: shared/inherited shims refresh each layout; app/forwarding sizing preserved; native IMPs unchanged");
+    CancelSource *source=[CancelSource new];
+    UICSetPrefetchDataSource(first, NULL, source);
+    NSArray *paths=@[[NSIndexPath indexPathForItem:8 inSection:0], [NSIndexPath indexPathForItem:9 inSection:0]];
+    objc_setAssociatedObject(first, &UICPrefetchSetKey, [NSMutableSet setWithArray:paths], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    UICSetPrefetchingEnabled(first, NULL, NO);
+    require(source.calls==1 && [source.cancelled isEqual:paths], @"disable cancels outstanding paths exactly once despite reentrancy");
+    require(!UICIsPrefetchingEnabled(first,NULL), @"disable state updated before callback");
+    UICSetPrefetchingEnabled(first,NULL,NO);
+    require(source.calls==1, @"repeated disable does not cancel twice");
+    puts("PASS: shared/inherited shims refresh each layout; app/forwarding sizing preserved; native IMPs unchanged; disabling prefetch cancels outstanding paths");
 } return 0; }

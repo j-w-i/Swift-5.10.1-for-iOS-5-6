@@ -300,7 +300,15 @@ static BOOL UICIsPrefetchingEnabled(id self, SEL _cmd) {
 }
 static void UICSetPrefetchingEnabled(id self, SEL _cmd, BOOL enabled) {
     objc_setAssociatedObject(self, &UICPrefetchDisabledKey, enabled ? nil : @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (!enabled) [(NSMutableSet *)objc_getAssociatedObject(self, &UICPrefetchSetKey) removeAllObjects];
+    if (!enabled) {
+        NSMutableSet *announced = objc_getAssociatedObject(self, &UICPrefetchSetKey);
+        NSArray *cancelled = [[announced allObjects] sortedArrayUsingSelector:@selector(compare:)];
+        [announced removeAllObjects];
+        id source = UICPrefetchDataSource(self, NULL);
+        SEL cancel = sel_registerName("collectionView:cancelPrefetchingForItemsAtIndexPaths:");
+        if (cancelled.count && [source respondsToSelector:cancel])
+            ((void (*)(id, SEL, id, id))objc_msgSend)(source, cancel, self, cancelled);
+    }
 }
 
 static void UICPrefetchAfterPass(UICollectionView *self) {
