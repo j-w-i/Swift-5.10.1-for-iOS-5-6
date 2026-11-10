@@ -34,3 +34,10 @@ warnings are expected in this configuration and must not be confused with a pass
 `EXTRA_LIBS=UIKit bash run-on-ipod.sh UIKitSemanticColors.swift TOOLCHAIN` checks the semantic
 background selectors used by the photo app. These are light-appearance fallbacks only on systems
 missing the native selectors.
+
+`UIKitSpinnerStyles.swift` is a UIKit-app test (install/launch as a bundle through SpringBoard,
+not the CLI runner). It tests legacy and modern spinner enum values (0/1/2/100/101), including
+initializer, setter and animation. UIKit system image tables are unavailable before UIApplicationMain;
+the direct CLI harness is therefore not a valid spinner test. Old UIKit
+can throw with an absurd array capacity when given value 101; the backport maps medium/large to
+gray/whiteLarge only when UIKit lacks its modern dynamic-color capability. Modern UIKit stays native.

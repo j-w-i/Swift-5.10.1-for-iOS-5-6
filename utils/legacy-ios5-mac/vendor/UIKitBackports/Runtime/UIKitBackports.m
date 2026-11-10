@@ -388,6 +388,31 @@ static void UICInstallSemanticBackgroundColors(void) {
     }
 }
 
+// iOS 13 added enum values 100/101 to an existing selector. Older UIKit
+// indexes private style tables with them and can throw before viewDidLoad.
+static id (*UICOriginalSpinnerInit)(id, SEL, NSInteger);
+static void (*UICOriginalSpinnerSet)(id, SEL, NSInteger);
+static NSInteger UICLegacySpinnerStyle(NSInteger style) {
+    return style == 100 ? 2 : (style == 101 ? 0 : style); // medium -> gray; large -> whiteLarge
+}
+static id UICSpinnerInit(id self, SEL cmd, NSInteger style) {
+    return UICOriginalSpinnerInit(self, cmd, UICLegacySpinnerStyle(style));
+}
+static void UICSpinnerSet(id self, SEL cmd, NSInteger style) {
+    UICOriginalSpinnerSet(self, cmd, UICLegacySpinnerStyle(style));
+}
+static void UICInstallSpinnerStyles(void) {
+    // Dynamic color API is an exported capability of the same UIKit generation.
+    // Do not replace modern implementations; no OS-version builds are needed.
+    Class colorMeta = object_getClass(objc_getClass("UIColor"));
+    if (class_getInstanceMethod(colorMeta, sel_registerName("colorWithDynamicProvider:"))) return;
+    Class cls = objc_getClass("UIActivityIndicatorView");
+    Method init = class_getInstanceMethod(cls, sel_registerName("initWithActivityIndicatorStyle:"));
+    Method setter = class_getInstanceMethod(cls, sel_registerName("setActivityIndicatorViewStyle:"));
+    if (init) UICOriginalSpinnerInit = (void *)method_setImplementation(init, (IMP)UICSpinnerInit);
+    if (setter) UICOriginalSpinnerSet = (void *)method_setImplementation(setter, (IMP)UICSpinnerSet);
+}
+
 __attribute__((constructor)) static void UICInstallBackportMethods(void) {
     @autoreleasepool {
         // Constructor work is limited to Objective-C runtime registration: no
@@ -400,6 +425,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallAutoAdjustDefault();
         UICInstallNativeSafeAreaGuide();
         UICInstallSemanticBackgroundColors();
+        UICInstallSpinnerStyles();
         UICInstallConstraintItemUnwrapping();
     }
 }
