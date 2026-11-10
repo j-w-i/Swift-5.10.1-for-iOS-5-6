@@ -105,5 +105,12 @@ int main(void) { @autoreleasepool {
     require(!UICIsPrefetchingEnabled(first,NULL), @"disable state updated before callback");
     UICSetPrefetchingEnabled(first,NULL,NO);
     require(source.calls==1, @"repeated disable does not cancel twice");
+    UICSetPrefetchingEnabled(first,NULL,YES);
+    objc_setAssociatedObject(first, &UICPrefetchSetKey, [NSMutableSet setWithArray:paths], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    CancelSource *replacement=[CancelSource new];
+    UICSetPrefetchDataSource(first,NULL,replacement);
+    require(source.calls==1 && replacement.calls==0, @"replacement itself does not cancel");
+    UICSetPrefetchingEnabled(first,NULL,NO);
+    require(source.calls==1 && replacement.calls==1 && [replacement.cancelled isEqual:paths], @"disable delivers old outstanding paths to current source");
     puts("PASS: shared/inherited shims refresh each layout; app/forwarding sizing preserved; native IMPs unchanged; disabling prefetch cancels outstanding paths");
 } return 0; }

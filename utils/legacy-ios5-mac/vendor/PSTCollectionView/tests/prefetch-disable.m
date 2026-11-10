@@ -22,4 +22,12 @@ int main(void) { @autoreleasepool {
     cv.prefetchingEnabled=NO;
     if (source.calls!=1) return 1;
     puts("PASS: PST disable cancels outstanding paths once, including reentrant disable");
+    cv.prefetchingEnabled=YES;
+    [cv setValue:[NSMutableSet setWithArray:paths] forKey:@"pstPrefetchedIndexPaths"];
+    CancelProbe *replacement=[CancelProbe new];
+    cv.prefetchDataSource=replacement;
+    if (source.calls!=1 || replacement.calls!=0) return 1;
+    cv.prefetchingEnabled=NO;
+    if (source.calls!=1 || replacement.calls!=1 || ![replacement.paths isEqual:paths]) return 1;
+    puts("PASS: replacing source preserves outstanding paths and disable cancels through current source");
 } return 0; }
