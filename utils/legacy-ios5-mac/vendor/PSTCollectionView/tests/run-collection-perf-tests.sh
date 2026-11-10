@@ -106,7 +106,7 @@ doc = json.load(open(sys.argv[1]))
 reference = doc.get('nativeReference')
 if not reference:
     raise SystemExit(0)
-print(f"\nnative UIKit reference vs PST (reps={reference['reps']}, layout path only, ns; ratio = pst/native):")
+print(f"\nnative UIKit reference vs PST (reps={reference['reps']}, synchronous mutation + layout, ns; ratio = pst/native):")
 print(f"{'scenario':28} {'native min':>12} {'native med':>12} {'pst min':>12} {'pst med':>12} {'ratio med':>10} {'ratio min':>10}")
 for row in reference['scenarios']:
     native = row['native']

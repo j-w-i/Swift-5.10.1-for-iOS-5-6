@@ -466,7 +466,8 @@ static void RunAllScenarios(HarnessRecorder *recorder, NSMutableDictionary *coun
 // The same scenario is executed twice with identical geometry: once against
 // UIKit's native UICollectionView + UICollectionViewFlowLayout and once against
 // PSTCollectionView + PSTCollectionViewFlowLayout.  Only the layout path is
-// measured: a sample is the sum of the layout passes the scenario triggers.
+// measured, including the mutation that triggers it (offset assignment, reload,
+// batch update, or geometry change). A setter can perform synchronous layout work.
 // Harness setup, view creation and the warm-up pass of steady-state scenarios
 // are outside the measured region.  min/median over several fresh repetitions.
 
@@ -588,6 +589,14 @@ static HarnessTimingBundle *HarnessMakeTimingBundle(HarnessEngine engine, Harnes
 // One full layout pass, as CoreAnimation would drive it.
 static uint64_t HarnessTimedLayoutPass(UIView *view) {
     uint64_t start = HarnessNowNanoseconds();
+    [view setNeedsLayout];
+    [view layoutIfNeeded];
+    return HarnessNowNanoseconds() - start;
+}
+
+static uint64_t HarnessTimedScrollStep(UIScrollView *view, CGPoint offset) {
+    uint64_t start = HarnessNowNanoseconds();
+    view.contentOffset = offset;
     [view setNeedsLayout];
     [view layoutIfNeeded];
     return HarnessNowNanoseconds() - start;
@@ -725,8 +734,7 @@ static NSArray<NSDictionary *> *HarnessRunNativeReferenceComparison(int reps) {
         (void)HarnessTimedLayoutPass((UIView *)scrollView); // warm
         uint64_t total = 0;
         for (int i = 0; i < 10; i++) {
-            scrollView.contentOffset = CGPointMake(scrollView.contentOffset.x, scrollView.contentOffset.y + 87.0);
-            total += HarnessTimedLayoutPass((UIView *)scrollView);
+            total += HarnessTimedScrollStep(scrollView, CGPointMake(scrollView.contentOffset.x, scrollView.contentOffset.y + 87.0));
         }
         return total;
     });
@@ -782,8 +790,7 @@ static NSArray<NSDictionary *> *HarnessRunNativeReferenceComparison(int reps) {
         (void)HarnessTimedLayoutPass((UIView *)scrollView); // warm
         uint64_t total = 0;
         for (int i = 0; i < 6; i++) {
-            scrollView.contentOffset = CGPointMake(0, scrollView.contentOffset.y + 150.0);
-            total += HarnessTimedLayoutPass((UIView *)scrollView);
+            total += HarnessTimedScrollStep(scrollView, CGPointMake(0, scrollView.contentOffset.y + 150.0));
         }
         return total;
     });
@@ -824,7 +831,7 @@ int main(int argc, char *argv[]) {
             @"format" : @"pst-collection-perf-v1",
             @"scenarios" : recorder.scenarios,
             @"counters" : counters,
-            @"nativeReference" : @{@"reps" : @9, @"scenarios" : nativeReference},
+            @"nativeReference" : @{@"reps" : @9, @"timingScope" : @"synchronous-mutation-and-layout-v2", @"scenarios" : nativeReference},
         };
         NSError *error = nil;
         NSData *data = [NSJSONSerialization dataWithJSONObject:payload
