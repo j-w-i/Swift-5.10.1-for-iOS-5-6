@@ -28,6 +28,9 @@
 }
 @end
 
+@interface DerivedAppSizeDelegate : AppSizeDelegate @end
+@implementation DerivedAppSizeDelegate @end
+
 @interface ForwardingSizeDelegate : NSObject @end
 @implementation ForwardingSizeDelegate
 - (BOOL)respondsToSelector:(SEL)selector {
@@ -90,9 +93,20 @@ int main(void) { @autoreleasepool {
     SizeHookCollection *app = collection([AppSizeDelegate new]);
     SEL selector = @selector(collectionView:layout:sizeForItemAtIndexPath:);
     IMP original = [app.testDelegate methodForSelector:selector];
-    require(!UICInstallSizeHook(app), @"app method not replaced");
-    require([app.testDelegate methodForSelector:selector] == original, @"app IMP preserved");
-    require(app.testLayout.flagsRefreshes == 0, @"app flags untouched");
+    require(UICInstallSizeHook(app), @"app method wrapped");
+    require([app.testDelegate methodForSelector:selector] != original, @"app wrapper installed");
+    CGSize (*answer)(id,SEL,id,id,id)=(void *)[app.testDelegate methodForSelector:selector];
+    require(CGSizeEqualToSize(answer(app.testDelegate,selector,app,app.testLayout,measuredPath),CGSizeMake(31,47)), @"zero estimates preserve original app answer");
+    UICEstimatedItemSizeSetter(app.testLayout,NULL,CGSizeMake(50,50));
+    require(CGSizeEqualToSize(answer(app.testDelegate,selector,app,app.testLayout,measuredPath),CGSizeMake(31,47)), @"app answer seeds estimated sizing");
+    objc_setAssociatedObject(app.testLayout,&UICMeasuredKey,[NSMutableDictionary dictionaryWithObject:[NSValue valueWithCGSize:CGSizeMake(80,99)] forKey:measuredPath],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    require(CGSizeEqualToSize(answer(app.testDelegate,selector,app,app.testLayout,measuredPath),CGSizeMake(80,99)), @"measured answer overrides app seed");
+    require(!UICInstallSizeHook(app), @"app wrapper not installed twice");
+    require([app.testDelegate methodForSelector:selector] == (IMP)answer, @"wrapper remains identical");
+    SizeHookCollection *inheritedApp=collection([DerivedAppSizeDelegate new]);
+    require(!UICInstallSizeHook(inheritedApp), @"inherited app wrapper reused");
+    require(inheritedApp.testLayout.flagsRefreshes==1, @"inherited app layout flags refreshed");
+    require(CGSizeEqualToSize(answer(inheritedApp.testDelegate,selector,inheritedApp,inheritedApp.testLayout,measuredPath),CGSizeMake(31,47)), @"inherited original answer preserved without estimates");
     SizeHookCollection *proxy = collection([ForwardingSizeDelegate new]);
     require(!UICInstallSizeHook(proxy), @"forwarding delegate not modified");
     require(class_getInstanceMethod([ForwardingSizeDelegate class], selector) == NULL, @"forwarding remains available");

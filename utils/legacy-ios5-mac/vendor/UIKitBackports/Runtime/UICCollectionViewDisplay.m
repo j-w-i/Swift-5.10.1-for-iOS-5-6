@@ -119,6 +119,7 @@ void UICInstallCollectionViewDisplay(void) {
 // differs the layout is invalidated and laid out again, bounded to a few rounds.
 
 static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey;
+static char UICSizeWrapperKey;
 static IMP UICOriginalLayoutSubviews, UICOriginalPrepareLayout, UICOriginalReloadData;
 static IMP UICOriginalInvalidateFlowLayout;
 
@@ -154,8 +155,9 @@ static CGSize UICDelegateSizeForItem(id self, SEL _cmd, UICollectionView *collec
     return [layout itemSize];
 }
 
-/// Makes the layout's delegate answer sizeForItem, unless it already does (an app-provided answer always wins,
-/// as on iOS 8). Returns YES when the hook was newly installed.
+/// Makes the layout's delegate answer sizeForItem. An app-provided answer seeds
+/// estimated layouts; measured cell sizes then win. Without estimates the app
+/// answer is unchanged. Returns YES when a hook/wrapper was newly installed.
 static BOOL UICInstallSizeHook(UICollectionView *collectionView) {
     id delegate = [collectionView delegate];
     if (!delegate) return NO;
@@ -165,7 +167,37 @@ static BOOL UICInstallSizeHook(UICollectionView *collectionView) {
     // The shim may already be inherited or have been installed for another collection view.
     // Each flow layout caches delegate capabilities independently: refresh this layout too.
     // An app-provided implementation remains authoritative and is never changed here.
-    if (existing && method_getImplementation(existing) != (IMP)UICDelegateSizeForItem) return NO;
+    if (existing && method_getImplementation(existing) != (IMP)UICDelegateSizeForItem) {
+        IMP current = method_getImplementation(existing);
+        BOOL wrapped = NO;
+        for (Class cls = delegateClass; cls; cls = class_getSuperclass(cls)) {
+            if ([objc_getAssociatedObject(cls, &UICSizeWrapperKey) pointerValue] == current) { wrapped = YES; break; }
+        }
+        if (!wrapped) {
+            CGSize (*original)(id, SEL, id, id, id) = (void *)current;
+            IMP wrapper = imp_implementationWithBlock(^CGSize(id receiver, UICollectionView *cv, UICollectionViewFlowLayout *layout, NSIndexPath *path) {
+                if (!UICLayoutIsSelfSizing(layout)) return original(receiver, selector, cv, layout, path);
+                NSMutableDictionary *sizes = objc_getAssociatedObject(layout, &UICMeasuredKey);
+                NSValue *measured = [sizes objectForKey:path];
+                if (measured) return [measured CGSizeValue];
+                CGSize seed = original(receiver, selector, cv, layout, path);
+                if (!sizes) {
+                    sizes = [NSMutableDictionary dictionary];
+                    objc_setAssociatedObject(layout, &UICMeasuredKey, sizes, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                }
+                [sizes setObject:[NSValue valueWithCGSize:seed] forKey:path];
+                return seed;
+            });
+            // Add an override when inherited; never replace the superclass's method.
+            if (!class_addMethod(delegateClass, selector, wrapper, method_getTypeEncoding(existing)))
+                class_replaceMethod(delegateClass, selector, wrapper, method_getTypeEncoding(existing));
+            objc_setAssociatedObject(delegateClass, &UICSizeWrapperKey, [NSValue valueWithPointer:wrapper], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        id layout = [collectionView collectionViewLayout];
+        SEL flags = sel_registerName("_updateDelegateFlags");
+        if ([layout respondsToSelector:flags]) ((void (*)(id, SEL))objc_msgSend)(layout, flags);
+        return !wrapped;
+    }
     if (!existing && [delegate respondsToSelector:selector]) return NO; // forwarding/proxy delegate
     char types[64];
     snprintf(types, sizeof types, "%s@:@@@", @encode(CGSize));
