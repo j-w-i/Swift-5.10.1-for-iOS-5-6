@@ -822,8 +822,14 @@ static void UICRoute(Class cls, SEL selector, IMP implementation, const char *ty
         class_addMethod(cls, selector, implementation, types);
     }
 }
+static NSMutableSet *UICAdaptedClasses;
 static void UICAdaptApplicationDelegate(id delegate) {
+    if (!delegate) return;
     Class cls = object_getClass(delegate);
+    if (!UICAdaptedClasses) UICAdaptedClasses = [NSMutableSet set];
+    NSString *key = NSStringFromClass(cls);
+    if ([UICAdaptedClasses containsObject:key]) return;
+    [UICAdaptedClasses addObject:key];
     UICWrapLifecycle(cls, @selector(applicationDidBecomeActive:));
     UICWrapLifecycle(cls, @selector(applicationWillResignActive:));
     UICWrapLifecycle(cls, @selector(applicationDidEnterBackground:));
@@ -947,7 +953,7 @@ static void UICDidFinishLaunching(NSNotification *note) {
     if (UICSceneMode) return;
     UICManifest = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIApplicationSceneManifest"];
     if (![UICManifest isKindOfClass:[NSDictionary class]] || !UICConfigurationDictionary(nil)) { UICManifest = nil; return; }
-    UICAdaptApplicationDelegate([UIApplication sharedApplication].delegate);
+    UICAdaptApplicationDelegate([UIApplication sharedApplication].delegate);   // no-op when already adapted
     // UIKit connects after the launch notification has been delivered to every observer.
     UICSceneMode = YES;               // from here the application-level callbacks belong to the scene
     UICConnectPending = YES;
@@ -1009,6 +1015,18 @@ static void UICObserve(NSString *name, void (*handler)(NSNotification *)) {
 
 /// Public entry: registers the scene classes (only those UIKit lacks) and arms the
 /// driver. Called from the backports image constructor.
+static IMP UICOriginalSetDelegate;
+static BOOL UICManifestPresent(void) {
+    id manifest = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIApplicationSceneManifest"];
+    return [manifest isKindOfClass:[NSDictionary class]];
+}
+static void UICSetDelegate(id self, SEL _cmd, id delegate) {
+    // UIKit records which optional delegate methods exist at assignment, so the
+    // scene routing must be in place before the original setter runs.
+    if (delegate && UICManifestPresent()) UICAdaptApplicationDelegate(delegate);
+    ((void (*)(id, SEL, id))UICOriginalSetDelegate)(self, _cmd, delegate);
+}
+
 void UICInstallUserActivity(void);
 void UICInstallSceneLifecycle(void) {
     UICInstallUserActivity();
@@ -1040,6 +1058,9 @@ void UICInstallSceneLifecycle(void) {
         UICOriginalWindowNextResponder = method_setImplementation(next, (IMP)UICWindowNextResponder);
     UICAddMissingMethods(objc_getClass("UIApplication"), [UICApplicationAdditions class]);
 
+    Method setter = class_getInstanceMethod(objc_getClass("UIApplication"), @selector(setDelegate:));
+    if (setter && !UICOriginalSetDelegate)
+        UICOriginalSetDelegate = method_setImplementation(setter, (IMP)UICSetDelegate);
     UICObserve(UIApplicationDidFinishLaunchingNotification, UICDidFinishLaunching);
     UICObserve(UIApplicationDidBecomeActiveNotification, UICDidBecomeActive);
     UICObserve(UIApplicationWillResignActiveNotification, UICWillResignActive);
