@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fail closed on geometry differences outside the explicitly recorded gaps.
 
-The sole-item gaps below are exact known outputs, not a broad tolerance. Other
-item coordinates may differ only by at most one device pixel; sizes and content
+Sole-item geometry must match exactly. Other item coordinates may differ only
+by at most one device pixel; sizes and content
 extents must match exactly. This is a bounded regression gate, not exact parity.
 """
 import pathlib
@@ -38,18 +38,11 @@ def compare(native, pst, scale):
     rounded = 0
     for key, n in native.items():
         p = pst[key]
-        if key == (1, 0):
-            assert n == {'content': (200, 30), 'cells': {0: (60, 0, 80, 30)}}, 'native sole vertical oracle changed'
-            assert p == {'content': (80, 30), 'cells': {0: (0, 0, 80, 30)}}, 'sole vertical gap changed'
-            known += 1
-            continue
         assert p['content'] == n['content'], f'content extent mismatch {key}: {n} vs {p}'
         for index, nf in n['cells'].items():
             pf = p['cells'][index]
-            if key == (1, 1):
-                assert nf == (0, 85, 80, 30) and pf == (0, 0, 80, 30), 'sole horizontal gap changed'
-                known += 1
-                continue
+            if key[0] == 1:
+                assert pf == nf, f'sole-item centering mismatch {key}: {nf} vs {pf}'
             assert pf[2:] == nf[2:], f'cell size mismatch {key}/{index}'
             for a, b in zip(nf[:2], pf[:2]):
                 assert abs(a - b) <= 1.0 / scale + 0.0001, f'position mismatch {key}/{index}: {nf} vs {pf}'
@@ -64,4 +57,4 @@ if __name__ == '__main__':
         sys.exit(f'FAIL: {error}')
     print(f'PASS: bounded automatic-size geometry gate; {known} known sole-item gaps, {rounded} subpixel differences')
     if known or rounded:
-        print('NOT exact native parity: sole-item centering/content width and pixel rounding remain unresolved')
+        print('NOT exact native parity: pixel rounding remains unresolved')

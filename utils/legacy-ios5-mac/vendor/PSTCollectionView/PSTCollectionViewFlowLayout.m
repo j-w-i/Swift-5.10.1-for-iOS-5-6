@@ -342,6 +342,7 @@ static char kPSTCachedItemRectsKey;
 
     _data = [PSTGridLayoutInfo new]; // clear old layout data
     _data.horizontal = self.scrollDirection == PSTCollectionViewScrollDirectionHorizontal;
+    _data.selfSizing = [self pstUsesSelfSizing];
     _visibleBounds = self.collectionView.bounds;
     CGSize collectionViewSize = _visibleBounds.size;
     _data.dimension = _data.horizontal ? collectionViewSize.height : collectionViewSize.width;
@@ -591,6 +592,8 @@ static char kPSTCachedItemRectsKey;
     // union can be much shorter than the available height.
     if (_data.horizontal && _data.sections.count)
         contentSize.height = MAX(contentSize.height, _data.dimension);
+    else if (_data.selfSizing && _data.sections.count)
+        contentSize.width = MAX(contentSize.width, _data.dimension);
     _data.contentSize = contentSize;
 }
 

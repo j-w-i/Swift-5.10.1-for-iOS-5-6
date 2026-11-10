@@ -107,6 +107,19 @@
             usedItemCount = itemIndex;
         }
 
+        // Native self-sizing flow layout centers a section containing just one item
+        // across its non-scrolling axis. Do not apply this to an incomplete last row
+        // of a larger section, or to legacy fixed-size layouts.
+        BOOL soleSelfSizingItem = self.section.layoutInfo.selfSizing && self.section.itemsCount == 1;
+        if (soleSelfSizingItem) {
+            CGSize size = self.fixedItemSize ? self.section.itemSize : ((PSTGridLayoutItem *)self.items[0]).itemFrame.size;
+            CGFloat available = self.section.layoutInfo.dimension - (isHorizontal
+                ? self.section.sectionMargins.top + self.section.sectionMargins.bottom
+                : self.section.sectionMargins.left + self.section.sectionMargins.right);
+            leftOverSpace = MAX(0, available - (isHorizontal ? size.height : size.width));
+            usedItemCount = 1;
+        }
+
         // push everything to the right if right-aligning and divide in half for centered
         // currently there is no public API supporting this behavior
         CGPoint itemOffset = CGPointZero;
@@ -115,7 +128,8 @@
         }else if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentCentered ||
                 (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify && usedItemCount == 1)) {
             // Special case one item row to split leftover space in half
-            itemOffset.x += leftOverSpace / 2;
+            if (soleSelfSizingItem && isHorizontal) itemOffset.y += leftOverSpace / 2;
+            else itemOffset.x += leftOverSpace / 2;
         }
 
         // calculate the justified spacing among all items in a row if we are using

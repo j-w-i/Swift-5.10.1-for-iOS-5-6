@@ -24,6 +24,7 @@
 @property (nonatomic, assign) CGFloat dimension;
 
 @property (nonatomic, assign) BOOL horizontal;
+@property (nonatomic, assign) BOOL selfSizing;
 @property (nonatomic, assign) BOOL leftToRight;
 @property (nonatomic, assign) CGSize contentSize;
 

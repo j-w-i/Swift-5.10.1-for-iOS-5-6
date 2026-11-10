@@ -44,6 +44,7 @@
     layoutInfo.usesFloatingHeaderFooter = self.usesFloatingHeaderFooter;
     layoutInfo.dimension = self.dimension;
     layoutInfo.horizontal = self.horizontal;
+    layoutInfo.selfSizing = self.selfSizing;
     layoutInfo.leftToRight = self.leftToRight;
     layoutInfo.contentSize = self.contentSize;
     return layoutInfo;
