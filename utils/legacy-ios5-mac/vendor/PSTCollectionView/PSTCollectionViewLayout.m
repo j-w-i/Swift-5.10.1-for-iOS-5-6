@@ -149,6 +149,14 @@
     [self updateFrame];
 }
 
+- (CGAffineTransform)transform {
+    return CATransform3DIsAffine(_transform3D) ? CATransform3DGetAffineTransform(_transform3D) : CGAffineTransformIdentity;
+}
+
+- (void)setTransform:(CGAffineTransform)transform {
+    self.transform3D = CATransform3DMakeAffineTransform(transform);
+}
+
 - (CGRect)frame {
     if (CATransform3DIsIdentity(_transform3D)) return _frame;
     // UIKit stores size/center independently of the transform; frame is the

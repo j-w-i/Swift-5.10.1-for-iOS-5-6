@@ -25,6 +25,7 @@ typedef NS_ENUM(NSUInteger, PSTCollectionViewItemType) {
 @property (nonatomic) CGPoint center;
 @property (nonatomic) CGSize size;
 @property (nonatomic) CATransform3D transform3D;
+@property (nonatomic) CGAffineTransform transform;
 @property (nonatomic) CGFloat alpha;
 @property (nonatomic) NSInteger zIndex; // default is 0
 @property (nonatomic, getter=isHidden) BOOL hidden; // As an optimization, PSTCollectionView might not create a view for items whose hidden attribute is YES

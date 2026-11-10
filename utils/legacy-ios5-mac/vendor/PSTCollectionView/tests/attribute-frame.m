@@ -25,4 +25,15 @@ int main(void) { @autoreleasepool {
     check(a,CGRectMake(35,-5,30,80),"rotation");
     a.transform3D=CATransform3DMakeTranslation(7,9,0); check(a,CGRectMake(17,29,80,30),"translation");
     a.center=CGPointMake(100,200); check(a,CGRectMake(67,194,80,30),"center assignment while translated");
+    CGAffineTransform affine=CGAffineTransformMake(2,3,4,5,6,7);
+    a.transform=affine;
+    if (!CGAffineTransformEqualToTransform(a.transform,affine) || !CATransform3DEqualToTransform(a.transform3D,CATransform3DMakeAffineTransform(affine))) return 1;
+    UICollectionViewLayoutAttributes *affineCopy=[a copy];
+    if (!CGAffineTransformEqualToTransform(affineCopy.transform,affine)) return 1;
+    CATransform3D perspective=CATransform3DIdentity; perspective.m13=0.4; perspective.m34=-0.01; perspective.m41=17;
+    a.transform3D=perspective;
+    if (!CGAffineTransformIsIdentity(a.transform)) return 1;
+    a.transform=CGAffineTransformIdentity;
+    if (!CATransform3DIsIdentity(a.transform3D)) return 1;
+    puts("PASS: affine transform property conversion, copy, nonaffine fallback and reset");
 } return 0; }
