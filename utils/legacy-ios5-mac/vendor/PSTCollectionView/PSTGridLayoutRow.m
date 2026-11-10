@@ -112,7 +112,7 @@
         // of a larger section, or to legacy fixed-size layouts.
         BOOL soleSelfSizingItem = self.section.layoutInfo.selfSizing && self.section.itemsCount == 1;
         if (soleSelfSizingItem) {
-            CGSize size = self.fixedItemSize ? self.section.itemSize : ((PSTGridLayoutItem *)self.items[0]).itemFrame.size;
+            CGSize size = self.fixedItemSize ? self.section.itemSize : ((PSTGridLayoutItem *)[self.items objectAtIndex:0]).itemFrame.size;
             CGFloat available = self.section.layoutInfo.dimension - (isHorizontal
                 ? self.section.sectionMargins.top + self.section.sectionMargins.bottom
                 : self.section.sectionMargins.left + self.section.sectionMargins.right);
