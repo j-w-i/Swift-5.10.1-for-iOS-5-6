@@ -10,6 +10,8 @@ it** and drives launch / foreground / background / URL / user-activity delivery 
 `UIApplicationSceneManifest` in Info.plist. On iOS 13+ nothing is registered or driven.
 
 ## Verified (oracle = iOS 27 simulator UIKit)
+* Final-build gate: iPod (iOS 5.1.1) launch → activate → resign → background → foreground → activate yields an event sequence
+  (delegate callbacks + scene/application notifications) IDENTICAL to the simulator's, 20 of 20 events. Evidence: `evidence/native-final.txt`, `evidence/ipod-final.txt`.
 * Lifecycle + notification order: launch, activate, resign, background, foreground — event names match.
 * Descriptions/equality/copy/secure coding of UISceneConfiguration and UISceneActivationConditions.
 * Public method surface of the scene classes (private Apple-only methods are not replicated).
