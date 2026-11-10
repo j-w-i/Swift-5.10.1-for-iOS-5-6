@@ -27,7 +27,11 @@ it** and drives launch / foreground / background / URL / user-activity delivery 
   orientation change, so launch-time call counts differ.
 * armv7s: built, not run.
 * The simulator's URL-while-backgrounded run did not reach the probe, so URL ordering around activation is unverified against it.
-* Not exercised: sceneDidDisconnect, state restoration, shortcut items, storyboard scene windows,
+* Verified (iPhone 6): shortcut items reach `windowScene(_:performActionForShortcutItem:completionHandler:)` and the completion handler runs;
+  user-activity (`willContinue`) routes to the scene delegate (iPod + iPhone 6). Shortcut items do not exist on iOS 5 (class absent).
+* State restoration: `stateRestorationActivityForScene:` is requested twice before `sceneDidEnterBackground:` and
+  `restoreInteractionState…` is delivered on every foreground entry, in the native order (iPod).
+* Not exercised: sceneDidDisconnect (the simulator did not send it either when the app was killed), storyboard scene windows,
   requestSceneSession* calls, multiple scenes (always reports unsupported, as an iPhone does natively).
 * Probe apps were installed as system apps (/Applications) on jailbroken devices, not as sandboxed user apps.
 
