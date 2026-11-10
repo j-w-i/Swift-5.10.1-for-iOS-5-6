@@ -341,6 +341,23 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       // Implemented for the legacy runtime by the UIKit backports: measured with
       // CoreText using the same attribute-name strings UIKit exports.
       return member == "sizeWithAttributes" ? 7 : 0;
+    if (owner == "UICollectionView") {
+      // iOS 9 supplementary-view accessors, implemented by PSTCollectionView and added to Apple's
+      // class by UICCollectionViewDisplay.m below the OS that ships them.
+      if (member == "visibleSupplementaryViewsOfKind" ||
+          member == "indexPathsForVisibleSupplementaryElementsOfKind")
+        return 9;
+      return legacyUIKitFamilyCeiling(owner);
+    }
+    // iOS 8 display callbacks on the delegate protocol.
+    if (owner == "UICollectionViewDelegate" && member == "collectionView") {
+      if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl)) {
+        std::string full = method->getSelector().getAsString();
+        if (full == "collectionView:willDisplayCell:forItemAtIndexPath:" ||
+            full == "collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:")
+          return 8;
+      }
+    }
     if (owner == "UIScrollView")
       // The backport API predates Apple's native iOS 10 property. Do not also
       // expose iOS 11 contentLayoutGuide/frameLayoutGuide (unsupported geometry).

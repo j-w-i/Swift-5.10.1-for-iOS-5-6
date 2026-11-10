@@ -10,6 +10,7 @@
 static void UICEnsureSwiftBridge(void);
 void UICInstallSceneLifecycle(void);
 void UICInstallTraitCollection(void);
+void UICInstallCollectionViewDisplay(void);
 
 NSDictionary *UICDictionaryOfVariableBindings(NSString *names, id firstValue, ...) {
     NSArray *keys = [names componentsSeparatedByString:@","];
@@ -451,6 +452,7 @@ __attribute__((constructor)) static void UICInstallBackportMethods(void) {
         UICInstallLegacyLabelTextInvalidation();
         UICInstallConstraintItemUnwrapping();
         UICInstallTraitCollection();
+        UICInstallCollectionViewDisplay();
         UICInstallSceneLifecycle();
     }
 }

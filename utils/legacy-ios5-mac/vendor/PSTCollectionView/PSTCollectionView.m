@@ -770,6 +770,26 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     return indexPath;
 }
 
+- (NSArray *)visibleSupplementaryViewsOfKind:(NSString *)elementKind {
+    NSMutableArray *views = [NSMutableArray array];
+    [_allVisibleViewsDict enumerateKeysAndObjectsUsingBlock:^(PSTCollectionViewItemKey *key, id view, BOOL *stop) {
+        if (key.type != PSTCollectionViewItemTypeSupplementaryView) return;
+        if (elementKind && ![key.identifier isEqualToString:elementKind]) return;
+        [views addObject:view];
+    }];
+    return views;
+}
+
+- (NSArray *)indexPathsForVisibleSupplementaryElementsOfKind:(NSString *)elementKind {
+    NSMutableArray *paths = [NSMutableArray array];
+    [_allVisibleViewsDict enumerateKeysAndObjectsUsingBlock:^(PSTCollectionViewItemKey *key, id view, BOOL *stop) {
+        if (key.type != PSTCollectionViewItemTypeSupplementaryView) return;
+        if (elementKind && ![key.identifier isEqualToString:elementKind]) return;
+        [paths addObject:key.indexPath];
+    }];
+    return paths;
+}
+
 - (PSTCollectionViewCell *)cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     // NSInteger index = [_collectionViewData globalIndexForItemAtIndexPath:indexPath];
     // TODO Apple uses some kind of globalIndex for this.

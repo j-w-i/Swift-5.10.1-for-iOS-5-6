@@ -97,6 +97,9 @@ __attribute__((swift_name("UICollectionView")))
 - (NSArray *)visibleCells;
 
 - (NSArray *)indexPathsForVisibleItems;
+// Supplementary views currently on screen (iOS 9). A nil kind matches every kind.
+- (NSArray *)visibleSupplementaryViewsOfKind:(NSString *)elementKind;
+- (NSArray *)indexPathsForVisibleSupplementaryElementsOfKind:(NSString *)elementKind;
 
 // Interacting with the collection view.
 
