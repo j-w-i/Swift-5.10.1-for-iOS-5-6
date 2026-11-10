@@ -862,7 +862,7 @@ int main(int argc, char *argv[]) {
         };
         NSError *error = nil;
         NSData *data = [NSJSONSerialization dataWithJSONObject:payload
-                                                       options:(NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys)
+                                                       options:NSJSONWritingPrettyPrinted
                                                          error:&error];
         if (!data) {
             fprintf(stderr, "serialization failed: %s\n", error.localizedDescription.UTF8String);
@@ -889,17 +889,10 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "cannot parse golden file: %s\n", error.localizedDescription.UTF8String);
             return 66;
         }
-        NSData *goldenGeometry = [NSJSONSerialization dataWithJSONObject:golden[@"scenarios"]
-                                                                 options:(NSJSONWritingSortedKeys)
-                                                                   error:&error];
-        NSData *actualGeometry = [NSJSONSerialization dataWithJSONObject:recorder.scenarios
-                                                                options:(NSJSONWritingSortedKeys)
-                                                                  error:&error];
-        if (!goldenGeometry || !actualGeometry) {
-            fprintf(stderr, "comparison serialization failed\n");
-            return 70;
-        }
-        if (![goldenGeometry isEqualToData:actualGeometry]) {
+
+        // Compare parsed JSON values; dictionary key order is immaterial.
+        // Sorted-key serialization is unavailable before iOS 11.
+        if (![golden[@"scenarios"] isEqual:recorder.scenarios]) {
             fprintf(stderr, "FAIL: visible cells/frames/content geometry differs from golden file\n");
             fprintf(stderr, "golden: %s\n", goldenPath.UTF8String);
             return 1;
