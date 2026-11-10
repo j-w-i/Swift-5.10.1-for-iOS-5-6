@@ -30,3 +30,13 @@ it** and drives launch / foreground / background / URL / user-activity delivery 
 * Not exercised: sceneDidDisconnect, state restoration, shortcut items, storyboard scene windows,
   requestSceneSession* calls, multiple scenes (always reports unsupported, as an iPhone does natively).
 * Probe apps were installed as system apps (/Applications) on jailbroken devices, not as sandboxed user apps.
+
+## UITraitCollection (iOS 8) — `Runtime/UICTraitCollection.m`
+Registered only when UIKit lacks the class (iOS < 8). Oracle: iOS 27 simulator.
+* Verified on the iPod (iOS 5.1.1): unspecified defaults, per-trait factories, later-wins merge, `containsTraitsInCollection:`,
+  equality/hash/copy, descriptions, secure coding round trip, enum values, screen/window/view-controller/subview/child-override
+  resolution (iPhone/iPod: compact width, regular height portrait, compact height landscape), override readback, and
+  `traitCollectionDidChange:` on rotation (controller + view).
+* Not replicated: `currentTraitCollection`/`performAsCurrentTraitCollection:`, dynamic appearance, image configuration,
+  `traitCollectionWithTraits:`/`ByModifyingTraits:`, and Apple's private traits (image dynamic range, HDR headroom, scene capture).
+* Not run on: iPhone 6, armv7s. Screen values come from the device (scale 1, sRGB on the iPod) so they differ from the simulator's.
