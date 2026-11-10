@@ -38,8 +38,18 @@ int main(void) { @autoreleasepool {
     require([ps.indexPath isEqual:ns.indexPath] && [ps.representedElementKind isEqual:ns.representedElementKind],"copy preserves supplementary identity");
     require((NSInteger)ps.representedElementCategory==(NSInteger)ns.representedElementCategory,"copy preserves category");
     require(CGRectEqualToRect(ps.frame,pa.frame) && CGSizeEqualToSize(ps.size,ns.size) && CGPointEqualToPoint(ps.center,ns.center),"copy preserves stored geometry");
-    require(!CGRectEqualToRect(ps.frame,ns.frame),"known transformed frame getter discrepancy changed; revisit oracle");
-    puts("KNOWN GAP: PST frame getter is untransformed; native attributes frame includes transform");
+    CGRect pf=ps.frame, nf=ns.frame;
+    require(fabs(pf.origin.x-nf.origin.x)<0.00001 && fabs(pf.origin.y-nf.origin.y)<0.00001 && fabs(pf.size.width-nf.size.width)<0.00001 && fabs(pf.size.height-nf.size.height)<0.00001,"affine transformed frame getter matches native");
+    puts("PASS: affine transformed frame getter matches native");
+    CATransform3D transforms[]={CATransform3DMakeRotation(M_PI/2,0,0,1),CATransform3DMakeTranslation(7,9,0),CATransform3DMakeScale(2,3,1)};
+    for (int i=0;i<3;i++) {
+        na.transform3D=transforms[i]; pa.transform3D=transforms[i];
+        na.frame=CGRectMake(100,200,90,40); pa.frame=CGRectMake(100,200,90,40);
+        CGRect x=na.frame,y=pa.frame;
+        require(fabs(x.origin.x-y.origin.x)<0.00001 && fabs(x.origin.y-y.origin.y)<0.00001 && fabs(x.size.width-y.size.width)<0.00001 && fabs(x.size.height-y.size.height)<0.00001,"rotation translation scale frame setter/getter parity");
+        require(CGSizeEqualToSize(na.size,pa.size) && CGPointEqualToPoint(na.center,pa.center),"frame setter stores untransformed size/center");
+    }
+    puts("PASS: rotation translation scale and frame assignment semantics");
     require(CATransform3DEqualToTransform(ps.transform3D,ns.transform3D) && ps.alpha==ns.alpha && ps.zIndex==ns.zIndex && ps.hidden==ns.hidden,"copy preserves presentation properties");
     require(CGSizeEqualToSize(pst.bounds.size,native.bounds.size) && CGPointEqualToPoint(pst.center,native.center),"application applies size and center");
     require(CGPointEqualToPoint(pst.bounds.origin,CGPointMake(4,6)) && CGPointEqualToPoint(native.bounds.origin,CGPointZero),"known bounds-origin difference changed; revisit oracle");

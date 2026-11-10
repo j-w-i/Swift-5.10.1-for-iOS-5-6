@@ -44,6 +44,7 @@
 @end
 
 @implementation PSTCollectionViewLayoutAttributes
+@synthesize frame = _frame;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Static
@@ -142,6 +143,19 @@
 - (void)setCenter:(CGPoint)center {
     _center = center;
     [self updateFrame];
+}
+
+- (CGRect)frame {
+    if (CATransform3DIsIdentity(_transform3D)) return _frame;
+    // UIKit stores size/center independently of the transform; frame is the
+    // transformed bounding box. Restrict this path to affine transforms until
+    // perspective projection semantics have been independently verified.
+    if (CATransform3DIsAffine(_transform3D)) {
+        CGRect local = CGRectMake(-_size.width / 2, -_size.height / 2, _size.width, _size.height);
+        CGRect transformed = CGRectApplyAffineTransform(local, CATransform3DGetAffineTransform(_transform3D));
+        return CGRectOffset(transformed, _center.x, _center.y);
+    }
+    return _frame;
 }
 
 - (void)setFrame:(CGRect)frame {
