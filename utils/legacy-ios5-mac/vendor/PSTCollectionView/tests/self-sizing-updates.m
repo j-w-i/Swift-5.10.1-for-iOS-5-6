@@ -115,4 +115,20 @@ int main(void) { @autoreleasepool {
         }
     }
     puts("PASS: single-call top center bottom alignment");
+    cv.contentInset=UIEdgeInsetsMake(13,0,29,0);
+    for (NSUInteger position=1;position<=4;position*=2) {
+        [cv reloadData]; [cv setContentOffset:CGPointZero animated:NO]; [cv layoutIfNeeded];
+        NSIndexPath *target=[NSIndexPath indexPathForItem:20 inSection:0];
+        [cv scrollToItemAtIndexPath:target atScrollPosition:position animated:NO];
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);
+        [cv setNeedsLayout]; [cv layoutIfNeeded];
+        CGRect frame=[layout layoutAttributesForItemAtIndexPath:target].frame;
+        CGFloat usable=cv.bounds.size.height-cv.contentInset.top-cv.contentInset.bottom;
+        CGFloat expected=position==1 ? CGRectGetMinY(frame)-cv.contentInset.top : position==2 ? CGRectGetMidY(frame)-cv.contentInset.top-usable/2 : CGRectGetMaxY(frame)-cv.bounds.size.height+cv.contentInset.bottom;
+        if (fabs(cv.contentOffset.y-expected)>1.0/UIScreen.mainScreen.scale+0.0001) {
+            fprintf(stderr,"FAIL: inset alignment position=%lu expected=%g actual=%g\n",(unsigned long)position,expected,cv.contentOffset.y); return 1;
+        }
+    }
+    puts("PASS: asymmetric inset top center bottom alignment");
 } return 0; }

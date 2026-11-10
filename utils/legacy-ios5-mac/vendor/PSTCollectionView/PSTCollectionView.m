@@ -845,7 +845,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     PSTCollectionViewLayoutAttributes *layoutAttributes = [self.collectionViewLayout layoutAttributesForItemAtIndexPath:indexPath];
     if (layoutAttributes) {
         CGRect targetRect = [self makeRect:layoutAttributes.frame toScrollPosition:scrollPosition];
-        [self scrollRectToVisible:targetRect animated:animated];
+        [self pstScrollItemFrame:layoutAttributes.frame targetRect:targetRect position:scrollPosition animated:animated];
         if (!animated && [_layout isKindOfClass:[PSTCollectionViewFlowLayout class]] &&
             [(PSTCollectionViewFlowLayout *)_layout pstUsesSelfSizing]) {
             // The first offset uses estimates. Measuring the newly visible cells can
@@ -857,11 +857,32 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 if (!resolved) break;
                 CGRect resolvedRect = [self makeRect:resolved.frame toScrollPosition:scrollPosition];
                 CGPoint previousOffset = self.contentOffset;
-                [self scrollRectToVisible:resolvedRect animated:NO];
+                [self pstScrollItemFrame:resolved.frame targetRect:resolvedRect position:scrollPosition animated:NO];
                 if (CGPointEqualToPoint(previousOffset, self.contentOffset)) break;
             }
         }
     }
+}
+
+- (void)pstScrollItemFrame:(CGRect)itemFrame targetRect:(CGRect)targetRect position:(PSTCollectionViewScrollPosition)position animated:(BOOL)animated {
+    NSUInteger vertical = position & 0x07;
+    if (!vertical || (position & 0x38)) {
+        [self scrollRectToVisible:targetRect animated:animated];
+        return;
+    }
+    // Explicit vertical alignment uses the inset-adjusted viewport. Asking
+    // scrollRectToVisible to show a full-bounds rect chooses its own edge when
+    // that rect is larger than the usable viewport, losing top/center alignment.
+    UIEdgeInsets inset = self.contentInset;
+    CGFloat available = MAX(0, self.bounds.size.height - inset.top - inset.bottom);
+    CGFloat y = CGRectGetMinY(itemFrame) - inset.top;
+    if (vertical == PSTCollectionViewScrollPositionCenteredVertically)
+        y = CGRectGetMidY(itemFrame) - inset.top - available / 2;
+    else if (vertical == PSTCollectionViewScrollPositionBottom)
+        y = CGRectGetMaxY(itemFrame) - self.bounds.size.height + inset.bottom;
+    CGFloat maximum = MAX(-inset.top, self.contentSize.height - self.bounds.size.height + inset.bottom);
+    y = MIN(maximum, MAX(-inset.top, y));
+    [self setContentOffset:CGPointMake(self.contentOffset.x, y) animated:animated];
 }
 
 - (CGRect)makeRect:(CGRect)targetRect toScrollPosition:(PSTCollectionViewScrollPosition)scrollPosition {
