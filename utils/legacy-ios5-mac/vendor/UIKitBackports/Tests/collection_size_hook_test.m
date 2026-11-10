@@ -30,6 +30,13 @@
 
 @interface DerivedAppSizeDelegate : AppSizeDelegate @end
 @implementation DerivedAppSizeDelegate @end
+@interface OverrideAppSizeDelegate : AppSizeDelegate @end
+@implementation OverrideAppSizeDelegate
+- (CGSize)collectionView:(UICollectionView *)cv layout:(UICollectionViewLayout *)layout sizeForItemAtIndexPath:(NSIndexPath *)path {
+    CGSize base=[super collectionView:cv layout:layout sizeForItemAtIndexPath:path];
+    return CGSizeMake(base.width+2,base.height+3);
+}
+@end
 
 @interface ForwardingSizeDelegate : NSObject @end
 @implementation ForwardingSizeDelegate
@@ -107,6 +114,12 @@ int main(void) { @autoreleasepool {
     require(!UICInstallSizeHook(inheritedApp), @"inherited app wrapper reused");
     require(inheritedApp.testLayout.flagsRefreshes==1, @"inherited app layout flags refreshed");
     require(CGSizeEqualToSize(answer(inheritedApp.testDelegate,selector,inheritedApp,inheritedApp.testLayout,measuredPath),CGSizeMake(31,47)), @"inherited original answer preserved without estimates");
+    SizeHookCollection *overrideApp=collection([OverrideAppSizeDelegate new]);
+    require(UICInstallSizeHook(overrideApp), @"override gets its own wrapper");
+    CGSize (*overrideAnswer)(id,SEL,id,id,id)=(void *)[overrideApp.testDelegate methodForSelector:selector];
+    require(CGSizeEqualToSize(overrideAnswer(overrideApp.testDelegate,selector,overrideApp,overrideApp.testLayout,measuredPath),CGSizeMake(33,50)), @"super-calling override preserved without estimates");
+    UICEstimatedItemSizeSetter(overrideApp.testLayout,NULL,CGSizeMake(50,50));
+    require(CGSizeEqualToSize(overrideAnswer(overrideApp.testDelegate,selector,overrideApp,overrideApp.testLayout,measuredPath),CGSizeMake(33,50)), @"super-calling override supplies estimate seed");
     SizeHookCollection *proxy = collection([ForwardingSizeDelegate new]);
     require(!UICInstallSizeHook(proxy), @"forwarding delegate not modified");
     require(class_getInstanceMethod([ForwardingSizeDelegate class], selector) == NULL, @"forwarding remains available");

@@ -163,3 +163,15 @@ with improvement in 4/6 pairs. This mixed roughly one-percent result does **not*
 establish a meaningful speedup. The structural allocation reduction is retained,
 but the native/PST reload gap is not closed. Session samples were retained under
 `/tmp/cv-phone-reload-ab.m8Q1Jn`; these temporary files are not durable artifacts.
+
+### Round 45: 32-bit sizing-wrapper ABI gate
+
+The focused `collection_size_hook_test.m` was compiled `-O2 -marm` as armv7,
+deployment 10.0, and executed as mobile on the iPhone 6 / iOS 10.3.3. It passed
+original delegate seed, measured-size override, zero-estimate fallthrough,
+repeated/inherited wrapper, and super-calling subclass override cases. This
+exercises `CGSize` return through both a block-backed IMP and saved typed IMP on
+real 32-bit ARM. The simulator test also passes. Modern native installer IMPs
+remain unchanged in this test. This is **not** the missing iOS 6/7 layout-engine
+integration gate: those hooks are invoked directly using layout test doubles,
+and forwarding/proxy sizing delegates remain unwrapped.
