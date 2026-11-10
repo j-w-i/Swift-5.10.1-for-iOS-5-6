@@ -9,6 +9,7 @@
 #endif
 static BOOL firstProposal;
 static NSInteger itemCount = 2;
+static CGFloat preferredHeight = 30;
 @interface AutomaticCell : UICollectionViewCell @end
 @implementation AutomaticCell
 - (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a {
@@ -16,7 +17,7 @@ static NSInteger itemCount = 2;
         firstProposal = YES;
         if (!CGSizeEqualToSize(a.size, CGSizeMake(50,50))) abort();
     }
-    UICollectionViewLayoutAttributes *r=[a copy]; r.size=CGSizeMake(80,30); return r;
+    UICollectionViewLayoutAttributes *r=[a copy]; r.size=CGSizeMake(80,preferredHeight); return r;
 }
 @end
 @interface AutomaticData : NSObject<UICollectionViewDataSource> @end
@@ -31,6 +32,7 @@ int main(int argc, char **argv) { @autoreleasepool {
  for (itemCount=1;itemCount<=3;itemCount++) {
  for (int horizontal=0;horizontal<2;horizontal++) {
     firstProposal=NO;
+    preferredHeight=30;
     UICollectionViewFlowLayout *fl=[UICollectionViewFlowLayout new];
     fl.scrollDirection=horizontal;
     fl.itemSize=CGSizeMake(77,33); fl.estimatedItemSize=CGSizeMake(CGFLOAT_MAX,CGFLOAT_MAX);
@@ -46,6 +48,15 @@ int main(int argc, char **argv) { @autoreleasepool {
         CGRect frame=[fl layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]].frame;
         if (!CGSizeEqualToSize(frame.size,CGSizeMake(80,30))) abort();
         printf("cell=%d frame=%g,%g,%g,%g\n",i,frame.origin.x,frame.origin.y,frame.size.width,frame.size.height);
+    }
+    preferredHeight=60;
+    [cv reloadData]; [cv layoutIfNeeded];
+    for (int i=0;i<itemCount;i++) {
+        CGSize size=[fl layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:0]].size;
+        if (!CGSizeEqualToSize(size,CGSizeMake(80,60))) {
+            fprintf(stderr,"FAIL: reload retained stale size axis=%d count=%ld item=%d size=%gx%g\n",horizontal,(long)itemCount,i,size.width,size.height);
+            return 1;
+        }
     }
  }
  }

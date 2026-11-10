@@ -704,6 +704,10 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (_reloadingSuspendedCount != 0) return;
     [_pstPrefetchedIndexPaths removeAllObjects];
     _pstPrefetchHasOrigin = NO;
+    // Index paths identify new content after a reload; neither measured sizes nor
+    // the stable-item set may survive into the next data generation.
+    if ([_layout isKindOfClass:[PSTCollectionViewFlowLayout class]])
+        [(PSTCollectionViewFlowLayout *)_layout pstResetMeasuredSizes];
     [self invalidateLayout];
     // Retire every visible view the way UIKit does: remove it, tell the delegate it stopped being
     // displayed, and return it to its reuse queue (so the next pass dequeues instead of allocating).
