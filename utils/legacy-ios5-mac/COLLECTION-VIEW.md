@@ -2182,3 +2182,54 @@ items measured 62 ms on this device for the whole self-sizing transaction.
 
 This confirms that no change inside the hook can remove the cost; only changing which engine lays the items
 out can. That decision remains open.
+
+## How iOS 8.1 UIKit actually implements self-sizing (decompiled; behavioural findings only)
+
+Source: the iOS 8.1 simulator `UIKit` from Xcode 6.1.1 (i386), decompiled headlessly with Ghidra, 362 methods of
+`UICollectionView`, `UICollectionViewFlowLayout`, `UICollectionViewLayout` and `_UIFlowLayout{Info,Section,Row,Item}`
+(0 failures). The raw output lives outside this repository (`Neocord2-iOS5-Work/ios81-ref`) and is reference
+only; nothing below is code, and no decompiled code is to enter the runtime.
+
+**This contradicts the design both routes currently use.** Everything built so far (the PST scheduler, the Apple
+route hook) measures cells in a separate pass after layout and fits them in batches chosen to resemble traces.
+iOS 8.1 does not work that way:
+
+1. **Measurement is synchronous with cell creation.** `-[UICollectionView
+   _createPreparedCellForItemAtIndexPath:withLayoutAttributes:applyAttributes:]` asks the data source for the cell,
+   calls `-preferredLayoutAttributesFittingAttributes:` on it, and, if the result differs
+   (`isEqual:`) and `-[layout shouldInvalidateLayoutForPreferredLayoutAttributes:withOriginalAttributes:]` says
+   yes, asks `-invalidationContextForPreferredLayoutAttributes:withOriginalAttributes:` and calls
+   `-invalidateLayoutWithContext:`; only then does it add the cell and send `willDisplayCell:`. There is no
+   post-layout measuring loop and no half-batch rule. The batches seen in traces are a consequence of how
+   cell creation interleaves with these invalidations.
+2. **The layout is lazy.** `prepareLayout` calls `_fetchItemsInfoForRect:` with `CGRectZero`;
+   `_layoutAttributesForItemsInRect:` calls it again with the real rect. Each `_UIFlowLayoutSection` keeps a
+   `validRect` and `validItemRange`; `computeLayoutInRect:forSection:invalidating:` lays out only the rows in
+   or next to the requested rect, extending the valid range as needed. Items outside it carry a per-item
+   `positionEstimated` flag.
+3. **Unlaid-out sections are estimated by formula**, `updateEstimatedSizeForSection:`: items per row are taken
+   from the first row, the section height is `ceil(itemsCount / perRow) * (tallestItemInFirstRow +
+   interstice) - interstice + margins + header + footer` (mirrored for horizontal), and that is stored with
+   `setEstimatedSize:forSection:`.
+4. **A reported size is applied incrementally.** The layout's invalidation-context method calls
+   `[_data setSize:forItemAtIndexPath:]`, which updates the item frame, adds the *later items within the valid
+   range* to the invalidated list, calls `didUpdateSizeForSection:withDelta:` (which shifts every later section's
+   frame by the delta) and `_updateContentSizeScrollingDimensionWithDelta:` (which adjusts the content size and
+   records a content-size adjustment). The context it returns has `invalidateFlowLayoutAttributes` and
+   `invalidateFlowLayoutDelegateMetrics` both NO, so `-invalidateLayoutWithContext:` does not rebuild the data:
+   it only queues index paths to validate. **A size change therefore costs O(rows in the valid range), not
+   O(items).** This is why iOS 8's cost does not grow with batches.
+5. The entry points `_fetchItemsInfoForRect:`, `_updateItemsLayoutForRect:`, `rowsInRect:`,
+   `isPositionEstimated` and `didUpdateSizeForSection:withDelta:` do not exist in iOS 6.1's UIKit (its flow layout
+   has `_fetchItemsInfo`/`_updateItemsLayout`, no rect). Whether iOS 7 has them is not known: no iOS 7 UIKit is
+   available here.
+
+**What this means.** The earlier "mean of reported sizes", "previous row", "half the pending cells" and fit-order
+rules were fitted to a black box and happened to agree on simple fixtures; they are not Apple's algorithm, which
+explains why residual mismatches were never explainable. Exact parity needs the algorithm above, and so does
+iOS 8's performance: it is incremental. On iOS 6 (and possibly 7) Apple's own engine cannot do this, so a hook
+cannot reproduce it there; the layout computation itself has to follow iOS 8's design.
+
+**Not yet done:** an independent implementation of points 1-4, reading the remaining routines
+(`_layoutAttributesForItemsInRect:`, `sizeChangedForItem:atIndexPath:inRow:`, the per-item `estimatedSize`
+use in `_getSizingInfos`), and verification of it against the iOS 27 oracle. No runtime code changed this round.
