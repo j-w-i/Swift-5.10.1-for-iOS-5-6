@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The Swift-visible surface no longer exports the backport's internals (round 235)
+
+Fixed the exposure found by last round's drift checker: `generate-collection-headers.py` now drops the internal
+`pst*` declarations and the `UICollectionViewFlowLayout (SelfSizing)` category from the generated legacy header,
+because that header is the Swift-visible description of UIKit, not of this backport.
+
+Result on the same source: 657 -> **649 lines, 0 occurrences of `pst`**, with the modern API intact (the display
+callbacks, the prefetch protocol and `estimatedItemSize` are all still emitted - 6 such declarations).
+
+Verified after the change:
+
+* `test-collection-context-linkage.py`: **PASS** - the generated context declarations still reference both PST
+  runtime classes on armv7 iOS 5;
+* the drift report is now cleanly attributable: the only remaining difference against the installed resource is
+  the modern surface plus what the filter removed (58 lines missing from the installed copy, nothing present only
+  there).
+
+So the generator change is done and verified. What is left on the Swift side is the one release step: republish
+`usr/lib/swift_ios5` with `publish-ios5-profile.py`, which requires the qualification receipts (hashes of compiler,
+driver, assembly and every resource, plus device-execution evidence) rather than a round's worth of work.
+
 ## A drift checker for the Swift-visible legacy resource (round 234)
 
 Added `utils/legacy-ios5-mac/check-legacy-swift-resource.py`: it regenerates the collection headers with

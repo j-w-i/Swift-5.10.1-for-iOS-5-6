@@ -42,6 +42,10 @@ def generate(source, output):
         for cls in WRAPPERS:
             text = re.sub(r'(@interface ' + cls + r'\s*:)',
                           '__attribute__((objc_runtime_name("' + cls.replace('UICollection', 'PSTCollection') + '")))\n' + r'\1', text)
+        # This header is the Swift-visible surface for iOS 5: it must describe UIKit, not the backport's
+        # implementation. Drop the internal pst* helpers and the SelfSizing category they live in.
+        text = re.sub(r'^[^\n]*\bpst[A-Z]\w*[^\n]*\n', '', text, flags=re.M)
+        text = re.sub(r'@interface (UICollection\w+) \(SelfSizing\)\n(?:[^@]*?\n)?@end\n', '', text)
         # Preserve C symbol linkage while exposing UIKit source spelling.
         text = re.sub(r'extern NSString \*const (UICollection\w+);',
                       lambda m: 'extern NSString *const ' + m[1] + ' __asm__("_' + m[1].replace('UICollection', 'PSTCollection') + '");', text)
