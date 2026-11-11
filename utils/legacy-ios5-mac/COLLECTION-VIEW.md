@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Full toolchain rebuild attempted; overlay stage fails and needs its own investigation (round 249)
+
+Took the last engineering route to the Swift-profile republish: the build root is staged and resumable
+(`.stamps/`), so instead of a from-scratch build I removed the four downstream stamps (`overlays`, `assemble`,
+`sanitize`, `qualify-ios5`) and re-ran `build-all.sh` with the existing `LEGACY_BUILD_ROOT`, which resumes after
+`legacy-core-510`.
+
+Result: the **overlays stage fails** after roughly an hour, and the log does not carry a plain `error:` line - the
+tail is main-actor isolation *warnings* from
+`bootstrap/probes/backports-runtime/Swift/LegacyAutoLayout-UIView+LegacyAutoLayout.swift` (e.g.
+"main actor-isolated property 'layoutIntrinsicContentSize' cannot be used to satisfy nonisolated protocol
+requirement"), followed by "overlay build failed; see the per-module logs". Neither the per-module logs nor the
+stage log contains a matching error, so the failing command is not identified by its own output - the next attempt
+must run the stage script under `set -x` and capture the exact failing command, or check whether warnings have been
+promoted to errors in that module's build.
+
+State left behind, deliberately recorded: the build root is unchanged except that four stamps are now absent, so a
+future `build-all.sh` run resumes at `overlays` (nothing is silently considered done), and
+`bootstrap/probes/backports-runtime` holds the freshly staged sources. Rebuilding that stage is a prerequisite for
+both the qualification and the publish.
+
+Given the remaining rounds, this is where the release path stops: it is a toolchain-build investigation, not a
+backport defect, and everything upstream of it is verified.
+
 ## The Swift profile republish needs a full armv7 toolchain build, not a reassembly (round 246)
 
 Tried the reassembly route to get the rebuilt runtime into a publishable toolchain, using
