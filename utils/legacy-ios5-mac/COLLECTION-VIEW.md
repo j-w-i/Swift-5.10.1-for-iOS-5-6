@@ -1565,3 +1565,39 @@ calls at cold layout; PST: 10 and 19), which is unexplained. A paired same-devic
 iPod touch 5 to run PST and native in one binary.
 
 Stock iOS 6.1.3 aborts in this probe without the hooks (`estimatedItemSize` does not exist there).
+
+### Same-device self-sizing ratios on the iPod touch 5, and a correction
+
+PST and the Apple route (native UIKit 6.1.3 plus the backport hooks) now both ran
+`tests/selfsizing-scaling.m` on the **same iPod touch 5**. Ratio = PST / native, below 1 means PST is
+faster. Median of three repetitions in one run per engine; PST launched separately, so this is not an
+interleaved pairing.
+
+| Items | No size delegate: cold | scroll | reload | With size delegate: cold | scroll | reload |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | 0.56 | 0.31 | 0.77 | 1.00 | 0.72 | 0.97 |
+| 1,000 | 2.43 | 1.38 | 3.24 | 1.16 | 0.69 | 1.10 |
+| 5,000 | **11.29** | **6.63** | **15.55** | 1.24 | 0.57 | 1.12 |
+
+So PST is faster at 200 items, roughly at parity with a size delegate (0.57-1.24), and **much slower
+without one at 1,000 and 5,000 items** (up to 15.6x on reload).
+
+**Correction.** Earlier notes (round 94 and the performance summary) say PST "measures every item up
+front". The fitting counts say otherwise: PST made 19 `preferredLayoutAttributesFitting` calls and 10
+cell requests at cold layout regardless of item count, the same order as the visible set. The cost
+that grows is the O(items) layout rebuild: a self-sizing section builds one `PSTGridLayoutItem`, one
+`NSIndexPath` and one dictionary lookup per item, and lays out every row, even though only the visible
+cells were measured. The per-item cost on the iPod 5 is about 85 us.
+
+**Caveat on the native column.** The Apple route's no-delegate cost is flat (about 38 ms from 200 to
+5,000 items), which is what a uniform-size fast path looks like. It is plausible, though not proven,
+that the hook installs the estimate as `itemSize`, so native lays out a uniform grid and its content
+height uses the estimate for unmeasured items. If so this column is not doing the per-item work PST
+does, and a flat curve there is cheap rather than equivalent. Where a delegate supplies real sizes both
+engines do per-item work and the ratios are close to 1, which supports that reading.
+
+**What would fix it.** Keep unmeasured items in the compact fixed-size representation and store only
+the measured items as sparse overrides, so a rebuild is O(rows plus measured items) instead of
+O(items). Rows holding a measured item need a full row layout; the rest can be uniform. This touches
+`PSTGridLayoutSection`, row alignment and the proposal cache, and must keep the stepped-geometry
+traces and the centering matrix passing. Not started.
