@@ -553,3 +553,30 @@ commit):
 Untested with the new retirement: animated `performBatchUpdates` retirement
 (`freeUnusedViews` and `finishUpdate` now hide and keep views attached) beyond the
 non-animated mutation suite, and the Apple iOS 6/7 route, which has its own path.
+
+### Round 80: animated deletes: callbacks fixed, animation still does not match
+
+Probes (`animated-delete-callbacks.m`, `animated-delete-presentation.m`; iOS 27
+simulator, cell view inside a window, `performBatchUpdates` deleting two rows):
+
+| | Native | PST before | PST now |
+| --- | --- | --- | --- |
+| `didEndDisplaying` for deleted rows | sent once, at animation completion (453 ms), rows 1 then 2, view hidden, alpha 0 | never | sent, rows 1 then 2, view hidden |
+| `completion` | at the same instant (453 ms) | 1 ms | 1 ms |
+| Deleted cell | alpha fades 0.15 -> 0.01 -> 0, then hidden | n/a | alpha 0 and hidden at once |
+| Cell below the deletion | slides 46.1 -> 40.4 -> 40 over the animation | snaps | snaps |
+
+Delegates now hear `didEndDisplaying` for deleted cells and supplementary views (it was
+missing entirely: the animated path never called it), in ascending index-path order,
+with the view already hidden. The retired view is kept attached and hidden under the
+capacity cap like any other. Display-event, self-sizing, cell-resize and geometry gates
+pass; a PST iOS 5 compile has no errors.
+
+**Not fixed:** the animation itself does not run in these probes. PST finishes the
+update in 1 ms and the cells jump, where native takes about 450 ms and animates alpha
+and position. The same snapping occurs at `b6a45a5c`, the commit that was meant to
+add 0.3 s animations, so this is not caused by the retirement change; the earlier
+animation work appears to depend on conditions these probes do not satisfy (a window
+and a run loop are present here). Until that is understood, `completion` timing and
+the animated frames should be treated as unmatched. This overlaps the earlier user note
+that PST animations were missing.

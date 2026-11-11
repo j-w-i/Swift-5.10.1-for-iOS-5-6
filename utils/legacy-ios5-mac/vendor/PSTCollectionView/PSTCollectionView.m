@@ -2163,6 +2163,13 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             [NSMutableArray array], @(PSTCollectionViewItemTypeCell),
             [NSMutableArray array], @(PSTCollectionViewItemTypeDecorationView),
             [NSMutableArray array], @(PSTCollectionViewItemTypeSupplementaryView), nil];
+    // Keys of those views, in the same order, so finishUpdate can tell the delegate which
+    // index path each one stopped displaying (UIKit sends didEndDisplaying when the
+    // delete animation completes, with the view already hidden).
+    NSMutableDictionary *keysToRemove = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+            [NSMutableArray array], @(PSTCollectionViewItemTypeCell),
+            [NSMutableArray array], @(PSTCollectionViewItemTypeDecorationView),
+            [NSMutableArray array], @(PSTCollectionViewItemTypeSupplementaryView), nil];
 
     for (PSTCollectionViewUpdateItem *updateItem in items) {
         if (updateItem.isSectionOperation && updateItem.updateAction != PSTCollectionUpdateActionDelete) continue;
@@ -2186,6 +2193,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                     [_allVisibleViewsDict removeObjectForKey:key];
 
                     [(NSMutableArray *)[viewsToRemove objectForKey:@(key.type)] addObject:view];
+                [(NSMutableArray *)[keysToRemove objectForKey:@(key.type)] addObject:key];
+                    [(NSMutableArray *)[keysToRemove objectForKey:@(key.type)] addObject:key];
 
                 }
             }
@@ -2210,6 +2219,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [_allVisibleViewsDict removeObjectForKey:key];
 
                 [(NSMutableArray *)[viewsToRemove objectForKey:@(key.type)] addObject:view];
+                [(NSMutableArray *)[keysToRemove objectForKey:@(key.type)] addObject:key];
 
             }
         }
@@ -2375,7 +2385,25 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         // Iterate through all the views that we are going to remove.
         [viewsToRemove enumerateKeysAndObjectsUsingBlock:^(NSNumber *keyObj, NSArray *views, BOOL *stop) {
             PSTCollectionViewItemType type = [keyObj unsignedIntegerValue];
-            for (PSTCollectionReusableView *view in views) {
+            NSArray *removedKeys = [keysToRemove objectForKey:keyObj];
+            // Report in ascending index-path order, as UIKit does; deletes are collected descending.
+            NSMutableArray *order = [NSMutableArray arrayWithCapacity:views.count];
+            for (NSUInteger i = 0; i < views.count; i++) [order addObject:@(i)];
+            if (removedKeys.count == views.count) {
+                [order sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+                    return [[[removedKeys objectAtIndex:[a unsignedIntegerValue]] indexPath] compare:[[removedKeys objectAtIndex:[b unsignedIntegerValue]] indexPath]];
+                }];
+            }
+            for (NSNumber *orderedIndex in order) {
+                NSUInteger removedIndex = [orderedIndex unsignedIntegerValue];
+                PSTCollectionReusableView *view = [views objectAtIndex:removedIndex];
+                PSTCollectionViewItemKey *removedKey = removedIndex < removedKeys.count ? [removedKeys objectAtIndex:removedIndex] : nil;
+                view.hidden = YES; // retiring views are hidden when the delegate hears of it
+                if (removedKey && type == PSTCollectionViewItemTypeCell && _collectionViewFlags.delegateDidEndDisplayingCell) {
+                    [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)view forItemAtIndexPath:removedKey.indexPath];
+                } else if (removedKey && type != PSTCollectionViewItemTypeCell && _collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
+                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:view forElementOfKind:removedKey.identifier atIndexPath:removedKey.indexPath];
+                }
                 if (type == PSTCollectionViewItemTypeCell) {
                     [self reuseCell:(PSTCollectionViewCell *)view];
                 } else if (type == PSTCollectionViewItemTypeSupplementaryView) {
