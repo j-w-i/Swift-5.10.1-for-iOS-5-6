@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Layouts scenario instrumented: reports accumulate, but the final content comes from elsewhere (round 191)
+
+Re-ran the round-190 tracing in the layouts scenario, where the content defect actually appears (stderr lands in
+the artifacts' `pst-N.err` files). Trace excerpt:
+
+    DBG build sec=0 measured=0   (x3 sections, first pass)
+    DBG ctx item=0 h=30.0 measured=1
+    DBG build sec=0 measured=1   DBG build sec=1 measured=1   DBG build sec=2 measured=1
+    DBG ctx item=1 h=46.0 measured=2   ...
+
+So in this scenario the reports **do** accumulate (1, 2, ...) and the rebuilds **do** observe them - the
+preparation-fit pipeline is working here too, not just in the lifecycle probe. 48 builds were instrumented.
+
+Yet the *settled* content size is exactly the pure estimate (1770 = three sections of `14*40 + 30`), which
+means the value that ends up as `contentSize` is produced by a build that does not see those measurements. The
+only such path in the current code is a rebuild that takes `_pstReuseStoredSizes` (attribute-only invalidation,
+round 179) - it `continue`s before the instrumentation point. That is consistent with round 189's result only
+if the reuse path is re-entered on the *final* build even when disabled earlier, which the round-189 patch did
+not cover (it disabled the decision at context time, not the flag's persistence across passes).
+
+Reverted; baseline verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
+Next step is now concrete: instrument `_pstReuseStoredSizes` itself - when it is set, when it is cleared, and
+whether a rebuild that consumes it produces the content size. That is a four-line probe, not a redesign.
+
 ## Instrumented run: the fit path is reached and records (round 190)
 
 Added temporary tracing (fit reached / changed / shouldInvalidate, context creation with the reported size, and
