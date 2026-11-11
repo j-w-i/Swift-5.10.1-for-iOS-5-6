@@ -1,5 +1,33 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Acceptance-criterion check: Auto Layout / stack / scene (round 169)
+
+The objective requires no regressions to the Auto Layout/stack parity work or the scene/trait backports, so
+those suites were run for the first time in this collection-view effort.
+
+| Suite | Result |
+| --- | --- |
+| `run-direct-stack-tests.sh` (UIStackView parity, native fill priorities) | **PASS** |
+| `run-scene-fallthrough-test.sh` | not run: needs a prepared native probe directory (`NATIVE_PROBE_DIR`), which is not present here |
+| `run-autolayout-tests.sh` | **fails to compile, pre-existing** |
+
+The Auto Layout failure is not caused by any collection-view change: this work has never touched
+`vendor/UIKitBackports/LegacyAutoLayout/` or `Cassowary/`. Its two causes were identified:
+
+1. `LegacyAutoLayout/LegacyLinearSolver.swift` (added by `49e3e408`, earlier the same day) was never added to
+   the harness's `ENGINE_SOURCES`, so `LegacyLinearSolver`, `Variable`, `Constraint` and `Strength` were all
+   unresolved. **Fixed** by listing the file in `run-autolayout-tests.sh`.
+2. With that file compiled, `LegacyLayoutSolver.swift` still cannot see those types: it imports only
+   Foundation and CoreGraphics, and adding `import Cassowary` makes `Expression` ambiguous, so the types are
+   not meant to be imported there. `49e3e408` moved them into the Cassowary module without a visible re-export.
+
+So the Auto Layout parity gate is currently **broken by `49e3e408`, not restored**. The harness fix is kept
+(without it the module is missing a required source); the remaining work is a re-export/visibility decision in
+the Auto Layout code, outside the collection-view scope. Recording it here rather than leaving a suite that
+silently does not build.
+
+Stack parity is unaffected and passes.
+
 ## Fourth attempt: settled-pass restart, reverted (round 168)
 
 Implemented the structural change round 167 pointed to: when preparing a cell invalidates the layout, the

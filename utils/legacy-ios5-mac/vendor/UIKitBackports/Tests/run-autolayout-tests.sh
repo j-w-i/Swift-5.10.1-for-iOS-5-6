@@ -45,6 +45,7 @@ ENGINE_SOURCES=(
   LegacyAutoLayout/LegacyLayoutGeneration.swift
   LegacyAutoLayout/LegacyLayoutItem.swift
   LegacyAutoLayout/LegacyLayoutSolver.swift
+  LegacyAutoLayout/LegacyLinearSolver.swift
   LegacyAutoLayout/LegacyLayoutStats.swift
   LegacyAutoLayout/RRLayoutAttribute.swift
   LegacyAutoLayout/RRLayoutConstraint.swift
