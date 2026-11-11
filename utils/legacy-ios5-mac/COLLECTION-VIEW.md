@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Per-section estimate implemented (round 195)
+
+PST estimated every unmeasured item from one **global** running mean. UIKit estimates a section from what it has
+measured in that section, so the model is now per section: `_pstSectionMeasured` keeps `sumW/sumH/count` per
+section, `pstEstimateForSection:` returns that section's mean (falling back to the plain estimate when nothing
+has been measured there), and both proposal fallbacks use it - the per-item proposal when a section has no
+learned runs, and the bulk fill when no runs exist yet.
+
+Baseline behaviour is unchanged (single-section suites cannot move, since one section's mean *is* the global
+mean): golden 14/14, layouts 31/32 with 0 of 210 visible frames and fitted-item parity 32/32, stability and
+proposal suites pass, armv7 strict compile clean.
+
+**Measured effect with preparation-time fitting plus the content-size cache fix** (the combination being built
+towards, not shipped): layouts went from **1/32 to 15/32 steps exact**, visible frames still exact, and content
+converging markedly - 1817/1842/1835/2042 against native's 1854/1854/1835/1846, with one step *exactly* equal
+and the first two within 12 and 37 points. The last step is still +196, so the model is not finished, but the
+global-mean hypothesis was correct and is now half-closed.
+
+Committed the per-section model on its own (safe, verified); the preparation-fitting combination remains
+uncommitted work for the next round.
+
 ## Cache fix confirmed; the residual is the estimate model (round 194)
 
 Redid the round-164 cache fix now that the lazy layout exists (preparation-time fitting + clearing the data

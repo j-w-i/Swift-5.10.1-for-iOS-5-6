@@ -62,6 +62,9 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     CGSize _itemSize;
     CGSize _estimatedItemSize;
     NSMutableDictionary *_pstMeasuredItemSizes;    // NSIndexPath -> NSValue(CGSize): sizes the cells reported
+    // Per-section running mean of reported sizes (section -> @[sumW, sumH, count]). UIKit estimates a section
+    // from what it has measured in that section, not from a global average.
+    NSMutableDictionary *_pstSectionMeasured;
     NSMutableDictionary *_pstStableMeasuredFrames; // NSIndexPath -> CGRect: confirmed proposal frame
     BOOL _pstPreservingStableMeasurements;        // internal size invalidation, not an app invalidation
     CGSize _pstMeasuredSizeSum;                    // sum and count of the cell-reported sizes: unmeasured
@@ -520,6 +523,7 @@ static char kPSTCachedItemRectsKey;
 
 - (void)pstResetMeasuredSizes {
     [_pstMeasuredItemSizes removeAllObjects];
+    [_pstSectionMeasured removeAllObjects];
     [_pstStableMeasuredFrames removeAllObjects];
     _pstMeasuredSizeSum = CGSizeZero; _pstMeasuredSizeCount = 0;
     [self pstClearProposalRuns];
@@ -541,7 +545,7 @@ static char kPSTCachedItemRectsKey;
     // A learned size applies only inside the section it was learned in; a section none of whose items have
     // changed yet keeps the original estimate, as UIKit does (it lays sections out lazily).
     if (lo && runs[lo - 1].section == section) return runs[lo - 1].size;
-    return _pstProposalAtLayout0;
+    return [self pstEstimateForSection:section];
 }
 
 /// Called once per preferred-size invalidation batch: applies the current mean from one row before the
@@ -685,7 +689,7 @@ static char kPSTCachedItemRectsKey;
         // but is not a cell report.
         if (wasMeasured3 || [self pstDelegateProvidesSizes]) {
             [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
-            if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:&old3];
+            if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size section:indexPath.section replacing:&old3];
         }
         return NO;
     }
@@ -693,15 +697,31 @@ static char kPSTCachedItemRectsKey;
     CGSize old = wasMeasured ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
     [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
     [_pstStableMeasuredFrames removeObjectForKey:indexPath];
-    [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];
+    [self pstAccumulateMeasuredSize:size section:indexPath.section replacing:wasMeasured ? &old : NULL];
     if (!_pstEarliestChangedPath || [indexPath compare:_pstEarliestChangedPath] == NSOrderedAscending) _pstEarliestChangedPath = indexPath;
     return YES;
 }
 
-- (void)pstAccumulateMeasuredSize:(CGSize)size replacing:(const CGSize *)old {
+- (void)pstAccumulateMeasuredSize:(CGSize)size section:(NSInteger)section replacing:(const CGSize *)old {
     if (old) { _pstMeasuredSizeSum.width -= old->width; _pstMeasuredSizeSum.height -= old->height; }
     else _pstMeasuredSizeCount++;
     _pstMeasuredSizeSum.width += size.width; _pstMeasuredSizeSum.height += size.height;
+    if (!_pstSectionMeasured) _pstSectionMeasured = [NSMutableDictionary dictionary];
+    NSMutableArray *entry = [_pstSectionMeasured objectForKey:@(section)];
+    if (!entry) { entry = [NSMutableArray arrayWithObjects:@0.0, @0.0, @0, nil]; [_pstSectionMeasured setObject:entry forKey:@(section)]; }
+    if (old) { [entry replaceObjectAtIndex:0 withObject:@([entry[0] doubleValue] - old->width)];
+               [entry replaceObjectAtIndex:1 withObject:@([entry[1] doubleValue] - old->height)]; }
+    else [entry replaceObjectAtIndex:2 withObject:@([entry[2] integerValue] + 1)];
+    [entry replaceObjectAtIndex:0 withObject:@([entry[0] doubleValue] + size.width)];
+    [entry replaceObjectAtIndex:1 withObject:@([entry[1] doubleValue] + size.height)];
+}
+
+/// Mean of the sizes reported inside one section, or the plain estimate when nothing has been measured there.
+- (CGSize)pstEstimateForSection:(NSInteger)section {
+    NSArray *entry = [_pstSectionMeasured objectForKey:@(section)];
+    NSInteger count = entry ? [entry[2] integerValue] : 0;
+    if (count <= 0) return _pstProposalAtLayout0;
+    return CGSizeMake([entry[0] doubleValue] / (double)count, [entry[1] doubleValue] / (double)count);
 }
 
 - (BOOL)pstDelegateProvidesSizes {
@@ -909,7 +929,7 @@ static char kPSTCachedItemRectsKey;
                 // Without a size delegate only measured items differ from the common proposal, and few of
                 // them ever are. Fill every item with the proposal, then apply the measured sizes by walking
                 // the measurements instead of building an index path per item.
-                CGSize proposal = [self pstUnmeasuredProposal];
+                CGSize proposal = [self pstEstimateForSection:(NSInteger)section];
                 if (_pstMeasuredSizeCount && _pstProposalRunCount) {
                     for (NSInteger item = 0; item < numberOfItems; item++) sizes[item] = [self pstProposalAtSection:(NSInteger)section item:item];
                 } else {
