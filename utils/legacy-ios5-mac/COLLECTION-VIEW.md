@@ -1,5 +1,38 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Index-path keyed rects: the difference is in the second section only (round 211)
+
+Fixed the instrument as round 210 required: `tests/selfsizing-layouts-trace.m` now emits `rectsBySection`, a
+per-section array of item rects, so native and PST can be compared item by item instead of positionally. (First
+attempt stored one shared array per section key, which is why it reported all 32 items under every key - fixed to
+a per-section copy before use.)
+
+Scenario 4 (horizontal, narrow), initial step, now comparable:
+
+| section | items | rects differing |
+| --- | ---: | ---: |
+| 0 | 16 vs 16 | **0** |
+| 1 | 16 vs 16 | **16** |
+
+Section 0 is identical. In section 1:
+
+    native  item0 (373, 8)  item1 (379, 8)  item2 (385, 8)  item3 (391, 8)
+    PST     item0 (375, 8)  item1 (375,105) item2 (375,202) item3 (441, 8)
+
+Native reports all sixteen items at **y = 8 with x advancing by 6** - i.e. sixty-wide items placed six points
+apart, which cannot be a real layout. PST reports a real one: items stacked down a column at 90 + 7, then the
+next column at +66.
+
+That is the signature of native returning *estimated* attributes for a section it has not laid out yet, while PST
+returns concretely laid-out positions for the same section. Which also explains the content width: native's
+707.09 is the estimated extent, PST's 773.09 the real one.
+
+This is consistent with everything the lazy-layout work found, and it reframes the last gate failure: it is not a
+bug in PST's packing, it is that PST materialises a section native is still estimating. The comparison for
+unmeasured sections is comparing an estimate with a result.
+
+Instrument committed; gates unchanged (golden PASS, layouts 31/32, fitted-item parity 32/32).
+
 ## Retraction: round 209's packing diagnosis was built on a bad comparison (round 210)
 
 Round 209 concluded that the last failing value came from native packing one item per column where PST packed
