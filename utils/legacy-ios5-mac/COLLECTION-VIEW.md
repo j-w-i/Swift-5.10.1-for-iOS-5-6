@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Windowed (valid-range) packed layout, phase 1 (round 177)
+
+Implemented the first piece of `SELF-SIZING-VALID-RANGE-PLAN.md`: the packed row builder is now split into
+pass 1 (break items into rows, `pstBreakPackedRowsWithDimension:spacing:`) and pass 2 (per-row geometry,
+`pstLayOutPackedRowsFrom:to:dimension:spacing:sectionSize:`), so a caller can materialise only the rows it
+needs. `extendPackedRowsThroughRow:dimension:spacing:sectionSize:` extends the materialised window, continuing
+the running section extent, and is idempotent for an already-materialised window.
+
+The full rebuild still runs exactly the same arithmetic: pass 1 then pass 2 over every row, which is why the
+existing 240-case rebuild-equivalence test is unchanged and still passes.
+
+New gate `run-packed-windowed-layout-test.sh` (24 configurations: both axes, 1-3 columns, 1/14/27/40 items)
+materialises a section one row at a time from a running extent and asserts against a full rebuild: identical
+row frames, identical per-item frames and row assignment, identical item count to row mapping, no change on
+re-extending, and a running extent that equals the rebuild's frame minus the trailing margin and footer.
+Passing. armv7 iOS 5 compiles with `-Werror=unguarded-availability`.
+
+Combined status after this round: windowed 24/24, packed updates 240/240, golden 14/14, layouts 31/32 with
+0 of 210 visible frame differences **and fitted-item sets identical in 32 of 32 steps**. The live path is
+unchanged - this phase adds the machinery only; wiring the flow layout to request a window (rather than a
+whole-section rebuild) is the next step, and the lifecycle gate still fails until fitting moves into
+preparation.
+
 ## Valid-range plan written; fitted-item parity made a gate (round 176)
 
 Wrote `SELF-SIZING-VALID-RANGE-PLAN.md`: the design for the remaining unit, built from what the five reverted

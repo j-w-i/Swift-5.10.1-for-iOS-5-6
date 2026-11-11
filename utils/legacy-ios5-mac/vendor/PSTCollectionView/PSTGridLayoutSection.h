@@ -77,6 +77,8 @@
 - (BOOL)stagePackedItemAtIndex:(NSInteger)item size:(CGSize)size;
 // General size change; recomputes this section's row membership from stored sizes, preserving absolute origin.
 - (BOOL)reflowPackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
+// Windowed layout: materialise row geometry only up to `targetRow`, continuing from the current extent.
+- (BOOL)extendPackedRowsThroughRow:(NSInteger)targetRow dimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize;
 
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;

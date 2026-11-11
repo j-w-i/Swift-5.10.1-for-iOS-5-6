@@ -28,6 +28,7 @@
     NSInteger _packedRowCount;
     NSInteger *_packedRowFirst;   // first item of each row; _packedRowFirst[_packedRowCount] == _packedCount
     CGFloat *_packedRowOrigin;    // origin of each row along the scroll axis
+    NSInteger _packedLaidOutRows; // rows whose geometry is materialised (valid-range extension)
     CGSize *_packedRowSize;       // size of each row
 }
 @property (nonatomic, strong) NSArray *items;
@@ -194,11 +195,15 @@
 // section whose item sizes are in _packedSizes. It performs the same arithmetic in the same order, so the
 // geometry is bit-identical; it only avoids a row object, an item object and an array per item.
 - (void)pstComputePackedRowsWithDimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize {
+    [self pstBreakPackedRowsWithDimension:dimension spacing:spacing];
+    [self pstLayOutPackedRowsFrom:0 to:self.indexOfImcompleteRow + 1 dimension:dimension spacing:spacing sectionSize:sectionSize];
+}
+
+/// Pass 1 of the packed layout: breaks the items into rows and fills `_packedRowFirst`. No row geometry is
+/// computed, so a caller can materialise only the rows it needs (windowed layout).
+- (void)pstBreakPackedRowsWithDimension:(CGFloat)dimension spacing:(CGFloat)spacing {
     const BOOL horizontal = self.layoutInfo.horizontal;
     const NSInteger count = _packedCount;
-    const CGFloat verticalInterstice = self.verticalInterstice, horizontalInterstice = self.horizontalInterstice;
-    const UIEdgeInsets margins = self.sectionMargins;
-    const BOOL centerItems = self.centersItemsAcrossRow;
     free(_packedRowFirst); free(_packedRowOrigin); free(_packedRowSize);
     NSInteger capacity = MAX(1, count) + 1;
     _packedRowFirst = malloc((size_t)capacity * sizeof(NSInteger));
@@ -240,8 +245,20 @@
     // The object loop set indexOfImcompleteRow to the last row it created.
     self.indexOfImcompleteRow = rows > 0 ? rows - 1 : self.indexOfImcompleteRow;
 
-    // 2. Lay out each row: justification, centering and the row's size, exactly as the row object did.
-    for (NSInteger row = 0; row < rows; row++) {
+    _packedLaidOutRows = 0;
+}
+
+/// Lays out rows [firstRow, lastRow) of an already-broken packed section. `sectionSize` carries the running
+/// extent, so the same arithmetic serves a full rebuild and a windowed extension (see the valid-range plan).
+- (void)pstLayOutPackedRowsFrom:(NSInteger)firstRow to:(NSInteger)lastRow dimension:(CGFloat)dimension
+                        spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize {
+    const BOOL horizontal = self.layoutInfo.horizontal;
+    const NSInteger count = _packedCount;
+    const CGFloat verticalInterstice = self.verticalInterstice, horizontalInterstice = self.horizontalInterstice;
+    const UIEdgeInsets margins = self.sectionMargins;
+    const BOOL centerItems = self.centersItemsAcrossRow;
+    const NSInteger rows = self.indexOfImcompleteRow + 1;
+    for (NSInteger row = firstRow; row < lastRow; row++) {
         const NSInteger first = _packedRowFirst[row], n = _packedRowFirst[row + 1] - first;
         const BOOL isLastRow = self.indexOfImcompleteRow == row;
         const PSTFlowLayoutHorizontalAlignment alignment = (PSTFlowLayoutHorizontalAlignment)(isLastRow ? self.lastRowAlignment : self.commonRowAlignment);
@@ -302,6 +319,21 @@
             sectionSize->width = MAX(frame.size.width, sectionSize->width);
         }
     }
+}
+
+/// Materialises row geometry up to and including `targetRow`, continuing from whatever is already laid out.
+/// `sectionSize` must carry the running extent from the same starting point (see the valid-range plan).
+- (BOOL)extendPackedRowsThroughRow:(NSInteger)targetRow dimension:(CGFloat)dimension spacing:(CGFloat)spacing
+                      sectionSize:(CGSize *)sectionSize {
+    if (!_packed || !sectionSize) return NO;
+    if (_packedRowCount == 0 && _packedCount > 0) [self pstBreakPackedRowsWithDimension:dimension spacing:spacing];
+    if (_packedRowCount == 0) return NO;
+    const NSInteger rows = self.indexOfImcompleteRow + 1;
+    const NSInteger last = MIN(targetRow + 1, rows);
+    if (last <= _packedLaidOutRows) return YES;
+    [self pstLayOutPackedRowsFrom:_packedLaidOutRows to:last dimension:dimension spacing:spacing sectionSize:sectionSize];
+    _packedLaidOutRows = last;
+    return YES;
 }
 
 - (BOOL)reflowPackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta {
