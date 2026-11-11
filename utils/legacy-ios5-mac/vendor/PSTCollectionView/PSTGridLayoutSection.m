@@ -9,6 +9,7 @@
 #import "PSTGridLayoutItem.h"
 #import "PSTGridLayoutRow.h"
 #import "PSTGridLayoutInfo.h"
+#import "PSTCollectionViewFlowLayout.h"
 
 @interface PSTGridLayoutSection () {
     NSMutableArray *_items;
@@ -22,6 +23,9 @@
 }
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) NSArray *rows;
+@property (nonatomic, assign, readwrite) NSInteger commonRowAlignment;
+@property (nonatomic, assign, readwrite) NSInteger lastRowAlignment;
+@property (nonatomic, assign, readwrite) BOOL centersItemsAcrossRow;
 @property (nonatomic, assign) CGFloat otherMargin;
 @property (nonatomic, assign) CGFloat beginMargin;
 @property (nonatomic, assign) CGFloat endMargin;
@@ -258,6 +262,16 @@
     // TODO: use index.
     [self invalidate];
     [self computeLayout];
+}
+
+- (void)setRowAlignmentOptions:(NSDictionary *)options {
+    _rowAlignmentOptions = options;
+    // Same reads and defaults the row used to make on every layout.
+    _commonRowAlignment = [[options objectForKey:PSTFlowLayoutCommonRowHorizontalAlignmentKey] integerValue];
+    _lastRowAlignment = [[options objectForKey:PSTFlowLayoutLastRowHorizontalAlignmentKey] integerValue];
+    id vertical = [options objectForKey:PSTFlowLayoutRowVerticalAlignmentKey];
+    // UIKit's default mode (1) centers unequal items on the row's scroll axis; other private values keep top/leading.
+    _centersItemsAcrossRow = !vertical || ([vertical respondsToSelector:@selector(integerValue)] && [vertical integerValue] == 1);
 }
 
 - (PSTGridLayoutItem *)addItem {

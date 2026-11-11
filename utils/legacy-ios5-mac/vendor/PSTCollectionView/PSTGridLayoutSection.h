@@ -31,6 +31,11 @@
 @property (nonatomic, assign) CGFloat footerDimension;
 @property (nonatomic, unsafe_unretained) PSTGridLayoutInfo *layoutInfo;
 @property (nonatomic, strong) NSDictionary *rowAlignmentOptions;
+// Values read from rowAlignmentOptions, resolved when it is set so a row does not repeat
+// three dictionary lookups per layout. Alignment enum values; see PSTFlowLayoutHorizontalAlignment.
+@property (nonatomic, assign, readonly) NSInteger commonRowAlignment;
+@property (nonatomic, assign, readonly) NSInteger lastRowAlignment;
+@property (nonatomic, assign, readonly) BOOL centersItemsAcrossRow;
 
 @property (nonatomic, assign, readonly) CGFloat otherMargin;
 @property (nonatomic, assign, readonly) CGFloat beginMargin;

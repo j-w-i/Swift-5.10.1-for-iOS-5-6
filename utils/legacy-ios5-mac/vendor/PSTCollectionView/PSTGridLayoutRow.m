@@ -65,7 +65,6 @@
         // over every item, and each repeated property read is an Objective-C message.
         PSTGridLayoutSection *section = self.section;
         PSTGridLayoutInfo *layoutInfo = section.layoutInfo;
-        NSDictionary *alignmentOptions = section.rowAlignmentOptions;
         const BOOL fixedSize = self.fixedItemSize;
         const NSInteger count = self.itemCount;
         const CGSize fixedItemSize = section.itemSize;
@@ -77,7 +76,7 @@
         // properties for aligning
         BOOL isHorizontal = layoutInfo.horizontal;
         BOOL isLastRow = section.indexOfImcompleteRow == self.index;
-        PSTFlowLayoutHorizontalAlignment horizontalAlignment = [[alignmentOptions objectForKey:(isLastRow ? PSTFlowLayoutLastRowHorizontalAlignmentKey : PSTFlowLayoutCommonRowHorizontalAlignmentKey)] integerValue];
+        PSTFlowLayoutHorizontalAlignment horizontalAlignment = (PSTFlowLayoutHorizontalAlignment)(isLastRow ? section.lastRowAlignment : section.commonRowAlignment);
 
         // calculate space that's left over if we would align it from left to right.
         CGFloat leftOverSpace = layoutInfo.dimension;
@@ -96,8 +95,7 @@
         CGFloat spacing = isHorizontal ? verticalInterstice : horizontalInterstice;
         // UIKit's default mode (1) centers unequal items on the row's scroll axis.
         // Preserve the former top/leading behaviour for other private option values.
-        id verticalOption = [alignmentOptions objectForKey:PSTFlowLayoutRowVerticalAlignmentKey];
-        BOOL centerItems = !verticalOption || ([verticalOption respondsToSelector:@selector(integerValue)] && [verticalOption integerValue] == 1);
+        const BOOL centerItems = section.centersItemsAcrossRow;
         CGFloat maxScrollDimension = fixedSize ? (isHorizontal ? fixedItemSize.width : fixedItemSize.height) : 0;
         // the last row should justify as if it is filled with more (invisible) items so that the whole
         // UICollectionView feels more like a grid than a random line of blocks

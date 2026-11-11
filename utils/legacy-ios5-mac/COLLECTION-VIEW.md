@@ -1705,3 +1705,40 @@ row. Removing that needs a compact representation for the unmeasured majority of
 
 Limits: native column is a single run, PST a median of 3 in a separate launch; the cell is trivial;
 iPhone 6 not run.
+
+### Row alignment resolved once per section, not three dictionary lookups per row
+
+After the sparse-override change, the next profile of the no-delegate 5,000-item reload showed
+`layoutRowAndGenerateRectArray:` at 32% of samples, and inside it `NSDictionary objectForKey:` as the
+largest single callee (214 of 919 samples). Every row looked up the common-row alignment, the last-row
+alignment and the vertical-alignment option in `rowAlignmentOptions`, though they are identical for all
+rows of a section. `PSTGridLayoutSection` now reads them once when `rowAlignmentOptions` is set and
+exposes `commonRowAlignment`, `lastRowAlignment` and `centersItemsAcrossRow`; the row reads those.
+Defaults for a nil dictionary are unchanged (alignment 0, centering on).
+
+Verified identical to the previous commit: the 14-scenario geometry golden, centering (16 cases),
+stability, mutation, delegate and first-layout gates, and **6 of 6 stepped traces byte-identical**.
+Simulator, no delegate, 5,000 items: cold 4.2 -> 3.3 ms, reload 6.4 -> 5.4 ms.
+
+On hardware (median of 3; this change / previous commit, no delegate):
+
+| Device | Cold 5,000 | Reload 5,000 | Scroll 5,000 | Cold 1,000 |
+| --- | ---: | ---: | ---: | ---: |
+| iPod touch 3 | 0.79 | 0.84 | 0.86 | 0.79 |
+| iPod touch 5 | 0.80 | 0.76 | 0.77 | 0.80 |
+
+**PST versus the Apple route on the iPod touch 5** (no delegate, content heights equal; PST median of 3
+against a single native run, so not interleaved):
+
+| Items | Cold | Scroll | Reload |
+| ---: | ---: | ---: | ---: |
+| 200 | 0.72 | 0.57 | 0.73 |
+| 1,000 | 0.96 | 0.60 | 0.81 |
+| 5,000 | **0.92** | 0.57 | **0.94** |
+
+So in this probe PST is at or below the Apple route at every size and metric. Combined with the sparse
+override change, cold at 5,000 items went from 1.50x to 0.92x and reload from 1.28x to 0.94x.
+
+This is a single synthetic workload with a trivial cell and no delegate; with a size delegate the
+earlier ratios (cold 0.99-1.26, reload 0.95-1.14) have not been re-measured since these two changes and
+should be before any claim of parity there. The native figure is one run. The iPhone 6 was not run.
