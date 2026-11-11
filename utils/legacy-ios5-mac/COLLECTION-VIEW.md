@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The hang was refitting the same index path across cell instances (round 216)
+
+Round 215's hang ("non-converging cell hung layout") was a fit cap applied to the **cell instance**, which a pass
+restart can replace. Moving the cap to the **index path, per data generation** (`kPSTFitCountsKey`, cleared on
+`reloadData`, limit three) fixed it: the layout now always terminates even when a cell's preferred size keeps
+changing.
+
+With that and the scheduler restored, preparation fitting reaches its best result so far:
+
+* **22 of 23 collection gates pass**, including the display lifecycle gate **exactly matching native**
+  (9/0 and 8/0 against native's 9/0 and 8/0), stability, automatic size, bounds, delegate sizing and prefetch;
+* visible cell frames remain exact (0 of 210 differ);
+* `sizing updates` fails in the suite run but passes when run alone (`exit=0`, all six sub-cases PASS) - flaky,
+  worth re-running before being called a regression;
+* layouts content is 15/32 steps exact (fitted-item parity 9/32), against the baseline's 31/32.
+
+So the tradeoff is now: **exact lifecycle parity plus exact visible frames, at the cost of 16 content steps.**
+The content difference is the "native estimates a section PST materialises" behaviour characterised in round 211,
+not a new defect.
+
+Reverted, because shipping it would trade a better content match for a better callback order. Baseline
+re-verified (golden PASS, layouts 31/32). The mechanism is fully understood now, which means the choice between
+the two configurations is a product decision, not an engineering unknown.
+
 ## Restoring the scheduler fixes half the preparation-fitting regressions (round 215)
 
 Took the remaining blocker at its word. Instead of suppressing the post-layout scheduler, keep it **and** fit
