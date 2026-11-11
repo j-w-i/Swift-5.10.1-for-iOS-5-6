@@ -1,5 +1,35 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Native's attributes for unmeasured sections are degenerate (round 218)
+
+Chasing the content inflation under preparation fitting, compared per-section extents in scenario 0:
+
+| step | native content | PST content | native sec1 items | PST sec1 items |
+| --- | ---: | ---: | --- | --- |
+| 0 | 1854.0 | 1817.0 | all at y=674 (one origin, 40 tall) | real rows from 674 |
+| 1 | 1854.0 | 1842.0 | all at y=674 | real rows |
+| 2 | 1835.0 | **1835.0** | real rows | real rows |
+| 3 | 1846.0 | 2042.0 | real rows | real rows but at 54 |
+
+The important observation is in rows 0-1: for a section native has not laid out, **every item reports the same
+origin** - the section's own origin - with the estimated size. That is the same degeneracy round 211 saw in
+`horizontal narrow` (items six points apart, which cannot be a real layout).
+
+Consequences:
+
+1. Native's content size in that state is derived from degenerate per-section extents, not from a laid-out
+   layout. Comparing PST's real layout against it is comparing a layout with an placeholder.
+2. So the content differences under preparation fitting are not necessarily PST being wrong; some of them are PST
+   being *more* resolved than native at that instant.
+3. Conversely, the shipped baseline matches native's content on 31/32 because it converges later (after the
+   scheduler has fitted and re-laid out the whole view), by which time native has also resolved.
+
+That reframes the goal: PST should reproduce native's *resolved* content (which the baseline already does) while
+reproducing native's *ordering* (which preparation fitting does). Any attempt to match native's intermediate,
+degenerate content numbers exactly would be matching a placeholder, not a behaviour.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32).
+
 ## Decision recorded: Apple's mechanism is preparation fitting, but it needs lazy estimation first (round 217)
 
 Asked the user which configuration should ship, since the two trade observable behaviour against each other.
