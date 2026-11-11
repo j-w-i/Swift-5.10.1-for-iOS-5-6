@@ -162,10 +162,16 @@
 
 import Foundation
 import CoreGraphics
+import Cassowary
 
 // `Foundation.Expression` (the iOS 18 Predicate type) collides with the
 // Cassowary linear-expression type of the same name. Pin the solver names at
 // file scope so the translation code below reads like the constraint algebra.
+private typealias Expression = Cassowary.Expression
+private typealias Variable = Cassowary.Variable
+private typealias Constraint = Cassowary.Constraint
+private typealias Strength = Cassowary.Strength
+private typealias RelationalOperator = Cassowary.RelationalOperator
 
 
 

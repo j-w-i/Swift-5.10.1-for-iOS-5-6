@@ -1,5 +1,22 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Auto Layout gate: partial repair, still not runnable (round 172)
+
+Followed up round 171's finding. `49e3e408` left `LegacyLayoutSolver.swift` with the comment "pin the solver
+names at file scope" but no aliases, after moving `Expression`/`Variable`/`Constraint`/`Strength` into the
+Cassowary module. Restored them (`import Cassowary` plus file-scope `private typealias`es), which removed the
+ambiguity and cut the harness's compile errors **from 32 to 10**.
+
+The remaining 10 errors are a different defect in the same commit: three debug-only code paths in
+`LegacyLayoutSolver.swift` reference `UIView` (lines ~538, ~576, ~1720), but the parity harness compiles the
+engine for the host, where UIKit does not exist. Guarding those regions needs matched `#if canImport(UIKit)`
+pairs inside another subsystem's debug code; a first attempt left unbalanced conditionals, so it was reverted
+rather than risk leaving that file in a worse state.
+
+So the Auto Layout parity gate still cannot run, and I did not verify it. It is broken by `49e3e408` - not by
+any collection-view change - and now needs two things: the aliases (done) and host-safe guards around the
+`UIView` debug paths (not done, out of this effort's scope). Stack and scene/trait gates pass.
+
 ## Scene/trait gate made runnable and passing (round 171)
 
 `run-scene-fallthrough-test.sh` requires a prepared native probe directory (`main.m` plus `P.app/Info.plist`
