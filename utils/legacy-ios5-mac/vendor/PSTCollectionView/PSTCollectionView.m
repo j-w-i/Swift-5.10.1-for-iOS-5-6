@@ -147,6 +147,7 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // grid must not copy and scan the whole subview array per inserted cell.
     BOOL _pstHasFloatingViews;
     BOOL _pstDeferWillDisplayForFitting;
+    NSUInteger _pstDisplayDeferCount;
     // Views created in this pass whose willDisplay waits for the fitting transaction: UIKit announces a cell
     // only after its preferred attributes have been applied, and the fits happen inside that transaction.
     NSMutableSet *_pstPendingDisplayKeys;
@@ -1840,8 +1841,20 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             if ([_pstPendingDisplayKeys containsObject:k]) [rest addObject:k];
         [rest sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
             return [a.indexPath compare:b.indexPath]; }];
+        // Only announce cells whose fitting has actually settled: a cell created during the relayout that the
+        // transaction has not reached yet waits for the next pass. Bounded so nothing is held forever.
+        PSTCollectionViewFlowLayout *pstFlow = (PSTCollectionViewFlowLayout *)_layout;
+        NSMutableSet *stillPending = [NSMutableSet set];
+        for (PSTCollectionViewItemKey *k in rest) {
+            PSTCollectionReusableView *v = [_allVisibleViewsDict objectForKey:k];
+            BOOL settled = !pstFlow || ![pstFlow pstUsesSelfSizing] || !v ||
+                [pstFlow pstHasStableMeasuredSizeForItemAtIndexPath:k.indexPath proposedFrame:v.layoutAttributes.frame];
+            if (!settled && _pstDisplayDeferCount < 4) { [stillPending addObject:k]; continue; }
+            [self pstNotifyWillDisplayView:v forKey:k];
+        }
         [_pstPendingDisplayKeys removeAllObjects];
-        for (PSTCollectionViewItemKey *k in rest) [self pstNotifyWillDisplayView:[_allVisibleViewsDict objectForKey:k] forKey:k];
+        [_pstPendingDisplayKeys unionSet:stillPending];
+        _pstDisplayDeferCount = stillPending.count ? _pstDisplayDeferCount + 1 : 0;
     }
 
     [self pstPrefetchAfterPass];

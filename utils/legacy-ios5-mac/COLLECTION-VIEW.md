@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Display lifecycle parity achieved (round 229)
+
+The last behavioural gap is closed. `collectionView:willDisplayCell:forItemAtIndexPath:` now matches the iOS 27
+oracle exactly, in both lifecycle cases:
+
+    native  changed=False displays=9 displayed-before-fit=0
+    native  changed=True  displays=8 displayed-before-fit=0
+    PST     changed=False displays=9 displayed-before-fit=0
+    PST     changed=True  displays=8 displayed-before-fit=0
+
+**What the fix was.** Not where PST fits - its fit sequence was already identical to native's (10/16/24 reports per
+step, same values, same order). The announcement was simply fired too early: PST created a cell, announced it, and
+fitted in the post-layout transaction afterwards. Round 228 deferred the announcement to the end of the pass and
+delivered after the fitting transaction, which fixed the first case (0/0) and left three of eight in the second.
+A cell created *during* the relayout that the transaction had not reached was still being announced; announcing
+only cells with a settled measurement (`pstHasStableMeasuredSizeForItemAtIndexPath:proposedFrame:`) closed it,
+with a four-pass bound so nothing is held forever.
+
+Why every earlier attempt failed, in one line: they moved the *fitting* (suppressing the scheduler, fitting
+through the invalidation context, relayout convergence, reporting thresholds) when the ordering problem lived in
+the *announcement*. Moving the announcement leaves geometry untouched, which is why the layouts gate keeps
+passing at 62/64 with 0 of 420 visible frames differing and fitted-item parity 64/64.
+
+**Verified: 28 of 28 gates green** - golden 14/14, every self-sizing and display gate including the lifecycle and
+layouts gates, packed updates 240, windowed 24, lazy section 414, lazy extension 48, lazy variable 12, prefetch,
+batch insert 9/9, delegate sizing - plus a strict armv7 iOS 5 `-Werror=unguarded-availability` compile.
+
 ## Decoded: native's proposals are the running mean, and PST starts each step with fewer measurements (round 227)
 
 The trace's cell reports height `30 + ((item*7 + section*3) % 5) * 8`, so section 0's items are
