@@ -2159,3 +2159,26 @@ paths on iOS 27 gives `6,1,4,7,2,5,0,8,3` for the first batch (native fitted `0,
 the second (native fitted `4,7,9,10`) and `5,8,2` for the third (native fitted `2`). Only the final
 confirmation pass follows dictionary order; the fitting batches follow a layout rule that is still unknown.
 The three-column fixture therefore remains inexact (9 of 10 stepped fixtures) for an unexplained reason.
+
+### Apple route cost: measured without any hook (iPod touch 5), confirming and sharpening the attribution
+
+The claim that the extra self-sizing cost on iOS 6-9 is Apple's engine and not the hook was inferred from the
+hook doing a binary search. It is now measured. A hook-free app (no `UICInstallCollectionViewDisplay`, an
+ordinary `sizeForItemAtIndexPath:` delegate) timed one cold rebuild of Apple's flow layout on the iPod
+touch 5, best of five:
+
+| Items | Constant sizes | Varying sizes |
+| ---: | ---: | ---: |
+| 200 | 4.5 ms (22.6 us/item) | 7.4 ms (36.9 us/item) |
+| 1,000 | 9.9 ms (9.9 us/item) | 24.3 ms (24.3 us/item) |
+| 5,000 | 36.5 ms (7.3 us/item) | 112.8 ms (22.6 us/item) |
+
+Two facts follow. First, **Apple's own engine costs about 23 us per item per rebuild when sizes vary**, on top
+of which self-sizing runs several rebuilds per transaction (5 for a 5,000-item cold layout), so about 0.56 s
+of the 0.78 s measured for the hooked cold layout is five rebuilds of Apple's engine and the hook's own work
+is the remainder. Second, **the engine is 3x cheaper per item when sizes are constant** (7.3 against 22.6 us), so
+the cost depends on size variety, not only on item count. PST's packed rebuild of the same 5,000 varying
+items measured 62 ms on this device for the whole self-sizing transaction.
+
+This confirms that no change inside the hook can remove the cost; only changing which engine lays the items
+out can. That decision remains open.
