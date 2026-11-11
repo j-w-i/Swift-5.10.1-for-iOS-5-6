@@ -129,6 +129,8 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // allocate two NSSets, an NSArray and an NSMutableDictionary.
     NSMutableSet *_pstVisibleItemKeysScratch;
     NSMutableArray *_pstVisibleItemKeyListScratch;
+    NSMutableArray *_pstRetiredViewsScratch;      // retired this pass, enqueued once arrivals exist
+    NSMutableArray *_pstRetiredTypesScratch;
     NSMutableArray *_pstVisibleItemKeysToRemoveScratch;
     NSMutableArray *_pstFloatingViewsScratch;
     // Identity of the last completed visible-cell pass.  When the data cache
@@ -545,6 +547,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         // when it stops displaying. Keep delegate-observable state until then.
         [cell prepareForReuse];
         [reusableCells removeObjectAtIndex:reusableCells.count - 1];
+        cell.hidden = NO;
     }else {
         if ([_cellNibDict objectForKey:identifier]) {
             // Cell was registered via registerNib:forCellWithReuseIdentifier:
@@ -587,6 +590,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (view) {
         [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
+        view.hidden = NO;
     }else {
         if ([_supplementaryViewNibDict objectForKey:kindAndIdentifier]) {
             // supplementary view was registered via registerNib:forCellWithReuseIdentifier:
@@ -640,6 +644,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (view) {
         [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
+        view.hidden = NO;
     }else {
         NSDictionary *decorationViewNibDict = collectionViewLayout.decorationViewNibDict;
         NSDictionary *decorationViewExternalObjects = collectionViewLayout.decorationViewExternalObjectsTables;
@@ -726,7 +731,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         id obj = [retiring objectForKey:key];
         if (![obj isKindOfClass:UIView.class]) continue;
         PSTCollectionReusableView *view = obj;
-        [view removeFromSuperview];
+        view.hidden = YES; // stays attached until reused, as under UIKit
         if (key.type == PSTCollectionViewItemTypeCell) {
             if (_collectionViewFlags.delegateDidEndDisplayingCell)
                 [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)view forItemAtIndexPath:key.indexPath];
@@ -1751,31 +1756,30 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             if (x.type != y.type) return x.type < y.type ? NSOrderedAscending : NSOrderedDescending;
             return [x.indexPath compare:y.indexPath];
         }];
+    if (!_pstRetiredViewsScratch) { _pstRetiredViewsScratch = [NSMutableArray array]; _pstRetiredTypesScratch = [NSMutableArray array]; }
+    else { [_pstRetiredViewsScratch removeAllObjects]; [_pstRetiredTypesScratch removeAllObjects]; }
     for (PSTCollectionViewItemKey *itemKey in _pstVisibleItemKeysToRemoveScratch) {
         PSTCollectionReusableView *reusableView = [_allVisibleViewsDict objectForKey:itemKey];
         if (reusableView) {
-            [reusableView removeFromSuperview];
+            // The view stays in the hierarchy and is hidden when it is queued below, after
+            // this pass has created its arrivals: UIKit does not recycle a view in the
+            // pass that retired it.
             [_allVisibleViewsDict removeObjectForKey:itemKey];
+            reusableView.hidden = YES; // delegates see the retiring view already hidden, as under UIKit
             if (itemKey.type == PSTCollectionViewItemTypeCell) {
                 if (_collectionViewFlags.delegateDidEndDisplayingCell) {
                     [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)reusableView forItemAtIndexPath:itemKey.indexPath];
                 }
-                [self reuseCell:(PSTCollectionViewCell *)reusableView];
             }
-            else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView) {
-                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
-                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
-                }
-                [self reuseSupplementaryView:reusableView];
-            }
-            else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
+            else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView || itemKey.type == PSTCollectionViewItemTypeDecorationView) {
                 // UIKit routes retiring decorations through the reusable-view
                 // end-display callback too; the kind identifies the decoration.
                 if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
                     [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
                 }
-                [self reuseDecorationView:reusableView];
             }
+            [_pstRetiredViewsScratch addObject:reusableView];
+            [_pstRetiredTypesScratch addObject:@(itemKey.type)];
         }
     }
 
@@ -1797,6 +1801,15 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     for (NSUInteger i = 0; i < pstDeferred.count; i++)
         [self pstAddVisibleViewForAttributes:[pstDeferred objectAtIndex:i] key:[pstDeferredKeys objectAtIndex:i]];
     [pstKeys removeAllObjects];
+
+    for (NSUInteger r = 0; r < _pstRetiredViewsScratch.count; r++) {
+        PSTCollectionReusableView *view = [_pstRetiredViewsScratch objectAtIndex:r];
+        PSTCollectionViewItemType type = (PSTCollectionViewItemType)[[_pstRetiredTypesScratch objectAtIndex:r] unsignedIntegerValue];
+        if (type == PSTCollectionViewItemTypeCell) [self reuseCell:(PSTCollectionViewCell *)view];
+        else if (type == PSTCollectionViewItemTypeSupplementaryView) [self reuseSupplementaryView:view];
+        else [self reuseDecorationView:view];
+    }
+    [_pstRetiredViewsScratch removeAllObjects]; [_pstRetiredTypesScratch removeAllObjects];
 
     _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
     _pstLastVisibleLayoutAttributesGeneration = [_collectionViewData layoutAttributesGeneration];
@@ -1968,18 +1981,29 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 - (void)queueReusableView:(PSTCollectionReusableView *)reusableView inQueue:(NSMutableDictionary *)queue withIdentifier:(NSString *)identifier {
     NSParameterAssert(identifier.length > 0);
 
-    // Retirement already detached the view in the usual case; a second call costs a
-    // full UIKit hierarchy update for nothing.
-    if (reusableView.superview) [reusableView removeFromSuperview];
     // Dequeue owns prepareForReuse; a view may remain queued indefinitely.
-
-    // enqueue cell
     NSMutableArray *reuseableViews = [queue objectForKey:identifier];
     if (!reuseableViews) {
         reuseableViews = [NSMutableArray array];
         [queue setObject:reuseableViews forKey:identifier];
     }
-    [reuseableViews addObject:reusableView];
+    // UIKit keeps a retired view in the hierarchy, hidden, until it is reused: that
+    // spares a remove and a re-insert on every scroll step. The queue is capped at about
+    // half a screen's worth of such views; beyond that, or for a duplicate, detach it.
+    if (reuseableViews.count < [self pstReuseQueueCapacityForView:reusableView] && ![reuseableViews containsObject:reusableView]) {
+        [reuseableViews addObject:reusableView];
+        if (!reusableView.hidden) reusableView.hidden = YES;
+    } else if (reusableView.superview) {
+        [reusableView removeFromSuperview];
+    }
+}
+
+- (NSUInteger)pstReuseQueueCapacityForView:(UIView *)view {
+    CGSize screen = [UIScreen mainScreen].bounds.size;
+    CGSize size = view.frame.size;
+    CGFloat area = size.width * size.height;
+    if (area < 1.0) area = 1.0;
+    return (NSUInteger)ceil((screen.width * screen.height * 0.5) / area) + 1;
 }
 
 // enqueue cell for reuse
@@ -2015,8 +2039,11 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // avoids placing views above the scroll indicator
     // If the collection view is not displaying scrollIndicators then self.subviews.count can be 0.
     // We take the max to ensure we insert at a non negative index because a negative index will silently fail to insert the view
-    NSInteger insertionIndex = MAX((NSInteger)(self.subviews.count - (self.dragging ? 1 : 0)), 0);
-    [self insertSubview:subview atIndex:insertionIndex];
+    // A recycled view is still attached, merely hidden; there is nothing to insert.
+    if (subview.superview != self) {
+        NSInteger insertionIndex = MAX((NSInteger)(self.subviews.count - (self.dragging ? 1 : 0)), 0);
+        [self insertSubview:subview atIndex:insertionIndex];
+    }
 
     // z-index ordering only matters when a visible view floats above the normal
     // cell layer.  Keep that fact instead of copying and scanning the whole

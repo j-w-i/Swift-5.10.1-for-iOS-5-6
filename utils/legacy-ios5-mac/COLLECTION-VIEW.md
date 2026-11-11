@@ -517,3 +517,39 @@ PST's extra `prepareForReuse` calls and for skipping `removeFromSuperview` /
 `insertSubview:` while scrolling. Implementing it needs a private `hiddenForReuse`
 state that survives `hidden` assignments by the layout (apply of attributes must not
 un-hide), the capacity cap, and `subviews`-visible changes to be accepted.
+
+### Round 79: retired views stay attached and hidden (implemented; hardware-measured)
+
+`PSTCollectionView` now retires a view the way native UIKit does. It hides the view,
+tells the delegate (`didEndDisplaying` sees it already hidden, as under UIKit), and
+queues it only after the pass has created its arrivals, so a view retired in a pass
+is not recycled in that pass. It stays in the hierarchy until a later dequeue
+un-hides it, which skips a `removeFromSuperview` and an `insertSubview:` per recycled
+view. The queue is capped (half the main screen's area over the view's area, rounded
+up, plus one); beyond the cap or for a duplicate the view is detached. `reloadData`
+hides instead of detaching. Behaviour taken from the iOS 6.1 disassembly and checked
+on the iOS 27 simulator (`retired-cells.m`, `retired-capacity.m`, `reuse-order.m`).
+
+Checked: PST after scrolling now has 4 cell subviews with 2 hidden, as native does;
+a reload shows `superview yes` in `cellForItem`, as native does; display-event gates,
+self-sizing mutation, cell-resize and the 14 geometry scenarios pass; the iPod touch 3
+(iOS 5.1.1) display-event sequence matches native structurally.
+
+Hardware (iPhone 6), six alternating pairs, new/old PST median: **reload 0.562,
+scroll 0.816, multi-section scroll 0.871, item-size 0.933**, batch 0.973, cold 0.990,
+bounds 0.991, multi-section cold 0.996, **idle 1.028 (1/6 pairs faster)**. Paired
+PST/native over three launches: cold 1.09, idle 0.79, **scroll 1.09, reload 0.95**,
+batch 0.71, item-size 1.26, bounds 0.99, multi-section cold 1.11, multi-section
+scroll 0.87. Reload and multi-section scroll are now at or below native; scroll is
+within 9%; item-size (1.26) and cold layout (1.09-1.11) remain slower. Idle got about
+3% slower in this comparison and is not explained.
+
+Not matched, and not changed by this work (the same results appear at the previous
+commit):
+- Native does not create a visible cell for a layout item whose `hidden` is YES
+  (`layout-hidden-items.m`: native shows 1 cell, PST shows `0h 1`).
+- `hitTest:` inside a visible cell returns the cell natively but the cell's inner view
+  in PST (`hidden-retired-effects.m`).
+Untested with the new retirement: animated `performBatchUpdates` retirement
+(`freeUnusedViews` and `finishUpdate` now hide and keep views attached) beyond the
+non-animated mutation suite, and the Apple iOS 6/7 route, which has its own path.
