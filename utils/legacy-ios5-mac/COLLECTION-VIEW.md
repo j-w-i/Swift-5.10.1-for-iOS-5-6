@@ -1,5 +1,31 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Ordering change verified on the PST route (iPod touch 3, iOS 5.1.1) and backport suites (round 230)
+
+The display-path change is the first in many rounds to touch the live path, so it was verified on real iOS 5
+hardware and against the backport suites.
+
+**PST route, iPod touch 3, 5,000 self-sizing items:**
+
+| Configuration | before the change | after |
+| --- | ---: | ---: |
+| no delegate, cold | 147.7 ms | 149.0 ms |
+| no delegate, scroll | 16.9 ms | 16.8 ms |
+| no delegate, reload | 146.7 ms | 148.6 ms |
+| delegate, cold | 287.5 ms | 282.0 ms |
+| delegate, scroll | 3.0 ms | 2.8 ms |
+| delegate, reload | 335.0 ms | **291.0 ms** |
+
+No regression in the no-delegate path (the objective's path) and the delegate reload is materially better.
+Measured `contentHeight` is unchanged (273341 and 289970), so behaviour is identical, not just faster.
+
+**Backport suites:** Auto Layout solver suite completes (`installed=3612`, `rebuilds=3`), fitting suite completes,
+scene/trait fall-through PASSes ("classes unchanged").
+
+Verification state now: simulator oracle 28/28 gates with exact lifecycle parity, PST route verified on real
+iOS 5.1.1 hardware, Apple route verified on real iOS 6.1.3 in round 221 (the re-run after this change was blocked
+by the locked device - see the previous section - but that app does not compile the changed file).
+
 ## Device re-run blocked: the iPod touch 5 is locked (round 229)
 
 After the ordering change, tried to re-run the Apple-route device gate on the iPod touch 5. It failed with an
