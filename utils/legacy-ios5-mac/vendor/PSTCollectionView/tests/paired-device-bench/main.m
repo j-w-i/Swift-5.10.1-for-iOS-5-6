@@ -6,7 +6,11 @@ double nativeBench(int,NSInteger);double pstBench(int,NSInteger);
 extern void UICInstallCollectionViewDisplay(void);
 #endif
 static int cmp(const void*a,const void*b){double x=*(double*)a,y=*(double*)b;return x<y?-1:x>y;}
-static void run(void){@autoreleasepool{
+static void noteFailure(NSString *what) {
+    FILE *f = fopen(OUTFILE, "a");
+    if (f) { fprintf(f, "FAILURE: %s\n", what.UTF8String); fclose(f); }
+}
+ static void run(void){@autoreleasepool{
  FILE*f=fopen(OUTFILE,"w");int saved=dup(1);fflush(stdout);dup2(fileno(f),1);setvbuf(stdout,NULL,_IONBF,0);
  const char*names[9]={"cold layout","reload","batch ins5+del5","selfsize+dlg cold","selfsize+dlg reload","selfsize+dlg batch","selfsize nodlg cold","selfsize nodlg reload","selfsize nodlg batch"};NSInteger sizes[3]={200,1000,5000};
  for(int si=0;si<3;si++)for(int s=0;s<9;s++){
@@ -25,6 +29,9 @@ static void run(void){@autoreleasepool{
 #endif
  self.window=[[UIWindow alloc]initWithFrame:[UIScreen mainScreen].bounds];UIViewController*vc=[UIViewController new];vc.view.backgroundColor=[UIColor whiteColor];
  UILabel*l=[[UILabel alloc]initWithFrame:CGRectMake(10,30,300,60)];l.text=@"Paired bench running";[vc.view addSubview:l];self.window.rootViewController=vc;[self.window makeKeyAndVisible];
- dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{run();l.text=@"Done. Home works normally.";});return YES;}
+ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+  @try { run(); l.text=@"Done. Home works normally."; }
+  @catch (NSException *e) { noteFailure([NSString stringWithFormat:@"%@: %@", e.name, e.reason]); l.text=@"Failed - see file"; }
+ });return YES;}
 @end
 int main(int c,char**v){@autoreleasepool{return UIApplicationMain(c,v,nil,@"AD");}}

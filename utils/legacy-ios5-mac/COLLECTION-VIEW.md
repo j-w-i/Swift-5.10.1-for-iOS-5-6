@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Crash log read: it is an uncaught exception at launch, before the harness runs (round 242)
+
+Pulled `LatestCrash-PairedBench.plist` off the iPod touch 5 and parsed it on the host (the device has neither
+`python3` nor `plutil`):
+
+* `Process: PairedBench [38004]`, `bug_type 109`, iPhone OS 6.1.3;
+* `Exception Type: EXC_CRASH (SIGABRT)` with an Objective-C exception rethrown through `libobjc` / `libc++abi`,
+  and `Last Exception Backtrace` frames inside the app image (`0x4c73c`, `0x4c21c`);
+* the reason string is not in the report (iOS 6 strips it).
+
+So the app aborts on an ObjC exception during launch. Instrumented the harness to capture it (a `@try/@catch`
+around `run()` writing `name: reason` into the output file), rebuilt and relaunched: still `n2launch` result 6 with
+**no output file at all**, which places the abort *before* the two-second dispatch - i.e. during
+`application:didFinishLaunchingWithOptions:` or earlier, most likely in `UICInstallCollectionViewDisplay()` or in
+dyld binding of the linked PST objects.
+
+That is the narrowed state, and the next attempt should start from it: launch the same binary with the hook
+installation call removed, to separate "hook install throws" from "dyld/binding fails". The harness change (the
+`@try/@catch` capture) is committed, so that experiment is one rebuild away.
+
+Device cleaned (0 test apps). Performance evidence unchanged: PST at HEAD on the iPod touch 3 (round 230), Apple
+route behaviour-verified (round 239).
+
 ## Two leads on the paired-bench launch failure (round 241)
 
 Followed up the `n2launch` result 6 rather than retrying blindly:
