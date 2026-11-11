@@ -65,6 +65,8 @@
         NSInteger itemsByRowCount = 0;
         CGFloat dimensionLeft = 0;
         PSTGridLayoutRow *row = nil;
+        PSTGridLayoutRow *templateRow = nil; // first complete row of a fixed-size section
+        NSInteger templateCount = 0;
         // get dimension and compensate for section margin
         CGFloat headerFooterDimension = self.layoutInfo.dimension;
         CGFloat dimension = headerFooterDimension;
@@ -101,7 +103,15 @@
                     // if current row is done but there are still items left, increase the incomplete row counter
                     if (!finishCycle) self.indexOfImcompleteRow = rowIndex;
 
-                    [row layoutRow];
+                    // In a fixed-size section every complete row (not the final, possibly incomplete
+                    // one) lays out identically, so lay the first one out and let the rest adopt it.
+                    BOOL isFinalRow = finishCycle;
+                    if (self.fixedItemSize && !isFinalRow && templateRow && itemsByRowCount == templateCount && row != templateRow) {
+                        [row adoptLayoutFromRow:templateRow];
+                    } else {
+                        [row layoutRow];
+                        if (self.fixedItemSize && !isFinalRow && !templateRow) { templateRow = row; templateCount = itemsByRowCount; }
+                    }
 
                     if (self.layoutInfo.horizontal) {
                         row.rowFrame = CGRectMake(sectionSize.width, self.sectionMargins.top, row.rowSize.width, row.rowSize.height);

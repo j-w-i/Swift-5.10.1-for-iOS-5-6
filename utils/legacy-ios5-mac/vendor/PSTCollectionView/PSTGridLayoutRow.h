@@ -29,6 +29,10 @@
 // Add new item to items array.
 - (void)addItem:(PSTGridLayoutItem *)item;
 
+// Take another row's finished layout. Valid only for a complete row of a fixed-size section with the
+// same item count and alignment as that row (every such row lays out identically).
+- (void)adoptLayoutFromRow:(PSTGridLayoutRow *)row;
+
 // Layout current row (if invalid)
 - (void)layoutRow;
 

@@ -835,3 +835,35 @@ noise: single-engine probes, not paired.)
 ms and cold layout at 20,000 items is 97 ms against about 2 ms; `computeLayout` still visits
 every item and builds a row object per row. That is the closed-form fixed-size fast path
 described last round, which has not been started.
+
+### Round 91: fixed-size layout rebuild reuses the first row's layout (about 2.2x faster, still O(items))
+
+In a fixed-size section every complete row lays out identically, so `computeLayout` now lays out
+the first complete row and lets later complete rows adopt its size instead of re-running the
+alignment arithmetic. The final row, which may be incomplete, is always laid out on its own, and
+variable-size sections are untouched.
+
+`tests/fixed-layout-dump.m` prints every item frame and the content size for 648 fixed-size
+configurations (both scroll directions, six view dimensions, four item widths, three spacings,
+item counts from 0 to 41, two sections of different sizes): 17,496 lines. The new build is
+**byte-identical** to the previous commit's output. On the iPod touch 3 (iOS 5.1.1) the same dump
+agrees with the simulator on every line within 0.00046 points; the difference is the 32-bit device
+printing single-precision floats, not a layout difference (both builds of the simulator agree
+exactly). The 14 geometry scenarios, the 3,276-rect query test, self-sizing, automatic-size,
+display-event, cell-resize, hidden-layout and unmeasured-proposal gates pass.
+
+iPhone 6, plain cells, microseconds (previous round in brackets):
+
+| Items | Resize, PST | Resize, native | Cold layout, PST | Cold, native |
+| ---: | ---: | ---: | ---: | ---: |
+| 200 | 991 (1,781) | 624 | 9,823 (9,873) | 11,962 |
+| 1,000 | 3,383 (7,177) | 569 | 5,126 (7,714) | 3,179 |
+| 5,000 | 15,694 (34,575) | 615 | 12,520 (25,272) | 1,815 |
+| 20,000 | | | 46,020 (97,146) | 1,941 |
+
+Scroll (213-225 us) and reload (about 850 us) stay flat as before. **A rebuild is still O(items)**:
+a resize at 5,000 items is 15.7 ms against native's 0.6 ms. The profile now shows
+`addRow` 26.6% and the section's deallocation 22.4% (together about half of a rebuild): the
+section still allocates and frees one row object per row. Removing that needs rows that are not
+objects (or a lazily built row array for fixed-size sections), which changes the structure the
+attribute query, updates and self-sizing rely on and has not been started.

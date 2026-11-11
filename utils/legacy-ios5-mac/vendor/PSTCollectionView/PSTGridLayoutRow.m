@@ -49,6 +49,11 @@
     return [self layoutRowAndGenerateRectArray:YES];
 }
 
+- (void)adoptLayoutFromRow:(PSTGridLayoutRow *)row {
+    _rowSize = row.rowSize;
+    _isValid = YES;
+}
+
 - (void)layoutRow {
     [self layoutRowAndGenerateRectArray:NO];
 }
