@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Context factory dispatch (round 146)
+
+The base layout now provides `+invalidationContextClass` and the preferred-attributes context factory; flow
+layout selects its flow context class. The base factory creates a fresh instance using the dynamic layout
+class, preserving subclass context overrides. A differential test confirms base/flow class selection, a custom
+layout's custom context, fresh identity and initially empty paths, alongside the 15 predicate cases. Legacy
+armv7 syntax checks pass (existing nullability warnings). Flow's size-changing context side effects are not
+implemented by this base factory; incremental geometry and execution remain pending. No lifecycle fix claimed.
+
 ## Invalidation context data objects (round 145)
 
 Added independent PST base and flow invalidation-context objects. Differential output against iOS 27 agrees

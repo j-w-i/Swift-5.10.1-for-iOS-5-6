@@ -283,6 +283,12 @@
     [_collectionView setNeedsLayout];
 }
 
++ (Class)invalidationContextClass { return [PSTCollectionViewLayoutInvalidationContext class]; }
+
+- (PSTCollectionViewLayoutInvalidationContext *)invalidationContextForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
+    return [[[[self class] invalidationContextClass] alloc] init];
+}
+
 - (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
     return NO;
 }

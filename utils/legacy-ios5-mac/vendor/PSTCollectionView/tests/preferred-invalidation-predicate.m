@@ -4,9 +4,22 @@
 #define UICollectionViewLayout PSTCollectionViewLayout
 #define UICollectionViewFlowLayout PSTCollectionViewFlowLayout
 #define UICollectionViewLayoutAttributes PSTCollectionViewLayoutAttributes
+#define UICollectionViewLayoutInvalidationContext PSTCollectionViewLayoutInvalidationContext
+#define UICollectionViewFlowLayoutInvalidationContext PSTCollectionViewFlowLayoutInvalidationContext
 #endif
+@interface CustomContext : UICollectionViewLayoutInvalidationContext @end
+@implementation CustomContext @end
+@interface CustomLayout : UICollectionViewLayout @end
+@implementation CustomLayout
++ (Class)invalidationContextClass { return [CustomContext class]; }
+@end
 int main(void) { @autoreleasepool {
  [UIApplication sharedApplication];
+ UICollectionViewLayoutAttributes *a=[UICollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
+ CustomLayout *custom=[CustomLayout new];
+ id context1=[custom invalidationContextForPreferredLayoutAttributes:a withOriginalAttributes:a];
+ id context2=[custom invalidationContextForPreferredLayoutAttributes:a withOriginalAttributes:a];
+ printf("customContext=%d fresh=%d itemsNil=%d baseClass=%d flowClass=%d\n",[context1 isKindOfClass:[CustomContext class]],context1!=context2,[context1 invalidatedItemIndexPaths]==nil,[UICollectionViewLayout invalidationContextClass]==[UICollectionViewLayoutInvalidationContext class],[UICollectionViewFlowLayout invalidationContextClass]==[UICollectionViewFlowLayoutInvalidationContext class]);
  UICollectionViewLayout *base=[UICollectionViewLayout new];
  UICollectionViewFlowLayout *flow=[UICollectionViewFlowLayout new];
  NSArray *layouts=@[base,flow,flow];

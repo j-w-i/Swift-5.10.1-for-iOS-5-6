@@ -540,6 +540,8 @@ static char kPSTCachedItemRectsKey;
 /// Records a cell's preferred size. Returns YES when it differs from the size currently laid out
 /// (the layout is then invalidated and rebuilt with it). A size equal to the laid out one is marked
 /// stable for that proposal frame, until explicit invalidation or cell reconfiguration.
++ (Class)invalidationContextClass { return [PSTCollectionViewFlowLayoutInvalidationContext class]; }
+
 - (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
     return [self pstUsesSelfSizing] && !CGSizeEqualToSize(preferredAttributes.size, originalAttributes.size);
 }

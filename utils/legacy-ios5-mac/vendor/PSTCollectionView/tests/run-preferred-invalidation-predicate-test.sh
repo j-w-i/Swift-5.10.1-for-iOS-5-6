@@ -9,4 +9,4 @@ for m in native pst; do E=(); [[ $m == pst ]] && E=(-DTEST_PST=1 "${OBJECTS[@]}"
  xcrun simctl spawn "$SIM" "$OUT/$m" > "$OUT/$m.txt"
 done
 diff -u "$OUT/native.txt" "$OUT/pst.txt"
-echo "PASS: 15 preferred-attribute invalidation predicate cases match UIKit; artifacts: $OUT"
+echo "PASS: context factories and 15 preferred-attribute invalidation predicate cases match UIKit; artifacts: $OUT"

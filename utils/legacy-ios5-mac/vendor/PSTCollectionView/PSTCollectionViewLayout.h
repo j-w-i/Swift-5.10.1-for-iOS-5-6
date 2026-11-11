@@ -112,6 +112,9 @@ __attribute__((swift_name("UICollectionViewLayout")))
 
 - (PSTCollectionViewLayoutAttributes *)layoutAttributesForDecorationViewOfKind:(NSString *)kind atIndexPath:(NSIndexPath *)indexPath;
 
++ (Class)invalidationContextClass;
+- (PSTCollectionViewLayoutInvalidationContext *)invalidationContextForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes;
+
 // iOS 8 preferred-size invalidation hook. The base layout returns NO.
 - (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes;
 
