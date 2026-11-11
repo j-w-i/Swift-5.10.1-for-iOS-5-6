@@ -1,5 +1,13 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preferred flow context flags (round 161)
+
+Flow now overrides the preferred-attributes factory to turn off both attribute/metric rebuild flags,
+preserving dynamic context-class selection via the base factory. The unchanged/unprepared case is verified
+against native alongside context factories and all 15 predicates. Named-item/flag execution tests still pass.
+Changed-size state mutation, pending adjustments and valid-range path accumulation remain missing, so the
+strict preferred-context geometry test still fails. This is not a completed preferred-size context path.
+
 ## Packed cross-axis section reflow (round 160)
 
 Added a general packed-item reflow fallback when the fast scrolling-axis-only update rejects a cross-axis

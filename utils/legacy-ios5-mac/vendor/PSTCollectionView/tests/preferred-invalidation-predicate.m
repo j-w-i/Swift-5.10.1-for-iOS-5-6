@@ -22,6 +22,8 @@ int main(void) { @autoreleasepool {
  printf("customContext=%d fresh=%d itemsNil=%d baseClass=%d flowClass=%d\n",[context1 isKindOfClass:[CustomContext class]],context1!=context2,[context1 invalidatedItemIndexPaths]==nil,[UICollectionViewLayout invalidationContextClass]==[UICollectionViewLayoutInvalidationContext class],[UICollectionViewFlowLayout invalidationContextClass]==[UICollectionViewFlowLayoutInvalidationContext class]);
  UICollectionViewLayout *base=[UICollectionViewLayout new];
  UICollectionViewFlowLayout *flow=[UICollectionViewFlowLayout new];
+ UICollectionViewFlowLayoutInvalidationContext *same=(id)[flow invalidationContextForPreferredLayoutAttributes:a withOriginalAttributes:a];
+ printf("unchangedFlow attrs=%d metrics=%d paths=%lu\n",same.invalidateFlowLayoutAttributes,same.invalidateFlowLayoutDelegateMetrics,(unsigned long)same.invalidatedItemIndexPaths.count);
  NSArray *layouts=@[base,flow,flow];
  for(NSUInteger mode=0;mode<3;mode++) {
   if(mode==2)flow.estimatedItemSize=CGSizeMake(50,40);

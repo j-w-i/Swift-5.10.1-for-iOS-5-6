@@ -571,6 +571,15 @@ static char kPSTCachedItemRectsKey;
 /// stable for that proposal frame, until explicit invalidation or cell reconfiguration.
 + (Class)invalidationContextClass { return [PSTCollectionViewFlowLayoutInvalidationContext class]; }
 
+- (PSTCollectionViewLayoutInvalidationContext *)invalidationContextForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
+    PSTCollectionViewFlowLayoutInvalidationContext *context = (id)[super invalidationContextForPreferredLayoutAttributes:preferredAttributes withOriginalAttributes:originalAttributes];
+    context.invalidateFlowLayoutAttributes = NO;
+    context.invalidateFlowLayoutDelegateMetrics = NO;
+    // Recording size changes and invalidated valid-range paths is added separately; never request a metrics
+    // rebuild merely because a cell supplied preferred attributes.
+    return context;
+}
+
 - (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
     return [self pstUsesSelfSizing] && !CGSizeEqualToSize(preferredAttributes.size, originalAttributes.size);
 }
