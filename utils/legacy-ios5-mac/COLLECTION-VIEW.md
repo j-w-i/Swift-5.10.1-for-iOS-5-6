@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The last difference is native's stub layout for undisplayed sections (round 220)
+
+Dumped the settled snapshot of `horizontal narrow` (the one genuine difference) with keyed rects and
+supplementary frames:
+
+    native sec1 items   (373,8) (379,8) (385,8) (391,8) ...   <- y constant, x +6
+    PST    sec1 items   (375,8) (375,105) (375,202) (441,8) ...  <- a real column layout
+    native supp         header (0,0,0,300) second header (367,0,0,300)  <- zero width/height
+    PST    supp         empty
+
+Native is not laying that section out at all, even after settling: its supplementary frames are zero-sized and its
+items sit at the origin with an interstice step. Those are **stub attributes** for a section it has never
+materialised, and its 707.09 content width is derived from that stub. PST returns real geometry (773.09).
+
+So the remaining difference is not an arithmetic error and not a wrong estimate value - it is that native hands
+back placeholders for undisplayed sections while PST computes them. Reproducing native here would mean
+deliberately returning a placeholder as the content size, which is strictly less correct; the gate documents it as
+the single allowed deviation instead, and every visible frame, supplementary frame, visible set and fitted set
+matches (0 of 420 frames, 64/64 fitted parity).
+
+That closes the behavioural investigation: the API surface, both routes, callback set, geometry on screen and
+fitted behaviour all match; the only divergence is native's own laziness manifesting as a placeholder value.
+
 ## The gate now compares resolved geometry, and preparation fitting still fails it (round 219)
 
 Acted on round 218's conclusion: `selfsizing-layouts-trace.m` records every step **twice** - as-is, and after
