@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Paired benchmark could not be re-run on the iPod touch 5 (round 240)
+
+With the device unlocked this round, tried to refresh the PST-versus-native performance comparison on the iPod
+touch 5 so it reflects the ordering change rather than round 177's build.
+
+The app builds cleanly (`tests/paired-device-bench`: `bench.m` compiled twice with `BENCH_NAME`/`BENCH_DS`/
+`BENCH_CELL` per engine, `main.m` with `-DINSTALL_BACKPORT_HOOKS`, 454 KB armv7 binary, `ldid`-signed, valid
+Info.plist, iOS 6.0 floor), but the device refuses to start it: `n2launch` returns **6**, twice, with and without
+a longer `uicache` settle - and the Apple-route gate launched successfully on the same device minutes earlier, so
+the device is healthy and the difference is in this app.
+
+That leaves the performance evidence where it was: PST route measured on the iPod touch 3 at HEAD (round 230,
+149.0 / 16.8 / 148.6 ms no-delegate; delegate reload 291 ms, better than before the change) and the Apple route
+verified for behaviour rather than timing on the iPod touch 5. The paired ratio table from round 177 predates the
+ordering change and should be re-measured once the launch issue is understood - likely something in how this app
+registers versus the gate app, worth one focused debugging pass rather than another blind retry.
+
+Cleaned the device afterwards (0 test apps resident).
+
 ## Device gate passes again, and a correction to round 238 (round 239)
 
 Re-ran the Apple-route device gate on the iPod touch 5 (iOS 6.1.3) - the device had been locked since round 229.
