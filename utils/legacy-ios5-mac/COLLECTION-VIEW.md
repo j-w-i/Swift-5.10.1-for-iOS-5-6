@@ -320,3 +320,26 @@ offset and content height, so this scenario is **not** a PST/native match. The s
 of all 40 heights is 2760, so every engine is reporting a partly measured layout; the
 difference is which items each engine has measured when the scroll resolves. That
 set depends on engine-internal measurement order and was not investigated.
+
+### Round 71: why PST and native differ by 65 points (cause found, not implemented)
+
+`tests/selfsizing-measurement-trace.m` logs every `preferredLayoutAttributesFitting`
+query and the per-item sizes after the scroll (iOS 27 simulator, native vs PST).
+
+Native: measured items 0-3 (30, 32, 34, 36), and **every unmeasured item is laid out
+at the running mean of the measured sizes (33) instead of the estimate (40)**. After
+the scroll it also measured 35-39 (100..108), and item 34 was laid out at 62.5714,
+which equals the mean of the 7 measured items 0-3 and 35-37 at the moment item 34
+was placed. Items 4-33 stayed at 33. So native uses a running average of what it has
+measured so far as the proposal for unmeasured items, not the fixed
+`estimatedItemSize`. Content height by that model: 1704.6 (observed 1705).
+
+PST: queries 0-3 and 37-39 only, keeps unmeasured items at the fixed estimate (40),
+content height 1770. The 65-point difference is the estimate-versus-mean gap.
+
+Open points before implementing: native measured 35 and 36 during the scroll and PST
+did not (it measured 37-39), and the mean is evidently updated while placing items in
+a single pass. Reproducing the exact order of 36,37,35,38,39 would need more probes.
+This is a layout-geometry rule, so changing it affects every self-sizing result, and
+the existing automatic-size gate (which uses uniform preferred sizes, where mean and
+estimate coincide only when the estimate is 50x50) would need to keep passing.
