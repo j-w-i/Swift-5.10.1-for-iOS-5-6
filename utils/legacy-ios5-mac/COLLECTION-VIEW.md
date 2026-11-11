@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Third attempt: duplicate fitting removed, remaining defect isolated to content size (round 166)
+
+Round 164 could not tell whether the content-size error came from the cache or from double fitting. Two
+variants were run to separate them.
+
+1. **Measurement undo for discarded cells** (a fitted cell that the settled layout drops must not feed the
+   estimate): layouts 3/32 with **32 of 210 visible cell frames now differing**. Worse, and it changed
+   geometry, so that idea is wrong: the discarded report evidently still influences neighbours in native too.
+2. **Post-layout scheduler disabled, fitting only in preparation** (needs an explicit
+   `pstPrefersPreparationFitting` predicate; the duplicated fit was never confirmed necessary): this is the
+   cleanest result so far. Display lifecycle matches iOS 27 exactly (9/0 and 8/0), the preferred-context
+   probe passes, and **visible cell frames are exact (0 of 210)**. The single remaining defect is the
+   content size: 1910/1985/1966/2022 against native 1854/1854/1835/1846, i.e. consistently too large. Adding
+   an explicit content-size re-read during display did not move it (1/32 either way), confirming the cache
+   is not the problem: the **estimate of unmeasured items** is.
+
+Native 1854 for 3 sections x 14 items at estimate 40 with measured 60 means native is *not* applying one
+running mean to every unmeasured item (PST's model, which yields 1910); it estimates each section from its own
+first row and materialises rows lazily. That is the only remaining difference, and it is a self-contained
+unit of work: the section-estimate model plus a valid item range.
+
+Reverted again, so the live path is unchanged; tree verified at the round-162 state (layouts 31/32, context
+probe passing, lifecycle known-mismatch). Nothing shipped from these experiments beyond this record.
+
 ## Paired hardware measurement at HEAD (round 165)
 
 Re-ran the interleaved paired benchmark (both engines in one app, alternating order, median of the reps) on
