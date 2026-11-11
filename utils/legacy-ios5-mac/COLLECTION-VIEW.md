@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Correction: iOS-8 gating is by design; the stale resource is missing the modern surface (round 233)
+
+Round 232 called two things gaps. One of them was wrong and is corrected here.
+
+**Not a defect: `estimatedItemSize` staying iOS-8-gated.** The in-tree lit test states the contract explicitly:
+*"Relax only supported iOS 6 API. Newer API availability must remain intact."* The toolchain deliberately relaxes
+only the iOS 6-era collection API for iOS 5 deployment and leaves iOS 7+ availability untouched, so
+`estimatedItemSize`, `preferredLayoutAttributesFittingAttributes` and `automaticSize` remaining gated is the
+designed behaviour, not a missing lowering. Round 232's suggestion to add availability attributes would have
+worked against the toolchain's own test.
+
+**Still true, and now precise: the published legacy resource predates the backport.** Diffing the installed
+header against a freshly generated one shows the missing lines are exactly the modern API surface:
+
+* `@protocol UICollectionViewDataSourcePrefetching` and its two methods (iOS 10);
+* `-collectionView:willDisplayCell:forItemAtIndexPath:` and
+  `-collectionView:willDisplaySupplementaryView:forElementKind:atIndexPath:` (iOS 9);
+* the full `UICollectionViewLayoutInvalidationContext` interface (iOS 8) - properties, adjustment fields and the
+  three invalidate... methods.
+
+So the profile published with the toolchain was built before this session's backport landed. Republishing it via
+`publish-ios5-profile.py` would put the new surface in the Swift-visible resource; that script requires
+qualification receipts (hashes of compiler, driver, assembly and every resource, plus device-execution evidence),
+so it is a deliberate, separate release step rather than something to slip in at the end of a round.
+
 ## Swift lowering exercised end to end, and two real gaps found (round 232)
 
 Got much further than round 231. The resource the legacy compiler opens is
