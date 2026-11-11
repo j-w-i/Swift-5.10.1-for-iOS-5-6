@@ -1,0 +1,26 @@
+#import <UIKit/UIKit.h>
+@interface C : UICollectionViewCell @property CGFloat h; @end
+@implementation C
+- (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a { UICollectionViewLayoutAttributes *r=[a copy]; r.size=CGSizeMake(a.size.width,self.h); return r; }
+@end
+@interface D : NSObject<UICollectionViewDataSource> @property NSMutableArray *h; @end
+@implementation D
+- (NSInteger)collectionView:(UICollectionView *)cv numberOfItemsInSection:(NSInteger)s { return self.h.count; }
+- (UICollectionViewCell *)collectionView:(UICollectionView *)cv cellForItemAtIndexPath:(NSIndexPath *)p { C *c=[cv dequeueReusableCellWithReuseIdentifier:@"u" forIndexPath:p]; c.h=[self.h[p.item] doubleValue]; return c; }
+@end
+static void probe(const char *name, BOOL warmup) {
+    UICollectionViewFlowLayout *l=[UICollectionViewFlowLayout new]; l.estimatedItemSize=CGSizeMake(200,40); l.minimumLineSpacing=0;
+    UICollectionView *cv=[[UICollectionView alloc] initWithFrame:CGRectMake(0,0,200,120) collectionViewLayout:l];
+    [cv registerClass:[C class] forCellWithReuseIdentifier:@"u"];
+    D *d=[D new]; d.h=[NSMutableArray array]; cv.dataSource=d;
+    if (warmup) { for (int i=0;i<3;i++) [d.h addObject:@(30+i*20)]; [cv reloadData]; [cv layoutIfNeeded]; [d.h removeAllObjects]; }
+    for (int i=0;i<40;i++) [d.h addObject:@(30+i*2)];
+    [cv reloadData]; [cv layoutIfNeeded];
+    @try {
+        [cv scrollToItemAtIndexPath:[NSIndexPath indexPathForItem:39 inSection:0] atScrollPosition:UICollectionViewScrollPositionTop animated:NO];
+        [cv setNeedsLayout]; [cv layoutIfNeeded]; CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false); [cv layoutIfNeeded];
+        UICollectionViewCell *cell=[cv cellForItemAtIndexPath:[NSIndexPath indexPathForItem:39 inSection:0]];
+        printf("%s: cell39=%s offset=%g contentH=%g\n",name,cell?"visible":"NIL",cv.contentOffset.y,cv.contentSize.height);
+    } @catch (NSException *e) { printf("%s: EXCEPTION %s\n",name,e.reason.UTF8String); }
+}
+int main(){@autoreleasepool{[UIApplication sharedApplication]; probe("fresh-no-warmup",NO); probe("after-3-item-reload",YES);}return 0;}

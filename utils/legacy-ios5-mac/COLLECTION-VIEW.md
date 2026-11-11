@@ -284,3 +284,23 @@ first pass but not the second, so no code change was made. Observable by apps th
 count cell creations or `prepareForReuse` calls. Profile of a reload loop (simulator, 200 items): about
 64% of main-thread time in `pstAddVisibleViewForAttributes:key:`, of which
 `addControlledSubview:` (UIKit `insertSubview:atIndex:`) is about 39%.
+
+### Round 69: native iOS 10.3.3 self-sizing scroll differs from iOS 27
+
+`tests/native-ios10-selfsizing-scroll.m` is a standalone repro (no PST). With
+`estimatedItemSize` set, 40 items of increasing preferred height, a 200x120 view and
+`scrollToItemAtIndexPath:atScrollPosition:Top animated:NO` on item 39:
+
+| | iOS 27 simulator | iPhone 6, iOS 10.3.3 |
+| --- | --- | --- |
+| Fresh collection | cell visible, offset 1585, content height 1705 | cell **nil**, offset 920, content height 2083 |
+| After a 3-item reload first | cell visible, same | **NSRangeException** (cell queried against the stale 3-item array) |
+
+So on iOS 10 the native engine neither resolves the destination of a self-sizing
+scroll nor survives a reload to a larger data set after measuring. Consequences:
+(1) the iOS 27 simulator is the oracle for self-sizing scroll/mutation behaviour and
+the iPhone 6 result for `run-self-sizing-updates` is a native bug, not a PST
+failure; (2) PST passes that fixture on the same phone, so on iOS 10 hardware PST
+is stricter than native here; (3) no oracle exists for self-sizing scroll on iOS 6/7
+or 8/9 hardware, so Apple-route behaviour there remains unverified. PST's content
+height, offset and cell at the same scenario were not compared on the phone.
