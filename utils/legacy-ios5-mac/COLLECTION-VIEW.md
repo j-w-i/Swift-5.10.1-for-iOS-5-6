@@ -1,5 +1,25 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Two leads on the paired-bench launch failure (round 241)
+
+Followed up the `n2launch` result 6 rather than retrying blindly:
+
+1. **Not the Info.plist.** Rebuilt it with the same key set the working gate app uses
+   (`CFBundleSupportedPlatforms`, `CFBundleShortVersionString`, platform and device family) and re-signed the
+   binary after install. Same result 6.
+2. **The device has a crash log for this exact app**: `LatestCrash-PairedBench.plist` and
+   `PairedBench_2026-11-11-214350_JWIs-iPod.plist` in `/var/mobile/Library/Logs/CrashReporter/`. So the launch is
+   failing because the app dies, not because registration fails - and the log names the reason, which the next
+   attempt should read first (the device has no `python3` or `plutil`, so it needs to be pulled to the host and
+   parsed there).
+
+That is the concrete next step: copy `LatestCrash-PairedBench.plist` off the device and read `exception` /
+`termination.reason`. Likely candidates are a dyld symbol mismatch on the hook entry point or an armv7/armv7s slice
+question, both cheap to fix once named.
+
+Device cleaned (0 test apps). Performance evidence remains: PST at HEAD on the iPod touch 3 (round 230), Apple route
+behaviour-verified on the iPod touch 5 (round 239); the paired ratio table needs this app to run.
+
 ## Paired benchmark could not be re-run on the iPod touch 5 (round 240)
 
 With the device unlocked this round, tried to refresh the PST-versus-native performance comparison on the iPod
