@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Strict runtime archive build (round 159)
+
+Ran the actual source runtime builder, including -Werror=unguarded-availability, rather than the looser
+syntax checks used in recent rounds. It failed on five NSIndexPath.item accesses from the earlier
+proposal/sizing work (SDK marks them iOS 6+). Replaced them with the equivalent iOS-5-available row accessor;
+availability checking was not disabled. The complete armv7 iOS 5 archive and generated headers now build,
+and nm confirms both new context class definitions are in the archive. The 180-case packed-update test
+still passes. This is source/archive qualification only; no installed toolchain or release was updated.
+
 ## Generated context class linkage (round 158)
 
 The source runtime builder discovers all .m files, including the new context implementation. But the header

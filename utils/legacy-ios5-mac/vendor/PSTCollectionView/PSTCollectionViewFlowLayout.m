@@ -510,7 +510,7 @@ static char kPSTCachedItemRectsKey;
 - (void)pstApplyProposalForChangedItems {
     NSIndexPath *path = _pstEarliestChangedPath; _pstEarliestChangedPath = nil;
     if (!path || !_pstMeasuredSizeCount || [self pstDelegateProvidesSizes]) return;
-    NSInteger section = path.section, item = path.item, first = 0;
+    NSInteger section = path.section, item = path.row, first = 0;
     if (section >= 0 && section < (NSInteger)_data.sections.count) {
         PSTGridLayoutSection *s = [_data.sections objectAtIndex:(NSUInteger)section];
         if (s.packed && item >= 0 && item < s.itemsCount) {
@@ -549,7 +549,7 @@ static char kPSTCachedItemRectsKey;
         [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:seed] forKey:indexPath];
         return seed;
     }
-    if (_pstMeasuredSizeCount) return [self pstProposalAtSection:indexPath.section item:indexPath.item];
+    if (_pstMeasuredSizeCount) return [self pstProposalAtSection:indexPath.section item:indexPath.row];
     return [self pstUnmeasuredProposal];
 }
 
@@ -792,8 +792,8 @@ static char kPSTCachedItemRectsKey;
                 }
                 if (_pstMeasuredItemSizes.count) {
                     [_pstMeasuredItemSizes enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *path, NSValue *size, BOOL *stop) {
-                        if (path.section == (NSInteger)section && path.item >= 0 && path.item < numberOfItems)
-                            sizes[path.item] = [size CGSizeValue];
+                        if (path.section == (NSInteger)section && path.row >= 0 && path.row < numberOfItems)
+                            sizes[path.row] = [size CGSizeValue];
                     }];
                 }
             }
