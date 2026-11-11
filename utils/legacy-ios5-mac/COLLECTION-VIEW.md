@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The release inputs are correct; only the prebuilt toolchain is stale (round 237)
+
+Ran the first half of the defined republish sequence and verified the inputs it produces:
+
+`build-collection-runtime.sh <SDK> <clang> <ar> /tmp/coll237` -> **rc=0**, "Built source runtime and importer
+headers". The outputs are exactly what a publish needs:
+
+* `libswiftLegacyCollectionView.a` contains both classes the qualification looks for -
+  `_OBJC_CLASS_$_PSTCollectionViewLayoutInvalidationContext` and
+  `_OBJC_CLASS_$_PSTCollectionViewFlowLayoutInvalidationContext` - plus the rest of the collection classes (12
+  class symbols checked);
+* `legacy-collection/Headers/UIKitLegacyCollection.h` from that build emits the modern surface (display
+  callbacks, prefetch protocol, `estimatedItemSize`) and **zero** `pst` internals.
+
+So the source side of the release is right. The qualification failure of round 236 is purely that the *prebuilt*
+toolchain in the build root is older: `check-collection-api.sh` audits
+`usr/lib/swift_ios5/iphoneos/libswiftUIKit.dylib`, and that dylib predates the invalidation-context classes.
+
+Republishing therefore needs the UIKit/backports overlay dylib rebuilt into the toolchain
+(`build-backports-runtime.sh`, then the assembly step in `LEGACY-IOS5-BUILD.md`), not just the collection archive.
+That is a toolchain build, not a round-sized patch, which is why it is left as the next release step rather than
+rushed here. Everything needed for it is verified: sources compile on armv7 iOS 5, the archive exports the right
+classes, and the header generator now emits the correct surface.
+
 ## The republish is blocked by a stale runtime in the build root, not by the headers (round 236)
 
 Found the toolchain build root the published profile comes from: `~/Developer/legacy-build-fix7` with
