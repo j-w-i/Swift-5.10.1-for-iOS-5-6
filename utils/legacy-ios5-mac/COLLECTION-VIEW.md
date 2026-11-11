@@ -1267,3 +1267,26 @@ This is stronger than the stand-in test but not shipping integration. Swift inst
 overrides over the full engine, native/PST protocol identity, modern API gates through this route,
 the production importer, deployment packaging and duplicate-class warnings still need work. The
 existing compile-time route remains unchanged; no UIKit/shared-cache files were patched or published.
+
+### Round 103: actual Swift cell instances survive runtime engine selection
+
+The same iOS-5-targeted `SwiftCellRoute.app` bundle passes 21 checks on both physical iPods. Cells are
+real Swift subclasses over the full generated PST/native class family, not metadata stand-ins. Stored
+UInt64, String, Array and UILabel state survives creation, layout, four scroll destinations and reuse;
+Swift `prepareForReuse`/`layoutSubviews` overrides run, runtime casts and custom Swift/ObjC protocol
+checks succeed, label content and frames match, and `willDisplay` is exact initially and for each
+arriving index path. Counts: 10 created/15 reused/5 layout queries/25 displays on iOS 5; 5/20/4/25 on
+iOS 6. Both reach active state and SpringBoard PIDs remain unchanged.
+
+A useful fixture bug was caught during count review: the first Swift app linked a separate hook source
+as well as `libswiftUIKit`, which already contains/installs the hook runtime. It delivered 50 callbacks
+on iOS 6; a weak `willDisplay > 0` assertion passed despite this discrepancy. The final build links no
+second hook copy and the strengthened exact-count assertions pass with 25 on both devices. The
+build-only runner, Swift cell implementation, imported test declarations and driver generator are
+under `tests/runtime-selection-spike`.
+
+Limits: imported Swift class spellings are test aliases with native runtime names, not the production
+UIKit importer path. These custom protocols are not UIKit delegate/prefetch protocol identity tests.
+Instance destruction, broader subclasses, modern self-sizing/prefetch/supplementary APIs through this
+new route, arbitrary dependency graphs and duplicate-class warnings remain unverified. Shipping route
+selection is unchanged.

@@ -124,7 +124,34 @@ presents this old bundle in legacy 320x480 compatibility mode (scale 2 versus sc
 on iPod touch 3); the global legacy screen-capture helper also returns a 320x480 image.
 That presentation is not proof of a collection geometry discrepancy.
 
-Still unverified: actual Swift subclass instances over the full engine, UIKit protocol
-identity (PST protocol names are not transformed), the production importer, modern API
-parity through this new route, animated mutations, arbitrary dependency graphs, and a
-production-safe solution to the duplicate-class warnings. Shipping routing is unchanged.
+The Swift instance test below adds real cell-instance coverage. Still unverified: UIKit
+protocol identity (PST protocol names are not transformed), the production importer,
+modern API parity through this new route, animated mutations, arbitrary dependency
+graphs, and a production-safe solution to duplicate-class warnings. Shipping routing
+is unchanged.
+
+## Real Swift cell instances
+
+`build-swift-instances.sh` takes the same eight arguments as `build-swift.sh`. It builds
+the real engine, private Swift runtime dependency closure and `SwiftCellRoute.app`.
+The same iOS-5-targeted bundle passed 21 checks on both physical iPods: fallback/native
+selection, real Swift cell creation, UInt64/String/Array/UILabel state retained through
+reuse, positive and negative casts, Swift/ObjC test-protocol conformance, label and cell
+geometry, Swift `prepareForReuse` and `layoutSubviews` overrides, flow-layout override,
+and exact initial/arrival `willDisplay` counts. The counts are again 10/15/5/25 on iOS 5
+and 5/20/4/25 on iOS 6 (created/reused/queries/willDisplay).
+
+The Swift subclass uses test-only imported class spellings with native runtime names,
+not the production UIKit importer path. It does not prove every Swift subclass works,
+or UIKit delegate/prefetch protocol identity, instance destruction, self-sizing or
+animated updates through this new route.
+
+The first Swift instance fixture linked a separate `UICCollectionViewDisplay.m` as well
+as the Swift UIKit overlay, which already includes the hook runtime. That produced 50
+callbacks on iOS 6 instead of 25. The weak `willDisplay > 0` assertion did not catch it;
+manual count review did. The final generator omits the extra source/installer and
+requires exact callback counts initially and at every scroll destination. It passes
+with 25 callbacks on both routes. Do not link a second hook-runtime copy into an app
+already using the overlay. A large Swift numeric-literal comparison also needed an
+explicit UInt64 constant to compile with this legacy toolchain; runtime state checks
+remain 64-bit.
