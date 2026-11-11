@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The republish is blocked by a stale runtime in the build root, not by the headers (round 236)
+
+Found the toolchain build root the published profile comes from: `~/Developer/legacy-build-fix7` with
+`out/swift-5.10.1-ios5.xctoolchain` and a previous `out/ios5-qualification`. Its legacy-collection header is newer
+than the one installed in the devkit (627 lines, `estimatedItemSize` present), so it - not the devkit - is the
+thing to republish.
+
+Regenerated the header there with the current generator (649 lines, no `pst` internals; the added declarations are
+the invalidation-context interfaces and the removed ones are the internal helpers, exactly as intended) and ran
+the release gate:
+
+    LEGACY_BUILD_ROOT=~/Developer/legacy-build-fix7 qualify-ios5.sh --check-only --sdk <15.5 SDK> --output /tmp/qual236
+
+It fails, and the reason is precise and useful:
+
+    UIKit runtime does not contain collection support: PSTCollectionViewLayoutInvalidationContext
+
+The build root's UIKit backport runtime predates the invalidation-context classes that the current headers
+declare. So republishing is a **two-step** release: rebuild the collection runtime into the toolchain
+(`build-collection-runtime.sh`) and then re-run `qualify-ios5.sh`, which produces the evidence
+`publish-ios5-profile.py` requires. Changing the header alone cannot pass. (The qualification script otherwise
+works: it found the SDK, produced class-marking/ios5-app evidence directories, and only the collection-API check
+failed.)
+
+Restored the build-root header to its previous state so the build tree matches its runtime again, and left the
+generator filter committed (round 235).
+
 ## The Swift-visible surface no longer exports the backport's internals (round 235)
 
 Fixed the exposure found by last round's drift checker: `generate-collection-headers.py` now drops the internal
