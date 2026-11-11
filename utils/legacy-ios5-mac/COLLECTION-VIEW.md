@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Wiring the lazy build into the layout pass: attempted, reverted (round 207)
+
+Connected `updateItemsLayout` to the lazy section build for all packed sections, using the per-section mean as
+the estimate for unmaterialised rows, and added a pre-pass in `layoutAttributesForElementsInRect:` that
+materialises every section intersecting the query rect before any attributes are computed (so growth cannot
+shift later sections mid-pass).
+
+Result: golden geometry still passed, but the layouts differential went to **0/32 with 61 of 210 visible cell
+frames differing** (fitted-item parity 27/32). The pre-pass changed nothing, so the divergence is not
+query-ordering: it is that the frames the collection view is working from come from a pass whose section origins
+were estimated, while native's come from a layout that has materialised the same region.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
+What this tells the next attempt: the growth mechanism is right in isolation (round 206's gate proves a lazy
+layout lands on a rebuild when it is materialised), so the missing piece is that the *collection view* must
+re-derive its visible attributes after materialisation - i.e. the materialisation has to happen before the
+attribute set is fetched, not inside the fetch. That means teaching `PSTCollectionViewData` (or the collection
+view's pass) to ask the layout to settle a rect first, which is a small API addition rather than another change
+inside the flow layout.
+
+The primitives committed in rounds 204-206 are all still green and unchanged by this attempt.
+
 ## Growth accounting for variable sections finished (round 206)
 
 Completed the round-205 work, diagnosing rather than guessing. Instrumenting the materialiser showed the growth
