@@ -1,5 +1,19 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Separate content-size cache validity (round 153)
+
+The iOS 8.1 collection-data reference has independent content-size and preparation validity bits:
+`_prepareToLoadData` can prepare without rereading a valid content size; item invalidation clears cached item
+attributes without invalidating that size. PST had an unused contentSizeIsValid bit and unconditionally
+read size during preparation. It now uses the separate bit. Named-path contexts preserve content-size
+validity, ordinary contexts invalidate it, and full/count invalidation clears it. This is a general cache
+state distinction, not a special-case constant or exception for the observed 320-point result.
+
+The previously failing `--named-items` differential now passes, including all metric query paths and item
+frames. Base context/adjustment, geometry-cache, self-sizing stability tests and all 14 geometry-golden cases
+pass. More complex mixed-context/adjustment cases still need coverage; item attributes currently refresh as
+one visible set rather than individual cached global items. The self-sizing execution path remains unchanged.
+
 ## Named item contexts: unresolved content-size cache difference (round 152)
 
 Extended the flag probe to invalidate item 0 explicitly. With both flags YES, native and PST both re-query

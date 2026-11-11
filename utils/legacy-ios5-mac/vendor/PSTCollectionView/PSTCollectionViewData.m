@@ -85,11 +85,13 @@
 
 - (void)invalidate {
     _collectionViewDataFlags.itemCountsAreValid = NO;
+    _collectionViewDataFlags.contentSizeIsValid = NO;
     _collectionViewDataFlags.layoutIsPrepared = NO;
     _validLayoutRect = CGRectNull;  // don't set CGRectZero in case of _contentSize=CGSizeZero
 }
 
 - (void)invalidateLayoutPreservingItemCounts {
+    _collectionViewDataFlags.contentSizeIsValid = NO;
     _collectionViewDataFlags.layoutIsPrepared = NO;
     _validLayoutRect = CGRectNull;
 }
@@ -97,6 +99,12 @@
 - (void)invalidateLayoutAttributes {
     _validLayoutRect = CGRectNull;
     _contentSize = [self.layout collectionViewContentSize];
+    _collectionViewDataFlags.contentSizeIsValid = YES;
+}
+
+- (void)invalidateItemAttributesPreservingContentSize {
+    _validLayoutRect = CGRectNull;
+    _collectionViewDataFlags.layoutIsPrepared = NO;
 }
 
 - (CGRect)collectionViewContentRect {
@@ -282,8 +290,11 @@
 - (void)prepareToLoadData {
     if (!self.layoutIsPrepared) {
         [self.layout prepareLayout];
-        _contentSize = self.layout.collectionViewContentSize;
         self.layoutIsPrepared = YES;
+    }
+    if (!_collectionViewDataFlags.contentSizeIsValid) {
+        _contentSize = self.layout.collectionViewContentSize;
+        _collectionViewDataFlags.contentSizeIsValid = YES;
     }
 }
 

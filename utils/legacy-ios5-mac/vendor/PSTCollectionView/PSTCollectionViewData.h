@@ -54,6 +54,7 @@
 // Requery geometry already updated by the layout without discarding counts or preparation.
 - (void)invalidateLayoutAttributes;
 - (void)invalidateLayoutPreservingItemCounts;
+- (void)invalidateItemAttributesPreservingContentSize;
 
 // Access cached item data
 - (NSInteger)numberOfItemsBeforeSection:(NSInteger)section;

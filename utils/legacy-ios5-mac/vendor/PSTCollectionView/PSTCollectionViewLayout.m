@@ -287,6 +287,8 @@
     NSParameterAssert(context);
     if (context.invalidateEverything || context.invalidateDataSourceCounts) {
         [[_collectionView collectionViewData] invalidate];
+    } else if (context.invalidatedItemIndexPaths.count || context.invalidatedSupplementaryIndexPaths.count || context.invalidatedDecorationIndexPaths.count) {
+        [[_collectionView collectionViewData] invalidateItemAttributesPreservingContentSize];
     } else {
         [[_collectionView collectionViewData] invalidateLayoutPreservingItemCounts];
     }
