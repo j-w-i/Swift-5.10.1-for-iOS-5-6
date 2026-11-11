@@ -1,5 +1,21 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preferred-context staging probe (round 156)
+
+New strict differential probe prepares 20 estimated 200x40 items, clears pending preparation adjustments
+using a preserving context, then directly creates a preferred-size context for item 0 with height 60.
+Native context flags are both NO, adjustment zero, and invalidated paths include 0-19. Before applying it,
+item 0 reports height 60 while items 1-4 still have cached y origins 40/80/120/160 and heights 40; layout
+content height already estimates 1200 while the view retains 800. After application/validation items 1 and
+2 become y=60/120, h=60, but the view still reports cached content height 800. The unchanged-size case
+returns an empty, both-flags-NO context. Without explicitly clearing pending initial adjustments, context
+creation also carries the original 800-point preparation adjustment; that was isolated rather than mistaken
+for this item's delta. This is a direct API probe, not an ordinary cell-fitting transaction.
+
+PST currently fails this strict test because it inherits the base factory without flow side effects.
+The result shows that immediately shifting all later item frames using the new packed update primitive
+would not reproduce native's staged attribute-cache behaviour. No runtime shortcut was added.
+
 ## Incremental section propagation (round 155)
 
 The layout-info layer now routes a packed scrolling-axis size update into its section, shifts every later
