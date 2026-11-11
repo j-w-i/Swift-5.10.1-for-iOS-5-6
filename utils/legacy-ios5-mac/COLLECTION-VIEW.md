@@ -1766,3 +1766,36 @@ The harness's `batch-insert-delete-200` ratio (PST/native, simulator, 3 runs) mo
 1.04-1.09. It is still the only scenario above 1.0; the remaining cost is per-update bookkeeping in
 `updateWithItems:` (index-path key objects and dictionaries for 9 visible cells). This is a simulator
 number; no hardware measurement of batch updates yet.
+
+### First hardware measurement of batch updates: paired PST and Apple route on the iPod touch 5
+
+`tests/paired-device-bench` compiles one benchmark twice (native `UICollectionView`, then PST with distinct
+class names) into one app, so both engines run on the same device in one launch, alternating order,
+median of 9 pairs. Fixed 320x58 cells, no delegate, no self-sizing. The Apple route here is stock iOS
+6.1.3 with the backport hooks installed. iPod touch 5, build of commit `5febbfa1`:
+
+| Workload | Items | Native | PST | PST / native |
+| --- | ---: | ---: | ---: | ---: |
+| Cold layout | 200 | 2.99 ms | 2.56 ms | 0.86 |
+| Reload | 200 | 2.73 ms | 2.12 ms | 0.78 |
+| Insert 5 + delete 5 (two batches) | 200 | 40.7 ms | 17.1 ms | **0.42** |
+| Cold layout | 1,000 | 3.19 ms | 3.24 ms | 1.02 |
+| Reload | 1,000 | 12.79 ms | 3.14 ms | 0.25 |
+| Insert 5 + delete 5 (two batches) | 1,000 | 99.7 ms | 47.0 ms | **0.47** |
+
+So on real iOS 6.1.3 hardware PST is faster than the Apple route on batch updates (about 2.1-2.4x),
+reload and 200-item cold layout, and at parity on 1,000-item cold layout. **This contradicts the
+simulator, where batch insert/delete was the one scenario above 1.0 (1.04-1.09).** The simulator
+runs iOS 27 UIKit as the oracle; iOS 6's batch machinery is much slower (40 ms against 0.25 ms in the
+simulator for the same scenario), so the simulator ratio does not predict this device. Native reload
+growing from 2.7 to 12.8 ms between 200 and 1,000 items is the O(items) Apple rebuild; PST's compact
+fixed-size rows keep reload flat.
+
+Found while building it: `+[UIView performWithoutAnimation:]` is iOS 7 API, and the first build aborted on
+the iOS 6 device with an unrecognized selector until the bench used `setAnimationsEnabled:`. Any
+benchmark or test that targets iOS 6 must avoid it.
+
+Limits: one device, one cell type, animations disabled so the batch figures are bookkeeping and layout
+cost, not animation cost; the cells are trivial. Self-sizing and delegate-sized layouts are measured
+separately above. No iPhone 6 run and no iPod touch 3 run of this bench (PST only would not be a
+ratio).
