@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Generated context class linkage (round 158)
+
+The source runtime builder discovers all .m files, including the new context implementation. But the header
+generator's explicit runtime-name list omitted both context classes, exposing UIKit source names that would
+link against absent native classes on iOS 5. Added both mappings and a generated-header compilation test:
+armv7 object undefined symbols now reference only PSTCollectionViewLayoutInvalidationContext and
+PSTCollectionViewFlowLayoutInvalidationContext, not the native UIKit classes. This verifies Objective-C
+header/object linkage only, not Swift availability lowering, installed-toolchain integration or a device run.
+
 ## Packed size staging versus row recomputation (round 157)
 
 Split packed size storage from row recomputation. `stagePackedItemAtIndex:size:` updates only the size,

@@ -11,7 +11,8 @@ PUBLIC = ('PSTCollectionViewCommon.h', 'PSTCollectionViewLayout.h',
 WRAPPERS = ('UICollectionView', 'UICollectionViewCell', 'UICollectionReusableView',
             'UICollectionViewLayout', 'UICollectionViewFlowLayout',
             'UICollectionViewLayoutAttributes', 'UICollectionViewController',
-            'UICollectionViewUpdateItem')
+            'UICollectionViewUpdateItem', 'UICollectionViewLayoutInvalidationContext',
+             'UICollectionViewFlowLayoutInvalidationContext')
 
 def generate(source, output):
     output.mkdir(parents=True, exist_ok=True)
