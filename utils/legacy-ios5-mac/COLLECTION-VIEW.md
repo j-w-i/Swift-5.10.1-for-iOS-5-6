@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Deferring willDisplay is not enough: fitting replaces the cells (round 222)
+
+Tried the alternative to preparation fitting that avoids changing the layout: keep the existing fitting
+scheduler (which already reproduces UIKit's ordering rules) and **defer** `willDisplay` until after the fitting
+transaction has settled, then deliver for the views still on screen. Two passes of the idea:
+
+1. defer around the fitting transaction only - no change, PST still reported 9/9 and 10/10 displayed-before-fit;
+2. defer for the whole pass, fit, then deliver at pass end - also no change (9/9 and 10/10), and the display
+   count moved to 10 for the second case, i.e. it announced one extra view.
+
+The reason is visible in the architecture: `pstMeasureSelfSizingCells` invalidates and calls
+`updateVisibleCellsNow:` again, which **replaces cell instances**. The views left in `_allVisibleViewsDict` when
+delivery finally runs are not necessarily the instances that were fitted, so an instance that is delivered can
+still be one whose fit happens in the next cycle.
+
+So matching Apple's ordering is not a delivery-ordering problem in PST's architecture: the cell that gets
+announced has to be the cell whose preferred attributes were just applied, which means fitting must happen before
+insertion - preparation fitting - and that in turn changes the final layout as measured in rounds 213-219.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32).
+
 ## Apple-route device gate re-verified at HEAD (round 221)
 
 Re-ran `Tests/run-apple-route-ios6-device.sh` on the iPod touch 5 (iOS 6.1.3, real UIKit 6 through the backport
