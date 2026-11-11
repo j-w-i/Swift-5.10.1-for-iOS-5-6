@@ -1,5 +1,35 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Breakthrough on ordering: fit through the measurement path, not the invalidation context (round 223)
+
+Every earlier preparation-fitting attempt drove the invalidation-context route
+(`invalidationContextForPreferredLayoutAttributes:`), which double-fits against the post-layout scheduler and
+changes final geometry. Tried the other mechanism: fit inside `createPreparedCellForItemAtIndexPath:` and record
+the answer with the layout's own measurement API
+(`pstRecordPreferredSize:forItemAtIndexPath:proposedFrame:`), which marks the size stable so the scheduler later
+skips it.
+
+**This works for ordering.** With one relayout at the end of the pass (instead of re-querying the layout while it
+is still iterating - which displaced every frame):
+
+| | baseline (main) | measurement-path prep fitting (branch) |
+| --- | --- | --- |
+| displayed-before-fit | 9/9 and 9/9 | **0/0 and 0/0 - exact** |
+| visible cell frames differing | 0 of 420 | **0 of 420** |
+| layouts steps exact | 62/64 | 42/64 |
+| fitted-item parity | 64/64 | 40/64 |
+
+So Apple's *ordering* is reachable without breaking what is on screen - the geometry that differs is the content
+size, i.e. the same estimation question as before, not a new defect.
+
+Committed on branch `prep-fit-measurement-path` (`b8fdd47a`, pushed) rather than main, because the layouts gate
+is not green there: content matches on 42 of 64 steps against main's 62, and fitted-item parity is 40/64. Main
+stays the verified, published state.
+
+Next: this branch is the base for the estimation work. The ordering half is solved; only the estimate for
+materialised-but-unmeasured rows is left, and the branch makes that measurable with lifecycle parity already in
+place.
+
 ## Deferring willDisplay is not enough: fitting replaces the cells (round 222)
 
 Tried the alternative to preparation fitting that avoids changing the layout: keep the existing fitting
