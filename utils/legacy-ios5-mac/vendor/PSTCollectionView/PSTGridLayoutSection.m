@@ -323,6 +323,15 @@
 
 /// Materialises row geometry up to and including `targetRow`, continuing from whatever is already laid out.
 /// `sectionSize` must carry the running extent from the same starting point (see the valid-range plan).
+- (BOOL)packedSizesAreUniform {
+    if (!_packed || _packedCount <= 0) return NO;
+    const CGSize first = _packedSizes[0];
+    if (first.width <= 0 || first.height <= 0) return NO;
+    for (NSInteger i = 1; i < _packedCount; i++)
+        if (!CGSizeEqualToSize(_packedSizes[i], first)) return NO;
+    return YES;
+}
+
 - (BOOL)extendPackedRowsThroughRow:(NSInteger)targetRow dimension:(CGFloat)dimension spacing:(CGFloat)spacing
                       sectionSize:(CGSize *)sectionSize {
     if (!_packed || !sectionSize) return NO;

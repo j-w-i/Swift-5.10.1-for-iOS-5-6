@@ -79,6 +79,10 @@
 - (BOOL)reflowPackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
 // Windowed layout: materialise row geometry only up to `targetRow`, continuing from the current extent.
 - (BOOL)extendPackedRowsThroughRow:(NSInteger)targetRow dimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize;
+// True when every packed item has the same size, so a section extent can be derived from a row count without
+// materialising every row. Used for lazy layout of uniform self-sizing lists.
+- (BOOL)packedSizesAreUniform;
+
 
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;

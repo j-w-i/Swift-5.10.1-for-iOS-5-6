@@ -1,5 +1,23 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Lazy-layout precondition added and tested (round 182)
+
+Added `-packedSizesAreUniform` to the packed section: true only when every item size matches (and the first is
+positive, and the section is non-empty). This is the precondition for deriving a section extent from a row
+count instead of materialising every row - the estimate `ceil(count/perRow) * (tallestFirstRow + interstice)
+- interstice + margins + header + footer` is exact precisely when the sizes are uniform, so wiring the lazy
+path for those sections cannot change geometry.
+
+Tested in `run-packed-windowed-layout-test.sh` (now also asserting: uniform detected for six equal items,
+not detected for a single differing item, not detected for an empty section) - passing alongside the existing
+24 windowed/rebuild cases.
+
+**Why the wiring itself stops here:** making `updateItemsLayout` materialise only the visible rows is not safe
+on its own. Attribute queries for items far outside the window (`layoutAttributesForItemAtIndexPath:`, which the
+differential traces exercise for every item) would read unmaterialised rows. That needs on-demand window
+extension inside the attribute-query path, plus extent bookkeeping that stays consistent when a query extends
+the window - a coherent change, not a patch. Recorded in `SELF-SIZING-VALID-RANGE-PLAN.md` as the next step.
+
 ## Fitting-priorities gate restored; stale harness source lists (round 181)
 
 `run-fitting-tests.sh` (the `systemLayoutSizeFitting` / fitting-priority suite, scope item 1) had the same

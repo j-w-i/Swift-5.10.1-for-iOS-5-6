@@ -49,5 +49,20 @@ int main(void){@autoreleasepool{
             (horizontal?full.frame.size.width:full.frame.size.height)-(horizontal?(9+13):(7+13))))return 9;
   checks++;
  }
- printf("PASS: %lu windowed layouts reproduce full rebuild row and item geometry\n",(unsigned long)checks);
+ // Uniform detection: true only when every packed item matches, which is the precondition for deriving a
+ // section extent without materialising every row.
+ {
+  CGSize same[6]; for(int i=0;i<6;i++) same[i]=CGSizeMake(44,30);
+  PSTGridLayoutInfo*info=[PSTGridLayoutInfo new]; info.horizontal=NO; info.selfSizing=YES; info.dimension=100;
+  PSTGridLayoutSection*s=make(info,same,6);
+  if(![s packedSizesAreUniform]) return 10;
+  CGSize mixed[3]={CGSizeMake(44,30),CGSizeMake(44,31),CGSizeMake(44,30)};
+  PSTGridLayoutInfo*info2=[PSTGridLayoutInfo new]; info2.horizontal=NO; info2.selfSizing=YES; info2.dimension=100;
+  PSTGridLayoutSection*s2=make(info2,mixed,3);
+  if([s2 packedSizesAreUniform]) return 11;
+  PSTGridLayoutInfo*info3=[PSTGridLayoutInfo new]; info3.horizontal=NO; info3.selfSizing=YES; info3.dimension=100;
+  PSTGridLayoutSection*empty=[info3 addSection]; (void)[empty preparePackedItems:0];
+  if([empty packedSizesAreUniform]) return 12;
+ }
+ printf("PASS: %lu windowed layouts reproduce full rebuild row and item geometry, uniform detection correct\n",(unsigned long)checks);
 }return 0;}
