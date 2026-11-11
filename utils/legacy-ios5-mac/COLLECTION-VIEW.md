@@ -1,5 +1,31 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Decisive probe: the layout exports measured content; the view keeps the first value (round 193)
+
+Instrumented the two remaining points - the item sizes written into the packed buffers and the content size
+exported at the end of `updateItemsLayout`:
+
+    DBG2 export measured=0  contentH=1770.0
+    DBG2 sec=0 measured=1 s0=30.0 s1=30.0   (x3 sections)
+    DBG2 export measured=1  contentH=1350.0
+    DBG2 export measured=2  contentH=1686.0
+    ... 
+    DBG2 export measured=15 contentH=2022.0
+
+So the layout **is** building from the measured sizes and its exported content size tracks them (1350 -> 1686 ->
+... -> 2022). The pipeline works in this scenario after all.
+
+What the differential test then reports is 1770 for every step - the value from the *first* build. That pins the
+defect to one place: `PSTCollectionViewData` reads `layout.collectionViewContentSize` into its own `_contentSize`
+only when `contentSizeIsValid` is clear (`prepareToLoadData`), and the display-time invalidation path does not
+clear it, so the view keeps the stale first value while the layout's own export keeps changing.
+
+Round 164 tried clearing that flag (`invalidateContentSize`) and got 1910/2022 - too large against native's
+1854 - which is why it was reverted then. With the lazy layout now in place, that experiment deserves redoing:
+if the view then shows ~2022, the remaining delta is the estimate model (native 1854), not the cache.
+
+Reverted; baseline verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
 ## Reuse path ruled out by instrumentation (round 192)
 
 Instrumented `_pstReuseStoredSizes` itself: when the attribute-only invalidation decides to reuse stored sizes,
