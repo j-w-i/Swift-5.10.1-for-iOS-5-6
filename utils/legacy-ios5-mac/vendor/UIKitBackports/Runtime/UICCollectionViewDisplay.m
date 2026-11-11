@@ -488,12 +488,12 @@ static void UICMeasureSelfSizing(UICollectionView *collectionView, SEL layoutSub
             // those before it nearest-first. With several per row: the cells nearest the origin. Read from the frames.
             BOOL singleLine = YES; { CGFloat firstCross = NAN;
                 for (NSArray *entry in fresh) {
-                    CGRect f = [[frames objectForKey:entry[0]] CGRectValue];
+                    CGRect f = [[frames objectForKey:[entry objectAtIndex:0]] CGRectValue];
                     CGFloat cross = horizontal ? CGRectGetMinY(f) : CGRectGetMinX(f);
                     if (isnan(firstCross)) firstCross = cross; else if (cross != firstCross) { singleLine = NO; break; }
                 } }
             [fresh sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
-                CGRect x = [[frames objectForKey:a[0]] CGRectValue], y = [[frames objectForKey:b[0]] CGRectValue];
+                CGRect x = [[frames objectForKey:[a objectAtIndex:0]] CGRectValue], y = [[frames objectForKey:[b objectAtIndex:0]] CGRectValue];
                 if (singleLine) {
                     const CGFloat o = horizontal ? origin.x : origin.y;
                     CGFloat lo[2] = { horizontal ? CGRectGetMinX(x) : CGRectGetMinY(x), horizontal ? CGRectGetMinX(y) : CGRectGetMinY(y) };
@@ -502,21 +502,21 @@ static void UICMeasureSelfSizing(UICollectionView *collectionView, SEL layoutSub
                     for (int k = 0; k < 2; k++) rank[k] = (lo[k] <= o && o < hi[k]) ? 0 : (lo[k] >= o ? 1 : 2);
                     if (rank[0] != rank[1]) return rank[0] < rank[1] ? NSOrderedAscending : NSOrderedDescending;
                     if (lo[0] != lo[1]) return (rank[0] == 2) == (lo[0] > lo[1]) ? NSOrderedAscending : NSOrderedDescending;
-                    return [a[0] compare:b[0]];
+                    return [[a objectAtIndex:0] compare:[b objectAtIndex:0]];
                 }
                 CGFloat da = (x.origin.x - origin.x) * (x.origin.x - origin.x) + (x.origin.y - origin.y) * (x.origin.y - origin.y);
                 CGFloat db = (y.origin.x - origin.x) * (y.origin.x - origin.x) + (y.origin.y - origin.y) * (y.origin.y - origin.y);
                 if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
-                return [a[0] compare:b[0]];
+                return [[a objectAtIndex:0] compare:[b objectAtIndex:0]];
             }];
             chosen = [fresh subarrayWithRange:NSMakeRange(0, MAX((NSUInteger)1, fresh.count / 2))];
         } else {
-            [confirm sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) { return [a[0] compare:b[0]]; }];
+            [confirm sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) { return [[a objectAtIndex:0] compare:[b objectAtIndex:0]]; }];
             chosen = confirm;
         }
         BOOL changed = NO;
         for (NSArray *entry in chosen) {
-            NSIndexPath *path = entry[0]; UICollectionViewCell *cell = entry[1];
+            NSIndexPath *path = [entry objectAtIndex:0]; UICollectionViewCell *cell = [entry objectAtIndex:1];
             [attempts setObject:@([[attempts objectForKey:path] unsignedIntegerValue] + 1) forKey:path];
             UICollectionViewLayoutAttributes *proposal = [layout layoutAttributesForItemAtIndexPath:path];
             if (!proposal) continue;

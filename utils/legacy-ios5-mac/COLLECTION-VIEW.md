@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Found and fixed a real iOS 5 bug while rebuilding the release runtime (round 238)
+
+Tried the release step that round 237 identified: rebuild the backports runtime so the toolchain's
+`libswiftUIKit.dylib` can be reassembled. `build-backports-runtime.sh ... armv7` failed its own object audit:
+
+    Unsafe iOS 6 subscript selector: objectAtIndexedSubscript:
+
+Locating it among the 23 objects: `UICCollectionViewDisplay.o` - the **Apple-route** display hook. In
+`Runtime/UICCollectionViewDisplay.m` six expressions used Foundation subscripting on `NSArray`s:
+
+    entry[0]   a[0]   b[0]
+
+`-[NSArray objectAtIndexedSubscript:]` is iOS 6+, so on the iOS 5 target that code would have sent a selector the
+runtime does not implement. Replaced with `[entry objectAtIndex:0]`, `[a objectAtIndex:0]`, `[b objectAtIndex:0]`
+and rebuilt:
+
+    PASS: ARM-only objects; no static dynamically registered class references, absent iOS6 helper, or Foundation subscripts
+    Built ObjC runtime archive and staged UIKit Swift sources
+
+So this round found a genuine iOS 5 defect in the Apple-route hook that the simulator could never surface (the
+simulator runs iOS 17, where the selector exists), and the backport's own audit caught it only when rebuilding.
+That is exactly the class of problem the double-route requirement exists to prevent.
+
+Still open for the publish: the toolchain's `libswiftUIKit.dylib` is assembled from these archives
+(`build-all.sh` / `assemble-510-toolchain.sh`), so the dylib must be rebuilt and installed before
+`qualify-ios5.sh` passes and `publish-ios5-profile.py` can be given its evidence.
+
 ## The release inputs are correct; only the prebuilt toolchain is stale (round 237)
 
 Ran the first half of the defined republish sequence and verified the inputs it produces:
