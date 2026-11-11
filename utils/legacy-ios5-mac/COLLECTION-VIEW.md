@@ -689,3 +689,16 @@ measurable cost.
 Resolved: the "native does not create a visible cell for a hidden layout item" difference
 listed in rounds 79 and 84. Still open: `hitTest:` inside a visible cell returns the cell
 natively but its inner view in PST.
+
+### Round 86: `hitTest:` on cells: native depends on whether the cell was recycled
+
+`tests/cell-hit-test.m` (iOS 27 simulator): for a freshly created cell native's
+`hitTest:` returns the cell's content view, like PST. After scrolling, hit-testing a
+recycled cell returns the **cell itself**, where PST still returns the content view.
+So the round 79 note that native returns the cell "inside a visible cell" described the
+recycled case only. Both content-view and cell report `userInteractionEnabled` YES in
+both states, so the cause is internal to UIKit's recycled-view path, not a flag
+PST can copy. PST's selection and highlighting use `indexPathForItemAtPoint:` rather
+than the hit-test result, so this does not change which item a touch selects. Left
+unmatched on purpose: reproducing a rule that depends on recycling history would mean
+imitating an internal quirk; revisit only if an app is shown to depend on it.
