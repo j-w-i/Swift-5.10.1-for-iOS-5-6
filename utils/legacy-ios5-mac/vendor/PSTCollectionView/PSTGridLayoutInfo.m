@@ -53,7 +53,9 @@
 - (CGRect)frameForItemAtIndexPath:(NSIndexPath *)indexPath {
     PSTGridLayoutSection *section = [self.sections objectAtIndex:(NSUInteger)indexPath.section];
     CGRect itemFrame;
-    if (section.fixedItemSize) {
+    if (section.packed) {
+        itemFrame = [section packedItemFrameAtIndex:indexPath.row];
+    }else if (section.fixedItemSize) {
         itemFrame = (CGRect){.size=section.itemSize};
     }else {
         itemFrame = [[section.items objectAtIndex:(NSUInteger)indexPath.row] itemFrame];

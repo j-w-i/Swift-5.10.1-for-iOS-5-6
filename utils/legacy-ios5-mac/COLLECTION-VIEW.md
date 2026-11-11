@@ -1904,3 +1904,23 @@ within 7% of the Apple route, while 64% of rectangles differ from iOS 27 after s
 **Next step if this is pursued:** make `PSTGridLayoutSection` recompute only from the first changed row
 (`recomputeFromIndex:` exists but is a stub that invalidates everything), then promote the prototype. The
 generator and trace gates are in place to prove the result.
+
+### Packed storage for self-sizing sections: rebuilds are about 8x cheaper
+
+The geometry prototype's cost was structural: every extra invalidation batch rebuilt a
+`PSTGridLayoutItem` per item and a `PSTGridLayoutRow` per row (5,000 of each) plus an `NSArray` per row.
+A self-sizing section now keeps its item sizes, row boundaries, per-item origins, row origins and row
+sizes in five flat C arrays (`preparePackedItems:`, `pstComputePackedRowsWithDimension:`), and the
+attribute queries read them directly. The row breaking and the justification, centering and sole-item
+arithmetic are the same operations in the same order as the object code, so the geometry is bit-identical.
+Variable-size sections that are not self-sizing, and fixed-size sections, keep their existing storage.
+
+Verified: **10 of 10 stepped fixtures bit-identical to the previous commit** (rectangles, frames,
+content height, visible items, request counts, fitting sequences and offsets, across 1-3 column fixtures
+and a reverse scroll), the 14-scenario geometry golden, and the centering, stability, first-layout,
+display order, supplementary display, hidden items, cell resize, attribute snapshot, mutation, delegate,
+automatic size and nine batch-insert gates.
+
+Simulator, 5,000 items, no delegate: cold 3.4 -> 0.45 ms, scroll 0.91 -> 0.11 ms, reload 5.4 -> 0.60 ms.
+With a size delegate: cold 2.5 -> 1.2 ms, reload 2.8 -> 1.1 ms (the delegate round trips remain). No
+hardware measurement yet.

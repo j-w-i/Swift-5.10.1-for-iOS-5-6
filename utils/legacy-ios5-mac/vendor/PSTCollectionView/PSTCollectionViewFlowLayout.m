@@ -178,7 +178,7 @@ static char kPSTCachedItemRectsKey;
             }
 
             NSArray *itemRects = [rectCache objectForKey:@(sectionIndex)];
-            if (!itemRects && section.fixedItemSize && [section rowCount]) {
+            if (!itemRects && !section.packed && section.fixedItemSize && [section rowCount]) {
                 itemRects = [[section rowAtIndex:0] itemRects];
                 if (itemRects) [rectCache setObject:itemRects forKey:@(sectionIndex)];
             }
@@ -200,7 +200,7 @@ static char kPSTCachedItemRectsKey;
                 if (far < pstRectMin) pstLow = mid + 1; else pstHigh = mid;
             }
             for (NSUInteger pstRowIndex = pstLow; pstRowIndex < pstRowCount; pstRowIndex++) {
-                PSTGridLayoutRow *row = [section rowAtIndex:(NSInteger)pstRowIndex];
+                PSTGridLayoutRow *row = section.packed ? nil : [section rowAtIndex:(NSInteger)pstRowIndex];
                 CGRect normalizedRowFrame = [section rowFrameAtIndex:(NSInteger)pstRowIndex];
 
                 normalizedRowFrame.origin.x += section.frame.origin.x;
@@ -210,11 +210,16 @@ static char kPSTCachedItemRectsKey;
                 if (CGRectIntersectsRect(normalizedRowFrame, rect)) {
                     // TODO be more fine-grained for items
 
-                    for (NSInteger itemIndex = 0; itemIndex < row.itemCount; itemIndex++) {
+                    const BOOL pstPacked = section.packed;
+                    const NSInteger pstRowItemCount = pstPacked ? [section packedItemCountOfRow:(NSInteger)pstRowIndex] : row.itemCount;
+                    for (NSInteger itemIndex = 0; itemIndex < pstRowItemCount; itemIndex++) {
                         PSTCollectionViewLayoutAttributes *layoutAttributes;
                         NSUInteger sectionItemIndex;
                         CGRect itemFrame;
-                        if (row.fixedItemSize) {
+                        if (pstPacked) {
+                            sectionItemIndex = (NSUInteger)([section packedFirstItemOfRow:(NSInteger)pstRowIndex] + itemIndex);
+                            itemFrame = [section packedItemFrameAtIndex:(NSInteger)sectionItemIndex];
+                        } else if (row.fixedItemSize) {
                             itemFrame = [[itemRects objectAtIndex:(NSUInteger)itemIndex] CGRectValue];
                             // The row's position, not row.index: a compact fixed-size section shares one row object
                             // between all of its complete rows.
@@ -258,6 +263,18 @@ static char kPSTCachedItemRectsKey;
     CGRect itemFrame = CGRectZero;
 
     NSInteger pstRowNumber = 0;
+    if (section.packed) {
+        if (indexPath.row >= 0 && indexPath.row < section.itemsCount) {
+            pstRowNumber = [section packedRowOfItem:indexPath.row];
+            itemFrame = [section packedItemFrameAtIndex:indexPath.row];
+        }
+        PSTCollectionViewLayoutAttributes *packedAttributes = [[self.class layoutAttributesClass] layoutAttributesForCellWithIndexPath:indexPath];
+        CGRect packedRow = [section rowCount] > pstRowNumber ? [section rowFrameAtIndex:pstRowNumber] : CGRectZero;
+        packedRow.origin.x += section.frame.origin.x;
+        packedRow.origin.y += section.frame.origin.y;
+        packedAttributes.frame = CGRectMake(packedRow.origin.x + itemFrame.origin.x, packedRow.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);
+        return packedAttributes;
+    }
     if (section.fixedItemSize && section.itemsByRowCount > 0 && indexPath.row / section.itemsByRowCount < [section rowCount]) {
         pstRowNumber = indexPath.row / section.itemsByRowCount;
         row = [section rowAtIndex:pstRowNumber];
@@ -623,25 +640,24 @@ static char kPSTCachedItemRectsKey;
 
         // self-sizing: every item carries the size its cell reported (or the estimate)
         if ([self pstUsesSelfSizing]) {
+            // Packed storage: sizes live in one flat buffer instead of an item object per item.
+            CGSize *sizes = [layoutSection preparePackedItems:numberOfItems];
             if (implementsSizeDelegate) {
                 // The app's size is each item's seed, and the lookup records it, so every item is visited.
                 for (NSInteger item = 0; item < numberOfItems; item++) {
                     NSIndexPath *indexPath = [NSIndexPath indexPathForRow:item inSection:(NSInteger)section];
-                    PSTGridLayoutItem *layoutItem = [layoutSection addItem];
-                    layoutItem.itemFrame = (CGRect){.size=[self pstSizeForSelfSizingItemAtIndexPath:indexPath]};
+                    sizes[item] = [self pstSizeForSelfSizingItemAtIndexPath:indexPath];
                 }
             } else {
                 // Without a size delegate only measured items differ from the common proposal, and few of
-                // them ever are. Seed every item with the proposal, then apply the measured sizes by
-                // walking the measurements instead of building an index path per item.
+                // them ever are. Fill every item with the proposal, then apply the measured sizes by walking
+                // the measurements instead of building an index path per item.
                 CGSize proposal = [self pstUnmeasuredProposal];
-                for (NSInteger item = 0; item < numberOfItems; item++)
-                    [layoutSection addItem].itemFrame = (CGRect){.size=proposal};
+                for (NSInteger item = 0; item < numberOfItems; item++) sizes[item] = proposal;
                 if (_pstMeasuredItemSizes.count) {
-                    NSArray *items = layoutSection.items;
                     [_pstMeasuredItemSizes enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *path, NSValue *size, BOOL *stop) {
                         if (path.section == (NSInteger)section && path.item >= 0 && path.item < numberOfItems)
-                            ((PSTGridLayoutItem *)[items objectAtIndex:(NSUInteger)path.item]).itemFrame = (CGRect){.size=[size CGSizeValue]};
+                            sizes[path.item] = [size CGSizeValue];
                     }];
                 }
             }

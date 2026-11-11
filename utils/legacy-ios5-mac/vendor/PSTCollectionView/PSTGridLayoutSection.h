@@ -57,6 +57,20 @@
 - (PSTGridLayoutRow *)rowAtIndex:(NSInteger)index;
 - (CGRect)rowFrameAtIndex:(NSInteger)index; // relative to the section, like PSTGridLayoutRow.rowFrame
 
+// Packed variable-size storage. A section whose items differ in size keeps its item sizes, row boundaries and
+// per-item origins in flat C arrays instead of a PSTGridLayoutItem per item and a PSTGridLayoutRow per row, so
+// a rebuild is allocation-free apart from a few buffers and runs as a tight loop. rowCount, rowFrameAtIndex:
+// and itemsCount work for packed sections; rowAtIndex:, items and rows do not (there are no such objects).
+@property (nonatomic, assign, readonly) BOOL packed;
+// Switches the section to packed storage for `count` items and returns the size buffer to fill (owned by the
+// section, valid until the next call or dealloc). Call before computeLayout.
+- (CGSize *)preparePackedItems:(NSInteger)count;
+- (NSInteger)packedRowOfItem:(NSInteger)item;
+- (NSInteger)packedFirstItemOfRow:(NSInteger)row;
+- (NSInteger)packedItemCountOfRow:(NSInteger)row;
+// Frame of an item relative to its row, like PSTGridLayoutItem.itemFrame.
+- (CGRect)packedItemFrameAtIndex:(NSInteger)item;
+
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;
 

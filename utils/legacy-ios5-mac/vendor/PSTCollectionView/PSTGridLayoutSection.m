@@ -20,6 +20,15 @@
     NSInteger _fixedRowCount;
     PSTGridLayoutRow *_fixedTemplateRow;
     PSTGridLayoutRow *_fixedLastRow;
+    // Packed variable-size storage (see preparePackedItems:).
+    BOOL _packed;
+    NSInteger _packedCount;       // items
+    CGSize *_packedSizes;         // size of each item, filled by the layout before computeLayout
+    CGPoint *_packedOrigins;      // origin of each item relative to its row
+    NSInteger _packedRowCount;
+    NSInteger *_packedRowFirst;   // first item of each row; _packedRowFirst[_packedRowCount] == _packedCount
+    CGFloat *_packedRowOrigin;    // origin of each row along the scroll axis
+    CGSize *_packedRowSize;       // size of each row
 }
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) NSArray *rows;
@@ -60,16 +69,46 @@
 
 - (void)dealloc {
     free(_fixedRowOrigins);
+    [self pstFreePacked];
+}
+
+- (void)pstFreePacked {
+    free(_packedSizes); free(_packedOrigins); free(_packedRowFirst); free(_packedRowOrigin); free(_packedRowSize);
+    _packedSizes = NULL; _packedOrigins = NULL; _packedRowFirst = NULL; _packedRowOrigin = NULL; _packedRowSize = NULL;
+    _packedRowCount = 0;
 }
 
 - (void)invalidate {
     _isValid = NO;
+    _packedRowCount = 0;                                  // packed item sizes survive; rows are recomputed
     self.rows = [NSMutableArray array];
     free(_fixedRowOrigins); _fixedRowOrigins = NULL;
     _fixedRowCount = 0; _fixedTemplateRow = nil; _fixedLastRow = nil;
 }
 
+- (BOOL)packed { return _packed; }
+
+- (CGSize *)preparePackedItems:(NSInteger)count {
+    [self pstFreePacked];
+    _packed = YES; _packedCount = MAX(0, count);
+    _packedSizes = calloc((size_t)MAX(1, count), sizeof(CGSize));
+    _packedOrigins = calloc((size_t)MAX(1, count), sizeof(CGPoint));
+    return _packedSizes;
+}
+
+- (NSInteger)packedRowOfItem:(NSInteger)item {
+    NSInteger lo = 0, hi = _packedRowCount;           // last row whose first item is <= item
+    while (lo < hi) { NSInteger mid = lo + (hi - lo) / 2; if (_packedRowFirst[mid] <= item) lo = mid + 1; else hi = mid; }
+    return MAX(0, lo - 1);
+}
+- (NSInteger)packedFirstItemOfRow:(NSInteger)row { return _packedRowFirst[row]; }
+- (NSInteger)packedItemCountOfRow:(NSInteger)row { return _packedRowFirst[row + 1] - _packedRowFirst[row]; }
+- (CGRect)packedItemFrameAtIndex:(NSInteger)item {
+    return (CGRect){.origin=_packedOrigins[item], .size=_packedSizes[item]};
+}
+
 - (NSInteger)rowCount {
+    if (_packed) return _packedRowCount;
     return _fixedRowOrigins ? _fixedRowCount : (NSInteger)self.rows.count;
 }
 
@@ -79,6 +118,11 @@
 }
 
 - (CGRect)rowFrameAtIndex:(NSInteger)index {
+    if (_packed) {
+        CGSize size = _packedRowSize[index];
+        return self.layoutInfo.horizontal ? CGRectMake(_packedRowOrigin[index], self.sectionMargins.top, size.width, size.height)
+                                          : CGRectMake(self.sectionMargins.left, _packedRowOrigin[index], size.width, size.height);
+    }
     if (!_fixedRowOrigins) return [[self.rows objectAtIndex:(NSUInteger)index] rowFrame];
     CGSize size = [self rowAtIndex:index].rowSize;
     return self.layoutInfo.horizontal ? CGRectMake(_fixedRowOrigins[index], self.sectionMargins.top, size.width, size.height)
@@ -146,6 +190,120 @@
     return YES;
 }
 
+// Packed equivalent of the row loop in computeLayout plus PSTGridLayoutRow layoutRowAndGenerateRectArray:, for a
+// section whose item sizes are in _packedSizes. It performs the same arithmetic in the same order, so the
+// geometry is bit-identical; it only avoids a row object, an item object and an array per item.
+- (void)pstComputePackedRowsWithDimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize {
+    const BOOL horizontal = self.layoutInfo.horizontal;
+    const NSInteger count = _packedCount;
+    const CGFloat verticalInterstice = self.verticalInterstice, horizontalInterstice = self.horizontalInterstice;
+    const UIEdgeInsets margins = self.sectionMargins;
+    const BOOL centerItems = self.centersItemsAcrossRow;
+    free(_packedRowFirst); free(_packedRowOrigin); free(_packedRowSize);
+    NSInteger capacity = MAX(1, count) + 1;
+    _packedRowFirst = malloc((size_t)capacity * sizeof(NSInteger));
+    _packedRowOrigin = malloc((size_t)capacity * sizeof(CGFloat));
+    _packedRowSize = malloc((size_t)capacity * sizeof(CGSize));
+    _packedRowCount = 0;
+
+    // 1. Break the items into rows with the same running subtraction the object loop used.
+    NSInteger itemIndex = 0, itemsByRowCount = 0, rowIndex = 0;
+    CGFloat dimensionLeft = 0;
+    BOOL haveRow = NO;
+    do {
+        const BOOL finishCycle = itemIndex >= count;
+        CGSize itemSize = finishCycle ? CGSizeZero : _packedSizes[itemIndex];
+        CGFloat itemDimension = horizontal ? itemSize.height : itemSize.width;
+        if (itemsByRowCount > 0) itemDimension += spacing;
+        if (dimensionLeft < itemDimension || finishCycle) {
+            if (haveRow) {
+                self.itemsByRowCount = (NSInteger)fmax(itemsByRowCount, self.itemsByRowCount);
+                if (!finishCycle) self.indexOfImcompleteRow = rowIndex - 1;
+            }
+            if (!finishCycle) {
+                _packedRowFirst[_packedRowCount++] = itemIndex;
+                haveRow = YES;
+                self.indexOfImcompleteRow = rowIndex;
+                rowIndex++;
+                if (itemsByRowCount > 0) itemDimension -= spacing;
+                dimensionLeft = dimension - itemDimension;
+                itemsByRowCount = 0;
+            }
+        } else {
+            dimensionLeft -= itemDimension;
+        }
+        itemIndex++;
+        itemsByRowCount++;
+    } while (itemIndex <= count);
+    _packedRowFirst[_packedRowCount] = count;
+    const NSInteger rows = _packedRowCount;
+    // The object loop set indexOfImcompleteRow to the last row it created.
+    self.indexOfImcompleteRow = rows > 0 ? rows - 1 : self.indexOfImcompleteRow;
+
+    // 2. Lay out each row: justification, centering and the row's size, exactly as the row object did.
+    for (NSInteger row = 0; row < rows; row++) {
+        const NSInteger first = _packedRowFirst[row], n = _packedRowFirst[row + 1] - first;
+        const BOOL isLastRow = self.indexOfImcompleteRow == row;
+        const PSTFlowLayoutHorizontalAlignment alignment = (PSTFlowLayoutHorizontalAlignment)(isLastRow ? self.lastRowAlignment : self.commonRowAlignment);
+        CGFloat leftOverSpace = self.layoutInfo.dimension - (horizontal ? margins.top + margins.bottom : margins.left + margins.right);
+        NSInteger usedItemCount = 0, k = 0;
+        CGFloat maxScrollDimension = 0;
+        while (k < n || isLastRow) {
+            CGSize measured = _packedSizes[first + MIN(k, n - 1)];
+            CGFloat next = horizontal ? measured.height : measured.width;
+            if (centerItems && k < n) maxScrollDimension = MAX(maxScrollDimension, horizontal ? measured.width : measured.height);
+            if (k > 0) next += spacing;
+            if (leftOverSpace < next) break;
+            leftOverSpace -= next;
+            k++; usedItemCount = k;
+        }
+        const BOOL soleSelfSizingItem = self.layoutInfo.selfSizing && count == 1;
+        if (soleSelfSizingItem) {
+            CGSize size = _packedSizes[0];
+            CGFloat available = self.layoutInfo.dimension - (horizontal ? margins.top + margins.bottom : margins.left + margins.right);
+            leftOverSpace = MAX(0, available - (horizontal ? size.height : size.width));
+            usedItemCount = 1;
+        }
+        CGPoint itemOffset = CGPointZero;
+        if (alignment == PSTFlowLayoutHorizontalAlignmentRight) {
+            itemOffset.x += leftOverSpace;
+        } else if (alignment == PSTFlowLayoutHorizontalAlignmentCentered ||
+                   (alignment == PSTFlowLayoutHorizontalAlignmentJustify && usedItemCount == 1)) {
+            if (soleSelfSizingItem && horizontal) itemOffset.y += leftOverSpace / 2;
+            else itemOffset.x += leftOverSpace / 2;
+        }
+        const CGFloat interSpacing = usedItemCount <= 1 ? 0 : leftOverSpace / (CGFloat)(usedItemCount - 1);
+        CGRect frame = CGRectZero;
+        for (NSInteger j = 0; j < n; j++) {
+            CGRect itemFrame = (CGRect){.size=_packedSizes[first + j]};
+            if (horizontal) {
+                itemFrame.origin.x = centerItems ? (maxScrollDimension - itemFrame.size.width) / 2 : 0;
+                itemFrame.origin.y = itemOffset.y;
+                itemOffset.y += itemFrame.size.height + verticalInterstice;
+                if (alignment == PSTFlowLayoutHorizontalAlignmentJustify) itemOffset.y += interSpacing;
+            } else {
+                itemFrame.origin.y = centerItems ? (maxScrollDimension - itemFrame.size.height) / 2 : 0;
+                itemFrame.origin.x = itemOffset.x;
+                itemOffset.x += itemFrame.size.width + horizontalInterstice;
+                if (alignment == PSTFlowLayoutHorizontalAlignmentJustify) itemOffset.x += interSpacing;
+            }
+            _packedOrigins[first + j] = itemFrame.origin;
+            frame = CGRectUnion(frame, itemFrame);
+        }
+        _packedRowSize[row] = frame.size;
+        const BOOL finish = row == rows - 1;
+        if (horizontal) {
+            _packedRowOrigin[row] = sectionSize->width;
+            sectionSize->height = MAX(frame.size.height, sectionSize->height);
+            sectionSize->width += frame.size.width + (finish ? 0 : horizontalInterstice);
+        } else {
+            _packedRowOrigin[row] = sectionSize->height;
+            sectionSize->height += frame.size.height + (finish ? 0 : self.verticalInterstice);
+            sectionSize->width = MAX(frame.size.width, sectionSize->width);
+        }
+    }
+}
+
 - (void)computeLayout {
     if (!_isValid) {
         NSAssert(self.rows.count == 0, @"No rows shall be at this point.");
@@ -175,7 +333,9 @@
 
         CGFloat spacing = self.layoutInfo.horizontal ? self.verticalInterstice : self.horizontalInterstice;
 
-        if (![self pstComputeFixedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize]) {
+        if (_packed) {
+            [self pstComputePackedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize];
+        } else if (![self pstComputeFixedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize]) {
             do {
                 BOOL finishCycle = itemIndex >= self.itemsCount;
                 // TODO: fast path could even remove row creation and just calculate on the fly
@@ -319,6 +479,7 @@
 }
 
 - (NSInteger)itemsCount {
+    if (_packed) return _packedCount;
     return self.fixedItemSize ? _itemsCount : (NSInteger)self.items.count;
 }
 
