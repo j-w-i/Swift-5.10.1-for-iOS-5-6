@@ -1,5 +1,35 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Swift declaration lowering: toolchain and test located, still not runnable (round 231)
+
+The earlier claim that no Swift toolchain exists was **wrong**. Two are installed:
+`~/Library/Developer/Toolchains/LegacySwiftDevelopmentKit-monterey-modern-5.{1.5,10.1}.xctoolchain`, and the
+frontend states the rule explicitly:
+
+    error: legacy iOS 5/6 deployment targets require -enable-legacy-ios5-runtime;
+           Swift otherwise requires a minimum deployment target of iOS 7.0.0
+
+With `-enable-legacy-ios5-runtime` a `-target armv7-apple-ios5.0` parse succeeds, so the lowering mechanism the
+objective describes exists and is reachable. The in-tree test that specifies it is
+`test/ClangImporter/legacy_ios5_collection.swift`: a split-file lit test with a synthetic SDK and resource tree that
+checks that the legacy resource header is opened only for iOS 5/5.1 with the flag on, that iOS 6+ and flag-off
+compilations do not open it, that the original iOS 5 SDK (no collection headers) still works, and that only iOS 6
+API is relaxed while iOS 7 API stays unavailable.
+
+Tried to run it directly, since `lit` and `FileCheck` are not installed with the toolchain: split the file by hand
+(15 sections), rebuild the synthetic SDK and resource tree, and invoke `swift -typecheck` for each RUN line. Every
+invocation fails before reaching the test's headers:
+
+    unable to find node: identifier("DebugDescription")
+    unable to find node: identifier("_DebugDescriptionProperty")
+
+That is the frontend failing on its own stdlib nodes, not on the collection headers - the resource directory this
+toolchain ships is not the one the test expects, and `-parse-stdlib` needs the full legacy stdlib sources.
+
+So: the requirement is **specified, implemented and tested in-tree**, but cannot be exercised in this environment
+without the lit harness and a matching legacy resource directory. That is a concrete, bounded gap rather than the
+vague "no toolchain" recorded earlier, and this note corrects that.
+
 ## Ordering change verified on the PST route (iPod touch 3, iOS 5.1.1) and backport suites (round 230)
 
 The display-path change is the first in many rounds to touch the live path, so it was verified on real iOS 5
