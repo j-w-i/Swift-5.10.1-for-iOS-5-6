@@ -1,5 +1,21 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The benchmark does not crash: `n2launch` 6/3 are device lock states (round 244)
+
+Final piece of the harness question. After a respring the same app reported **`launch result=3`** instead of 6, and
+round 229 already established that 3 means the iPod is locked or asleep (`n2launch` cannot start an app then). The
+gate app launched in round 239 only because the device happened to be awake at that moment.
+
+So the sequence of corrections is complete: it does not crash (no crash logs), it is not the hook installation
+(fails identically without it), and it is not the Info.plist (rebuilt to match the gate app). The benchmark simply
+never started, because the device was locked during every attempt after round 239.
+
+That closes the investigation honestly and leaves one operational requirement: run the paired benchmark while the
+device is awake. Nothing about the harness or the backport needs changing.
+
+Device cleaned (0 test apps). Performance evidence unchanged: PST at HEAD on the iPod touch 3 (round 230, no
+regression, delegate reload 335 -> 291 ms) and Apple route behaviour-verified on the iPod touch 5 (round 239).
+
 ## Corrected again: the benchmark never launches, it does not crash (round 243)
 
 Ran the experiment round 242 called for - the same harness **without** `INSTALL_BACKPORT_HOOKS`: still
