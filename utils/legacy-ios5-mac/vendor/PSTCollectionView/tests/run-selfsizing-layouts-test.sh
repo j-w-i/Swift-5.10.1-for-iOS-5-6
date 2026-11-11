@@ -11,7 +11,7 @@ xcrun clang "${FL[@]}" -DTEST_PST=1 "$HERE/selfsizing-layouts-trace.m" "${OB[@]}
 for sc in 0 1 2 3 4 5 6 7;do for e in native pst;do xcrun simctl spawn "$SIM" "$OUT/$e" $sc >"$OUT/$e-$sc.jsonl" 2>"$OUT/$e-$sc.err";done;done
 python3 - "$OUT" "$MODE" <<'PY'
 import json,sys,pathlib
-p=pathlib.Path(sys.argv[1]);gate=sys.argv[2]=='--gate';bad=0;tot=0;wrong=0;total=0
+p=pathlib.Path(sys.argv[1]);gate=sys.argv[2]=='--gate';bad=0;tot=0;wrong=0;total=0;fitsBad=0
 names=['3 sections + headers','insets+spacing','2 sections, narrow','horizontal + headers','horizontal, narrow','4 sections, small headers','delegate insets/spacing/footers','delegate, horizontal']
 for sc in range(8):
     a=[json.loads(l) for l in (p/f'native-{sc}.jsonl').read_text().splitlines()];b=[json.loads(l) for l in (p/f'pst-{sc}.jsonl').read_text().splitlines()]
@@ -23,12 +23,23 @@ for sc in range(8):
         cont=all(abs(u-v)<1e-6 for u,v in zip(x['content'],y['content']));vis=x['visible']==y['visible']
         # Direct attribute queries for items that are not on screen (native computes them lazily): reported only.
         q=sum(max(abs(u-v) for u,v in zip(r,s))>1e-6 for r,s in zip(x['rects'],y['rects']))
-        row.append((n,supp,cont,vis,q));wrong+=n;total+=len(x['cellFrames']);tot+=1;bad+=(n>0 or not supp or not cont or not vis)
+        # Which items each engine actually measured. Same set means the fit is driven by the same layout.
+        nf=sorted(tuple(e) for e in x.get('fitted',[]));pf=sorted(tuple(e) for e in y.get('fitted',[]))
+        fits=nf==pf
+        row.append((n,supp,cont,vis,q,sum(1 for _ in x.get('fitted',[])),sum(1 for _ in y.get('fitted',[])),fits))
+        wrong+=n;total+=len(x['cellFrames']);tot+=1;bad+=(n>0 or not supp or not cont or not vis)
+        if not fits: fitsBad+=1
     print(f"  {names[sc]:26} cell_frame_errors={[r[0] for r in row]} header_ok={all(r[1] for r in row)} content_ok={all(r[2] for r in row)} visible_ok={all(r[3] for r in row)}  (offscreen attribute queries differing: {[r[4] for r in row]})")
+    if any(not r[7] for r in row):
+        print(f"  {names[sc]:26} fitted-item parity FAILED: native {[r[5] for r in row]} PST {[r[6] for r in row]} reports per step")
 print(f"{tot-bad}/{tot} steps exact on screen; {wrong} of {total} visible cell frames differ from iOS 27")
+print(f"fitted-item sets identical in {tot-fitsBad} of {tot} steps")
 # One scenario still differs in content size at its first step only (horizontal, narrow items): UIKit reports a
 # content width from a layout it has not finished fitting yet. Documented in COLLECTION-VIEW.md; every cell frame,
 # header, visible set and later step matches. The gate allows exactly that one step and nothing else.
 KNOWN=1
-sys.exit(1 if gate and (bad>KNOWN or wrong>0) else 0)
+# Fitted-item parity is reported always and enforced by --fit-parity, because a differing set is what the
+# valid-range work is meant to fix (see SELF-SIZING-VALID-RANGE-PLAN.md).
+if gate and (bad>KNOWN or wrong>0): sys.exit(1)
+if '--fit-parity' in sys.argv and fitsBad: sys.exit(1)
 PY

@@ -1,5 +1,22 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Valid-range plan written; fitted-item parity made a gate (round 176)
+
+Wrote `SELF-SIZING-VALID-RANGE-PLAN.md`: the design for the remaining unit, built from what the five reverted
+attempts established - reference model (valid rect/range per section, per-item estimated flag, section
+estimate formula, delta-shifting invalidation), the target PST data structures, the single ordering rule that
+must hold (create -> fit -> apply delta -> display, with the settled visible set), the full gate list, and the
+rollback point.
+
+Also made the metric that actually diagnoses this a first-class check. `run-selfsizing-layouts-test.sh` now
+compares the **set of items each engine fitted**, not just frame geometry, and `--fit-parity` fails on any
+difference. This is the number that separated native (6/14/18 fits per step) from every preparation-time
+attempt so far (9/20/27).
+
+Result at HEAD: **fitted-item sets identical in 32 of 32 steps**, gate passing. That is a genuinely stronger
+statement than before - the current post-layout scheduler measures exactly the items iOS 27 measures, which is
+why its geometry and content size match - and it means the next attempt cannot regress it silently.
+
 ## PST route re-measured on iOS 5 hardware at HEAD (round 175)
 
 The context/predicate/cache API added in rounds 144-173 is used by the layout's invalidation path, so the PST
