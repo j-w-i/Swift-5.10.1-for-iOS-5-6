@@ -1135,3 +1135,30 @@ is purely additive (`UICInstallMissingMethods` copies absent selectors); a colle
 engine that is absent on iOS 5. Recommended order if a single artifact is wanted: (3) as an additive
 helper, and (2) only as a deliberate spike on a branch, accepted against the existing gates on the
 iPod touch 3 and the iPod touch 5.
+
+### Round 100: the flat-namespace "single artifact" spike - works on iOS 5, hangs iOS 6
+
+A 30-line spike tested the only assumption behind option 2 from round 99: that a flat-namespace binary
+linking a dylib which defines `UICollectionView` would resolve to that dylib on iOS 5 and to Apple's
+class on iOS 6+, giving one artifact with PST on 5 and native on 6+. Built `engine.m` (defines
+`@interface UICollectionView : UIScrollView`, imports only `UIScrollView.h` so the modern SDK does not
+collide) into `SpikeEngine.dylib` with `-install_name @executable_path/SpikeEngine.dylib`, linked the app
+`-flat_namespace` against it, and ran the identical bundle on both devices.
+
+* **iOS 5.1.1: works.** `class=UICollectionView superclass=UIScrollView`, `resolved to the injected
+  engine: 1`. The symbol binding idea is sound on the OS that lacks the class.
+* **iOS 6.1.3: froze the device.** No output, no crash report (so a hang, not a clean abort), SSH alive
+  but SpringBoard wedged; it needed three `killall -9 SpringBoard` attempts before the process count
+  went 19246 -> 19295 and the UI came back. Two Objective-C classes with the same name in one process
+  is undefined behaviour, and on this OS it deadlocks rather than picking a winner.
+
+So option 2 is **not viable as a single artifact**: "Apple's implementation wins automatically" is not
+what happens when the engine's classes are linked into the process on iOS 6 - both definitions are
+present. Making the dylib load only on iOS 5 would mean the app's class references must resolve without
+it being a load dependency, which is the weak-import/`dlopen` territory where the reference is nil
+before the dylib arrives, i.e. option 3 with extra steps.
+
+Conclusion, unchanged from round 99 but now measured: keep the compile-time route selection (two builds
+from one tree, which is what the objective specifies), and if one artifact is genuinely required, use
+app-level indirection (option 3) rather than symbol games. The spike was not repeated on the device; one
+freeze was enough to rule it out.
