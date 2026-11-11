@@ -943,3 +943,38 @@ about to become visible, which changes when cells are created, when
 `preferredLayoutAttributesFitting` runs, and therefore the content height that the existing
 self-sizing gates check. Not started; it needs its own round with the self-sizing gates as the
 safety net.
+
+### Round 95: after rounds 90-92, PST is at or below native on every workload measured except one
+
+**Standard harness** (`PSTCollectionPerfHarness`, paired PST/native, median of three launches on
+the iPhone 6, iOS 10.3.3, arm64). Above 1 is slower than native; round 84 in brackets:
+
+| Workload | Now | Round 84 |
+| --- | ---: | ---: |
+| Cold, 200 items | 0.77 | 1.06 |
+| Idle x8 | 0.77 | 0.75 |
+| **Scroll x10** | **1.03** | 1.08 |
+| Reload | 0.94 | 0.96 |
+| Batch insert/delete | 0.63 | 0.67 |
+| Item-size change | 0.80 | 1.15 |
+| Bounds change | 0.74 | 0.95 |
+| Multi-section cold | 0.79 | 1.07 |
+| Multi-section scroll x6 | 0.82 | 0.87 |
+
+**Heavy-cell benchmark** (`tests/heavy-cell-bench`, two engines in one binary, 15 pairs, median of
+two runs that agreed within 0.03). Round 88 in brackets, where item-size was the standing failure:
+
+| Labels per cell | Item-size change | Scroll |
+| ---: | ---: | ---: |
+| 0 | 0.69 (2.14) | 0.95 (1.01) |
+| 1 | 0.78 (1.93) | 0.89 (0.92) |
+| 3 | 0.83 (1.70) | 0.83 (0.86) |
+| 6 | 0.90 (1.46) | 0.75 (0.78) |
+
+So the item-size gap is closed and reversed. The remaining slower-than-native figure among these
+workloads is standard scroll at 1.03, within measurement noise of parity but consistently above 1.
+
+Honest limits, unchanged: this is a synchronous CPU microbenchmark on one iPhone 6, not frame
+delivery, not iOS 6 hardware, and the cells are plain views or plain labels. Self-sizing still
+measures everything up front (round 94) and its scroll/cold profile differs from native's.
+Nothing has been published.
