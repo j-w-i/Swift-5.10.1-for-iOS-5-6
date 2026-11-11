@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The four preparation-fitting regressions are not in the fit path (round 214)
+
+Tried two fixes for the four gates that the preparation-fitting combination breaks (stability, automatic size,
+sizing updates, bounds):
+
+1. **key the once-per-instance fit to the proposal size**, so an invalidation that changes an item's size refits
+   it. No effect on the four; lifecycle stayed green.
+2. **a fit generation bumped by explicit `invalidateLayout`**, so an explicit invalidation forces every prepared
+   cell to be fitted again. Also no effect.
+
+The gate output shows what is expected: *"explicit invalidation remeasures an unchanged proposal frame"* and
+*"shifted proposal origin invalidates a previously stable size"* - native and PST both report the first, and PST
+fails the second and third of four lines. Since neither the fit cache nor its invalidation trigger changes the
+result, the regressions must come from the **suppressed post-layout scheduler** that those paths rely on for the
+attribute update, not from fitting itself.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32).
+
+So the remaining problem is now: *make the invalidation paths produce their attribute/size updates without the
+post-layout scheduler*. That is one specific component - the scheduler's role, plus whatever the four gates
+exercise through `invalidateLayoutWithContext:` - and it is the last blocker between the current baseline and
+shipping preparation fitting with exact lifecycle parity.
+
 ## Preparation fitting: the tradeoff is now measured, not guessed (round 213)
 
 Ran the full gate suite with the preparation-fitting combination (fit during cell preparation, pass restart,
