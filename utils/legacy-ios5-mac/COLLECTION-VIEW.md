@@ -230,3 +230,29 @@ result. No displayed frame-delivery test was performed. Raw JSON/summary in
 `/tmp/cv-copy-ab.CLrkuQ` are session-only artifacts. The harness also emits
 availability warnings for `NSJSONWritingSortedKeys` (iOS 11 flag used on iOS 10);
 JSON serialization is outside timing, but that harness portability issue remains.
+
+### Round 66: cost of the display-ordering changes (iPhone 6, arm64)
+
+The ordering fixes (retire before add, sorted retirement, cells before
+supplementary views) were measured against the build just before them
+(`7992ce3a`), changing only `PSTCollectionView.m`. Six alternating-order pairs;
+median new/old PST ratio (lower is faster), final single-pass version:
+
+| Workload | new/old | Improved pairs |
+| --- | ---: | ---: |
+| Cold | 0.990 | 3/6 |
+| Idle | 0.940 | 6/6 |
+| Scroll | 1.022 | 2/6 |
+| Reload | 1.036 | 0/6 |
+| Batch | 1.011 | 1/6 |
+| Item-size | 1.034 | 0/6 |
+| Bounds | 1.026 | 0/6 |
+| Multi-section cold | 1.002 | 3/6 |
+| Multi-section scroll | 0.904 | 6/6 |
+
+An earlier two-phase version gave almost identical numbers, so the extra loop was
+not the cost. Reload, item-size and bounds are about 3% slower in every pair and
+the cause is **not identified** (the key-set pre-pass and the sort are the
+suspects). Behaviour fidelity was judged worth that cost for now; this is a
+regression to revisit, not a win. Also note: replacing a binary at the same path
+on the phone made iOS kill the new binary (cached signature); use a fresh path.

@@ -1647,6 +1647,42 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
 // update currently visible cells, fetches new cells if needed
 // TODO: use now parameter.
+- (void)pstAddVisibleViewForAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
+        PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
+
+        // check if cell is in visible dict; add it if not.
+        PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:itemKey];
+        if (!view) {
+            if (itemKey.type == PSTCollectionViewItemTypeCell) {
+                view = [self createPreparedCellForItemAtIndexPath:itemKey.indexPath withLayoutAttributes:layoutAttributes];
+
+            }else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView) {
+                view = [self createPreparedSupplementaryViewForElementOfKind:layoutAttributes.representedElementKind
+                        atIndexPath:layoutAttributes.indexPath
+                        withLayoutAttributes:layoutAttributes];
+            }else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
+                view = [self dequeueReusableOrCreateDecorationViewOfKind:layoutAttributes.representedElementKind forIndexPath:layoutAttributes.indexPath];
+            }
+
+            // Supplementary views are optional
+            if (view) {
+                [_allVisibleViewsDict setObject:view forKey:itemKey];
+                [self addControlledSubview:view];
+
+                // Always apply attributes. Fixes #203.
+                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
+                [view applyLayoutAttributes:layoutAttributes];
+                [self pstNotifyWillDisplayView:view forKey:itemKey];
+            }
+        }else {
+            // just update cell - unless it already shows exactly these attributes
+            if (!PSTLayoutAttributesAlreadyApplied(layoutAttributes, view)) {
+                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
+                [view applyLayoutAttributes:layoutAttributes];
+            }
+        }
+}
+
 - (void)updateVisibleCellsNow:(BOOL)now {
     PSTCollectionViewStatsCountersStorage[PSTStatPasses]++;
     uint64_t pstPassStart = PSTCollectionViewStatsNowNanoseconds();
@@ -1739,43 +1775,18 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     // Add new views. UIKit displays arriving cells before supplementary and
     // decoration views, whatever order the layout listed them in.
-    for (int pstPhase = 0; pstPhase < 2; pstPhase++)
+    // One pass: non-cell attributes are deferred to a scratch array, allocated
+    // lazily, so a cells-only pass pays nothing extra.
+    NSMutableArray *pstDeferred = nil;
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
-        if ((layoutAttributes.representedElementCategory == PSTCollectionViewItemTypeCell) != (pstPhase == 0)) continue;
-        PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
-
-        // check if cell is in visible dict; add it if not.
-        PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:itemKey];
-        if (!view) {
-            if (itemKey.type == PSTCollectionViewItemTypeCell) {
-                view = [self createPreparedCellForItemAtIndexPath:itemKey.indexPath withLayoutAttributes:layoutAttributes];
-
-            }else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView) {
-                view = [self createPreparedSupplementaryViewForElementOfKind:layoutAttributes.representedElementKind
-                        atIndexPath:layoutAttributes.indexPath
-                        withLayoutAttributes:layoutAttributes];
-            }else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
-                view = [self dequeueReusableOrCreateDecorationViewOfKind:layoutAttributes.representedElementKind forIndexPath:layoutAttributes.indexPath];
-            }
-
-            // Supplementary views are optional
-            if (view) {
-                [_allVisibleViewsDict setObject:view forKey:itemKey];
-                [self addControlledSubview:view];
-
-                // Always apply attributes. Fixes #203.
-                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
-                [view applyLayoutAttributes:layoutAttributes];
-                [self pstNotifyWillDisplayView:view forKey:itemKey];
-            }
-        }else {
-            // just update cell - unless it already shows exactly these attributes
-            if (!PSTLayoutAttributesAlreadyApplied(layoutAttributes, view)) {
-                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
-                [view applyLayoutAttributes:layoutAttributes];
-            }
+        if (layoutAttributes.representedElementCategory != PSTCollectionViewItemTypeCell) {
+            if (!pstDeferred) pstDeferred = [NSMutableArray array];
+            [pstDeferred addObject:layoutAttributes];
+            continue;
         }
+        [self pstAddVisibleViewForAttributes:layoutAttributes];
     }
+    for (PSTCollectionViewLayoutAttributes *layoutAttributes in pstDeferred) [self pstAddVisibleViewForAttributes:layoutAttributes];
 
     _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
     _pstLastVisibleLayoutAttributesGeneration = [_collectionViewData layoutAttributesGeneration];
