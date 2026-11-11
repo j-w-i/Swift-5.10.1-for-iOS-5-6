@@ -1119,11 +1119,12 @@ Three ways to close that gap:
    behaviour is reachable in-process.
 2. **Ship the engine as a dylib that defines the symbols** - build the PST classes under the UIKit names
    and link the app `-flat_namespace` (or load it with `DYLD_INSERT_LIBRARIES`). On iOS 5 dyld binds the
-   app's `UICollectionView` references to that dylib; on iOS 6+ UIKit is loaded first and exports the same
-   symbols, so dyld binds Apple's and **Apple's implementation wins automatically**. This is the design
+   app's `UICollectionView` references to that dylib. Native precedence on iOS 6+ is **not automatic**:
+   the controlled retest below shows it depends on the dependency order, and even the successful order
+   leaves a duplicate-class warning. This is the design
    that actually does what was asked, and it is what upstream PST approximated with
    `class_setSuperclass` (this kit compiles that out). Costs: renaming the vendored classes for that
-   build, flat-namespace linking (not App Store legal; fine for this kit's deployment), a second symbol
+   build, flat-namespace linking (distribution compatibility not assessed), a second symbol
    definition per class, and re-running every gate on both routes. It also changes what a class symbol
    means per OS, which is exactly the kind of indirection the compile-time choice avoids on purpose.
 3. **App-level indirection** - `NSClassFromString(@"UICollectionView") ?: NSClassFromString(@"PSTCollectionView")`
@@ -1136,7 +1137,7 @@ engine that is absent on iOS 5. Recommended order if a single artifact is wanted
 helper, and (2) only as a deliberate spike on a branch, accepted against the existing gates on the
 iPod touch 3 and the iPod touch 5.
 
-### Round 100: the flat-namespace "single artifact" spike - works on iOS 5, hangs iOS 6
+### Round 100: earlier loader-spike conclusions (superseded by the controlled retest below)
 
 A 30-line spike tested the only assumption behind option 2 from round 99: that a flat-namespace binary
 linking a dylib which defines `UICollectionView` would resolve to that dylib on iOS 5 and to Apple's
@@ -1150,14 +1151,15 @@ collide) into `SpikeEngine.dylib` with `-install_name @executable_path/SpikeEngi
 * **iOS 6.1.3: froze the device.** No output, no crash report (so a hang, not a clean abort), SSH alive
   but SpringBoard wedged; it needed three `killall -9 SpringBoard` attempts before the process count
   went 19246 -> 19295 and the UI came back. Two Objective-C classes with the same name in one process
-  is undefined behaviour, and on this OS it deadlocks rather than picking a winner.
+  has undefined selection according to the runtime warning, but this run did not establish that the
+  duplicate classes caused the freeze. The earlier claim of a proven deadlock was incorrect.
 
 **Correction (retest, same round):** the freeze does **not** reproduce as a duplicate-class effect. The
 retest added a control app with the same flat-namespace linkage and the same dylib that defines
 **nothing** Apple ships (`SpikeDummyEngine`). The control ran and printed its result, and then the device
 froze again as well; the duplicate-class build produced no output either time. So the earlier
-attribution to two same-named ObjC classes is **not supported**: the freeze tracks flat-namespace
-linkage of a UI app on this device, not the class-name collision. That needs its own investigation on a
+attribution to two same-named ObjC classes is **not supported**. The subsequent claim that the freeze
+tracks flat-namespace linkage was also not established; the controlled persistent UI test below works. That needs its own investigation on a
 throwaway device before anything is concluded about dyld binding - the previous paragraph's strong claim
 is withdrawn.
 
@@ -1170,3 +1172,38 @@ something to keep running on the test hardware. Option 2 stays **unproven and un
 impossible. Keep the compile-time route selection (two builds from one tree, as the objective specifies);
 if a single artifact is genuinely required, prototype app-level indirection (option 3), which needs no
 symbol tricks and can be verified with the existing gates.
+
+### Controlled retest: loader identity bug fixed in the spike; persistent native GUI works
+
+The earlier freeze attributions were premature. A normal persistent flat-namespace control with a
+harmless dylib, root view controller/window, and a normally returning launch callback reached active
+state and its delayed main-queue callback. The user confirmed Home and touch worked. The old direct
+root-SSH launch had left `anonymous.Spike` (PID 19170) running after bundle deletion and repeated
+resprings; this process was terminated. No claim is made that this alone proves the cause of every
+reported UI freeze.
+
+A non-UI diagnostic then isolated the actual **symbol-binding defect** without creating an application:
+
+| Dependency order | iOS 5.1.1 | iOS 6.1.3 |
+| --- | --- | --- |
+| Fallback before UIKit | Earlier spike selected fallback | Compiled reference selects fallback; runtime lookup selects UIKit: different Class objects |
+| UIKit before fallback | Both references select fallback | Both references select UIKit |
+
+The checked-in `tests/runtime-selection-spike/build.sh` builds positive and negative probes. On both
+physical iPods the UIKit-first probe exits 0 and agrees with runtime lookup. On iOS 6 the engine-first
+negative exits 2, detecting the split identity. Sources, build commands and limits are in that test's
+README. Fresh executable paths were used for the final runs after overwriting an old installed path
+caused one SSH launch to terminate; both devices remained reachable.
+
+The corrected **persistent UI app** uses UIKit-first dependencies, a real root controller/window,
+proper collection-view initialisation with a layout, normal launch callback return, and mobile-user
+SpringBoard launching. It neither exits during launch nor deletes itself while running. On iOS 6.1.3
+it logged: direct/runtime identity agrees; native class selected; real native cells laid out; active;
+delayed main-queue callback; real button tap; normal backgrounding on Home. The user confirmed normal
+input and Home operation. SpringBoard's PID stayed 19547, so no recovery respring was needed.
+
+This fixes the demonstrated loader-order bug and the test setup, **not the shipping route**. A duplicate
+Objective-C class warning still says class selection is undefined, even with the successful order.
+The stand-in implements no collection engine on iOS 5. Full PST class-family binding, Swift subclasses,
+casts, protocols, metadata, deployment packaging and different library dependency graphs remain to be
+proved before any automatic-route mode is enabled. No UIKit/shared-cache/system-file patch was made.
