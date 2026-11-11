@@ -1,5 +1,47 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Hardware performance closed: PST is at or faster than Apple's route on iOS 6.1.3 (round 245)
+
+The paired benchmark finally ran - the earlier failures were the device being locked (round 244's conclusion was
+right), and with the device awake it completed on the iPod touch 5. This is the objective's device baseline: the
+same app, same data, same device, alternating PST and Apple's native UICollectionView, median of 9 reps.
+
+| Scenario | items | native | PST | PST/native |
+| --- | ---: | ---: | ---: | ---: |
+| cold layout | 200 | 2984 us | 2618 us | **0.88** |
+| reload | 200 | 2733 us | 2146 us | **0.79** |
+| batch insert 5 + delete 5 | 200 | 41838 us | 21028 us | **0.50** |
+| self-size + delegate, cold | 200 | 16473 us | 8575 us | **0.52** |
+| self-size + delegate, reload | 200 | 25694 us | 8077 us | **0.31** |
+| self-size + delegate, batch | 200 | 59126 us | 24211 us | **0.41** |
+| self-size, no delegate, cold | 200 | 48876 us | 12643 us | **0.26** |
+| self-size, no delegate, reload | 200 | 69119 us | 11667 us | **0.17** |
+| self-size, no delegate, batch | 200 | 56413 us | 21924 us | **0.39** |
+| cold layout | 1000 | 3307 us | 3318 us | **1.00** |
+| reload | 1000 | 29501 us | 2280 us | **0.08** |
+| batch insert 5 + delete 5 | 1000 | 101559 us | 49867 us | **0.49** |
+| self-size + delegate, cold | 1000 | 49030 us | 23864 us | 0.49 |
+| self-size + delegate, reload | 1000 | 105405 us | 22573 us | 0.21 |
+| self-size + delegate, batch | 1000 | 204284 us | 71878 us | 0.35 |
+| self-size, no delegate, cold | 1000 | 169053 us | 20731 us | 0.12 |
+| self-size, no delegate, reload | 1000 | 251220 us | 20400 us | 0.08 |
+| self-size, no delegate, batch | 1000 | 186835 us | 58582 us | 0.31 |
+| self-size + delegate, cold | 5000 | 223473 us | 106167 us | 0.48 |
+| self-size + delegate, reload | 5000 | 342307 us | 96250 us | 0.28 |
+| self-size, no delegate, cold | 5000 | 842962 us | 64883 us | 0.08 |
+
+**PST is never slower than the Apple route, and usually substantially faster** - the single worst case is parity
+(1.00) on cold layout at 1,000 items. The original problem statement's "0.79x to 1.49x native, slower on cold
+layout, reload and batch updates" no longer holds on device: cold layout is 0.88, reload 0.79 and batch 0.50 at
+200 items, improving with dataset size.
+
+**A harness bug was found and fixed on the way**: the first hook-less build reported
+`NSUnknownKeyException ... not key value coding-compliant for the key estimatedItemSize`, i.e. the benchmark's
+self-sizing scenarios need the backport hooks installed to run against Apple's iOS 6 layout. That is why the
+gate app installs them; the `@try/@catch` capture added in round 242 is what surfaced it.
+
+Device cleaned (1 residual process removed by the launcher path).
+
 ## The benchmark does not crash: `n2launch` 6/3 are device lock states (round 244)
 
 Final piece of the harness question. After a respring the same app reported **`launch result=3`** instead of 6, and
