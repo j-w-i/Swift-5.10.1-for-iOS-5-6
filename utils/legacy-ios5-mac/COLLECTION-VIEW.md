@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Second preparation-time attempt: content-size settling isolated, still reverted (round 164)
+
+Round 163 left one hypothesis: the cached content size must refresh during a display pass but stay cached for
+a caller-built context. That distinction was implemented and tested, using an associated marker set while a
+cell is prepared, `invalidateContentSize` on the data cache, and a rebuild forced for named contexts.
+
+Result: the display lifecycle matched iOS 27 exactly (9/0 and 8/0 against native 9/0 and 8/0), the strict
+context probe still passed, and visible cell frames stayed at 0 of 210 differing. But the layouts gate only
+recovered from 0/32 to **1/32**: content size now settled to the wrong value in the other direction
+(1910/1985/1966/2022 against native 1854/1854/1835/1846; horizontal 2256/2074/2065/2080 against a constant
+2088), where before the change it was too small (1770).
+
+So the isolation itself was correct; the residual error is the unmeasured-item estimate, not cache validity.
+PST applies one running mean to every unmeasured item, while native estimates each unlaid-out section from
+its own first row and only materialises the rows near the visible rect. Fixing content size therefore requires
+the valid-range model, not another cache patch.
+
+Reverted again; tree verified back at the round-162 state (14-scenario golden, layouts 31/32, context probe
+passing, lifecycle known-mismatch). Two independent attempts now show the same conclusion: preparation-time
+fitting is correct and achievable, but it can only be turned on together with lazy valid-range layout.
+
 ## Preparation-time fitting attempt: reverted (round 163)
 
 Tried moving the fit into cell preparation (where iOS 8.1 does it) so `willDisplayCell` stops arriving before
