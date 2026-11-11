@@ -4535,3 +4535,13 @@ cannot reproduce it there; the layout computation itself has to follow iOS 8's d
 **Not yet done:** an independent implementation of points 1-4, reading the remaining routines
 (`_layoutAttributesForItemsInRect:`, `sizeChangedForItem:atIndexPath:inRow:`, the per-item `estimatedSize`
 use in `_getSizingInfos`), and verification of it against the iOS 27 oracle. No runtime code changed this round.
+
+## Published release note for the verified state (round 247)
+
+Re-ran the complete suite at HEAD after the ordering fix, the subscript fix and the generator change: **28 of 28
+collection gates**, the Auto Layout solver suite, the fitting suite and the scene/trait fall-through gate all pass,
+with a strict armv7 iOS 5 compile.
+
+Wrote `RELEASE-COLLECTION-VIEW.md` as the release record - API surface, the oracle and device evidence for
+behaviour, the paired hardware performance table, the gate list, and the honest limits (native's placeholder
+content, the stale Swift profile resource, the absent iPhone 6, and the lazy layout not being wired).
