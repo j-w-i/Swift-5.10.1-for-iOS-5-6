@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Paired baseline-vs-current run: reload variance is measurement noise (round 201)
+
+Settled the round-200 reload question the only way that works: built the **round-175 baseline** from a git
+worktree alongside current HEAD, installed both as separate apps, and ran them **alternately, three rounds
+each**, on the same iPod touch 3 in one session (no-delegate, 5,000 items):
+
+| Round | baseline cold | current cold | baseline reload | current reload |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 144.8 ms | 156.0 ms | 173.0 ms | 188.1 ms |
+| 2 | 145.6 ms | 508.5 ms | 184.6 ms | 150.8 ms |
+| 3 | 144.5 ms | 147.8 ms | 185.4 ms | 177.0 ms |
+
+Conclusions:
+
+* **The ~189 ms reload is not a regression.** The baseline binary itself measures 173-185 ms in this session -
+  the 146.7 ms recorded in round 175 was a low reading, not a stable baseline. Baseline and current are within
+  noise of each other on reload (baseline 173/185/185, current 188/151/177).
+* Cold layout is stable at ~145-148 ms for both, apart from one 508 ms outlier on the current build - the same
+  kind of transient seen earlier, and it sits next to a 147.8 ms run of the same binary minutes later.
+* This is the correct method for these numbers: interleaved, same session, both binaries. Single-shot absolute
+  comparisons across sessions (which rounds 175-200 relied on) are not trustworthy at this granularity on this
+  device, and earlier "no regression / possible regression" statements should be read with that caveat.
+
+Baseline worktree removed; repository tree unchanged.
+
 ## Outlier resolved; reload variance recorded (round 200)
 
 Repeated the round-199 measurement twice on the same device and same binary:
