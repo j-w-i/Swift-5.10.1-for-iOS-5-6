@@ -70,6 +70,9 @@
 - (NSInteger)packedItemCountOfRow:(NSInteger)row;
 // Frame of an item relative to its row, like PSTGridLayoutItem.itemFrame.
 - (CGRect)packedItemFrameAtIndex:(NSInteger)item;
+// Updates a packed item's scrolling-axis size without changing row membership. Returns NO for a
+// cross-axis change (caller must use reflow). On success delta is the section's scrolling-axis change.
+- (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
 
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;

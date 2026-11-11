@@ -1,5 +1,17 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Incremental packed row-size primitive (round 154)
+
+Added a section operation for a positive finite scrolling-axis-only item-size change: update the item's
+size, recompute its row's extent/centering, shift later row origins and footer by the delta, and update
+section extent. It rejects cross-axis changes, invalid indices and unprepared/non-packed sections without
+changing them; those require a reflow operation not yet implemented. It allocates no row/item storage.
+A 120-update test (growth and shrinkage on both axes, 1-3 columns, 31 items, headers/footers/insets/spacing)
+compares every item frame, row frame, footer, section size and delta with a full rebuild after each update.
+All match, and armv7 syntax checks pass. This is an internal consistency test, not native differential
+parity. It is not yet called by flow layout; lazy valid-range computation, proposal updates, cross-row
+reflow and later-section shifting still need implementation before replacing self-sizing execution.
+
 ## Separate content-size cache validity (round 153)
 
 The iOS 8.1 collection-data reference has independent content-size and preparation validity bits:

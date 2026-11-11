@@ -304,6 +304,35 @@
     }
 }
 
+- (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta {
+    if (delta) *delta = 0;
+    if (!_packed || !_isValid || item < 0 || item >= _packedCount) return NO;
+    const BOOL horizontal = self.layoutInfo.horizontal;
+    CGSize old = _packedSizes[item];
+    if ((horizontal ? old.height != size.height : old.width != size.width) ||
+        !isfinite(size.width) || !isfinite(size.height) || size.width <= 0 || size.height <= 0) return NO;
+    NSInteger row = [self packedRowOfItem:item];
+    NSInteger first = _packedRowFirst[row], end = _packedRowFirst[row + 1];
+    _packedSizes[item] = size;
+    CGFloat extent = 0;
+    for (NSInteger k = first; k < end; k++) extent = MAX(extent, horizontal ? _packedSizes[k].width : _packedSizes[k].height);
+    CGRect unionFrame = CGRectNull;
+    for (NSInteger k = first; k < end; k++) {
+        CGPoint origin = _packedOrigins[k];
+        CGFloat centered = self.centersItemsAcrossRow ? (extent - (horizontal ? _packedSizes[k].width : _packedSizes[k].height)) / 2 : 0;
+        if (horizontal) origin.x = centered; else origin.y = centered;
+        _packedOrigins[k] = origin;
+        unionFrame = CGRectUnion(unionFrame, (CGRect){origin, _packedSizes[k]});
+    }
+    CGFloat change = horizontal ? unionFrame.size.width - _packedRowSize[row].width : unionFrame.size.height - _packedRowSize[row].height;
+    _packedRowSize[row] = unionFrame.size;
+    for (NSInteger r = row + 1; r < _packedRowCount; r++) _packedRowOrigin[r] += change;
+    if (horizontal) { _frame.size.width += change; _footerFrame.origin.x += change; }
+    else { _frame.size.height += change; _footerFrame.origin.y += change; }
+    if (delta) *delta = change;
+    return YES;
+}
+
 - (void)computeLayout {
     if (!_isValid) {
         NSAssert(self.rows.count == 0, @"No rows shall be at this point.");
