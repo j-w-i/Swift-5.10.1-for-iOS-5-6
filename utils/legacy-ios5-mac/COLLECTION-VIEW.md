@@ -1152,13 +1152,21 @@ collide) into `SpikeEngine.dylib` with `-install_name @executable_path/SpikeEngi
   went 19246 -> 19295 and the UI came back. Two Objective-C classes with the same name in one process
   is undefined behaviour, and on this OS it deadlocks rather than picking a winner.
 
-So option 2 is **not viable as a single artifact**: "Apple's implementation wins automatically" is not
-what happens when the engine's classes are linked into the process on iOS 6 - both definitions are
-present. Making the dylib load only on iOS 5 would mean the app's class references must resolve without
-it being a load dependency, which is the weak-import/`dlopen` territory where the reference is nil
-before the dylib arrives, i.e. option 3 with extra steps.
+**Correction (retest, same round):** the freeze does **not** reproduce as a duplicate-class effect. The
+retest added a control app with the same flat-namespace linkage and the same dylib that defines
+**nothing** Apple ships (`SpikeDummyEngine`). The control ran and printed its result, and then the device
+froze again as well; the duplicate-class build produced no output either time. So the earlier
+attribution to two same-named ObjC classes is **not supported**: the freeze tracks flat-namespace
+linkage of a UI app on this device, not the class-name collision. That needs its own investigation on a
+throwaway device before anything is concluded about dyld binding - the previous paragraph's strong claim
+is withdrawn.
 
-Conclusion, unchanged from round 99 but now measured: keep the compile-time route selection (two builds
-from one tree, which is what the objective specifies), and if one artifact is genuinely required, use
-app-level indirection (option 3) rather than symbol games. The spike was not repeated on the device; one
-freeze was enough to rule it out.
+What the spike did establish: on iOS 5.1.1 a flat-namespace binary resolves `UICollectionView` to a
+definition supplied by a loaded dylib, which is the mechanism option 2 depends on. What it did not
+establish: that the same process survives on iOS 6+ with two definitions present.
+
+Practical consequence either way: flat-namespace experiments froze this device twice, so they are not
+something to keep running on the test hardware. Option 2 stays **unproven and unattractive**, not proven
+impossible. Keep the compile-time route selection (two builds from one tree, as the objective specifies);
+if a single artifact is genuinely required, prototype app-level indirection (option 3), which needs no
+symbol tricks and can be verified with the existing gates.
