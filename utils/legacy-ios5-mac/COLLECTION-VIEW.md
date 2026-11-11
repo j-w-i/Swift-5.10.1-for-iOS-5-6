@@ -602,11 +602,18 @@ Delete probe (two rows, view in a window), animation and callbacks:
 - PST on the iPod touch 3 (iOS 5.1.1): completion at 331 ms, `didEndDisplaying` rows 1
   then 2 with the view hidden, delivered with completion.
 
-So the animation now runs and the callbacks arrive with it, but the **duration and
-curve differ from native**: PST uses 0.3 s ease-in-out, and native takes about 0.36-0.45 s
-and moves less in the first 150 ms (the cell below had moved 6.6 of 40 points natively
-against 19 in PST). The native timing is not a plain 0.3 s UIView animation on any of
-the three measured devices, so a match needs its own timing function; not done.
+**Correction (next round):** the paragraph that stood here claimed the native timing
+was not a plain 0.3 s animation on any measured device. That was wrong. Reading the
+animations UIKit attaches to the layers (`tests/animation-layer-keys.m`):
+- iPhone 6, iOS 10.3.3, native: `CABasicAnimation`, 0.300 s, ease-in-out
+  (0.42, 0, 0.58, 1), keys `position` and `opacity`. PST on the same phone attaches the
+  identical animation, and completion lands at 378-409 ms against native's 357-409 ms.
+- iOS 27 simulator, native: a critically damped `CASpringAnimation` (mass 1, stiffness
+  438.649, damping 41.888, so w = 2*pi/0.3 s), 0.441 s. That is what differed from PST's
+  curve in the probe above. It is not an OS PST targets.
+So PST's animation already matches the real target devices; the simulator is only a
+trustworthy oracle for the animation *curve* on OSes new enough to use springs. iOS 6.1.3
+was measured at 0.3 s in the earlier animation commit.
 
 This corrects the previous section, which said PST animations did not run for reasons
 unknown and that the retirement change was not the cause: the cause was this return-type
