@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The Swift profile republish needs a full armv7 toolchain build, not a reassembly (round 246)
+
+Tried the reassembly route to get the rebuilt runtime into a publishable toolchain, using
+`assemble-510-toolchain.sh` with the artefacts that exist on this machine. Each input was checked and three
+obstacles were found in order:
+
+1. `STAGE` needs `probes/linked510`; `legacy-build-fix7/bootstrap` only has `modules510`. The one
+   `linked510` directory on the machine lives in `legacy-5101-arm64-build/stage-arm64`;
+2. with that stage, the frontend/driver must be *thin* x86_64 Mach-O executables - the `host/` toolchain ships
+   fat binaries, the `build/swift/bin` and baseline toolchain copies are thin;
+3. with thin inputs, assembly then rejects the stage itself: *"Expected a rebuilt armv7 Mach-O dylib:
+   .../stage-arm64/probes/linked510/libswiftDispatch.dylib"* - the only staged linked probes on this machine are
+   **arm64**, not armv7.
+
+So there is no armv7 stage to assemble from: producing one is part of the full toolchain build
+(`build-all.sh` -> preparation/build/link), which is the step that also rebuilds the staged dylibs from the
+backports archive. Republishing the Swift profile is therefore a full build job, not a reassembly, and it is the
+last piece of the release.
+
+Everything upstream of that build is verified: the backports archive builds and passes its own audit (round 238),
+the collection archive exports the invalidation-context classes (round 237), and the generated header carries the
+modern surface with no `pst` internals (round 235).
+
 ## Hardware performance closed: PST is at or faster than Apple's route on iOS 6.1.3 (round 245)
 
 The paired benchmark finally ran - the earlier failures were the device being locked (round 244's conclusion was
