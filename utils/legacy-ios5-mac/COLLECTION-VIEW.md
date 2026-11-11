@@ -1,5 +1,31 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Simulator PST/native re-measured on the heavy-cell benchmark (round 184)
+
+The objective quotes "0.79x to 1.49x native in the simulator". That figure comes from
+`vendor/PSTCollectionView/tests/heavy-cell-bench`, which runs both engines in one binary, alternating order,
+15 pairs per row and reports the median ratio (cells hold N plain UILabels; scenario 0 scrolls ten steps of
+87 pt, scenario 1 resizes the item size three times). Rebuilt and run at HEAD on the iOS 27 simulator:
+
+| labels | scenario | native | PST | PST/native median | min | max |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | item-size | 169 us | 102 us | 0.581 | 0.260 | 0.684 |
+| 0 | scroll | 468 us | 315 us | 0.658 | 0.303 | 0.716 |
+| 1 | item-size | 268 us | 148 us | 0.548 | 0.393 | 0.646 |
+| 1 | scroll | 639 us | 362 us | 0.565 | 0.381 | 0.991 |
+| 3 | item-size | 347 us | 209 us | 0.614 | 0.454 | 0.690 |
+| 3 | scroll | 831 us | 430 us | 0.519 | 0.337 | 0.657 |
+| 6 | item-size | 478 us | 307 us | 0.653 | 0.374 | 0.721 |
+| 6 | scroll | 1090 us | 522 us | 0.479 | 0.361 | 0.721 |
+
+Every median is between **0.48 and 0.66** - PST is faster than native UIKit across all heavy-cell cases at
+HEAD, and the worst single pair is 0.99. So the objective's cited 0.79-1.49 spread no longer holds; the one
+case that reached ~1.0 earlier (fixed-size cold layout at 1,000 items, 0.97 on hardware) remains the tightest
+margin anywhere in this work.
+
+Limit, unchanged: these are simulator CPU timings on one machine, not FPS on hardware, and the hardware pairs
+from rounds 165/175 remain the authoritative device numbers.
+
 ## Consolidated status at round 183 (verification report)
 
 27 gates across three areas, all green at HEAD, run in one sweep:
