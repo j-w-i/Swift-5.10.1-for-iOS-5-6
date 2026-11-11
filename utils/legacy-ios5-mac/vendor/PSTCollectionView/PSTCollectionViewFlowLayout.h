@@ -78,8 +78,10 @@ typedef NS_ENUM(NSInteger, PSTFlowLayoutHorizontalAlignment) {
 @interface PSTCollectionViewFlowLayout (SelfSizing)
 - (BOOL)pstUsesSelfSizing;
 - (void)pstResetMeasuredSizes;
-- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath;
-- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath;
+- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame;
+- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame;
+- (void)pstForgetStableMeasurementForItemAtIndexPath:(NSIndexPath *)indexPath;
+- (void)pstInvalidateForPreferredSizeChanges;
 @end
 
 

@@ -43,9 +43,10 @@ NSString *const PSTFlowLayoutRowVerticalAlignmentKey = @"UIFlowLayoutRowVertical
     CGSize _itemSize;
     CGSize _estimatedItemSize;
     NSMutableDictionary *_pstMeasuredItemSizes;    // NSIndexPath -> NSValue(CGSize): sizes the cells reported
-    NSMutableSet *_pstStableMeasuredIndexPaths;    // index paths whose reported size equals the laid out size
+    NSMutableDictionary *_pstStableMeasuredFrames; // NSIndexPath -> CGRect: confirmed proposal frame
+    BOOL _pstPreservingStableMeasurements;        // internal size invalidation, not an app invalidation
     CGSize _pstMeasuredSizeSum;                    // sum and count of the cell-reported sizes: unmeasured
-    NSUInteger _pstMeasuredSizeCount;              // items are proposed at their mean, as UIKit does
+    NSUInteger _pstMeasuredSizeCount;              // running-mean proposals; stepped UIKit cache still differs
     CGSize _pstProposalAtLayout;                   // the mean frozen for the current layout pass
     CGSize _headerReferenceSize;
     CGSize _footerReferenceSize;
@@ -331,10 +332,9 @@ static char kPSTCachedItemRectsKey;
 #pragma mark - Invalidating the Layout
 
 - (void)invalidateLayout {
-    // Previously measured sizes remain useful estimates, but an explicit invalidation
-    // permits content-driven preferred sizes to change. Clearing only stability also
-    // lets internal measurement invalidations converge without returning to the seed.
-    [_pstStableMeasuredIndexPaths removeAllObjects];
+    // Explicit app invalidation permits content-driven sizes to change. Internal
+    // measurement invalidations retain confirmations for unchanged proposal frames.
+    if (!_pstPreservingStableMeasurements) [_pstStableMeasuredFrames removeAllObjects];
     [super invalidateLayout];
     objc_setAssociatedObject(self, &kPSTCachedItemRectsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Keep _data: prepareLayout will verify the prepared-generation token and
@@ -399,7 +399,7 @@ static char kPSTCachedItemRectsKey;
 
 - (void)pstResetMeasuredSizes {
     [_pstMeasuredItemSizes removeAllObjects];
-    [_pstStableMeasuredIndexPaths removeAllObjects];
+    [_pstStableMeasuredFrames removeAllObjects];
     _pstMeasuredSizeSum = CGSizeZero; _pstMeasuredSizeCount = 0;
 }
 
@@ -420,24 +420,24 @@ static char kPSTCachedItemRectsKey;
     // on both axes, independently of itemSize; retain the sentinel in the public getter.
     if (CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)))
         return CGSizeMake(50, 50);
-    // Once cells have reported sizes UIKit proposes their mean for the items not yet
-    // measured; the estimate only seeds the very first layout. The mean is frozen
-    // per layout rebuild (see -prepareLayout) so one pass is internally consistent.
+    // A running mean matches the first-layout unmeasured proposal. UIKit preserves
+    // different proposal ranges during stepped scrolling; that cache policy is not
+    // reproduced yet. Freeze this mean per rebuild so one pass is consistent.
     if (_pstMeasuredSizeCount) return _pstProposalAtLayout;
     return _estimatedItemSize;
 }
 
 /// Records a cell's preferred size. Returns YES when it differs from the size currently laid out
 /// (the layout is then invalidated and rebuilt with it). A size equal to the laid out one is marked
-/// stable so the cell is not measured again.
-- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath {
+/// stable for that proposal frame, until explicit invalidation or cell reconfiguration.
+- (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame {
     if (!_pstMeasuredItemSizes) _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
-    if (!_pstStableMeasuredIndexPaths) _pstStableMeasuredIndexPaths = [NSMutableSet set];
+    if (!_pstStableMeasuredFrames) _pstStableMeasuredFrames = [NSMutableDictionary dictionary];
     CGSize current = [self pstSizeForSelfSizingItemAtIndexPath:indexPath];
     if (CGSizeEqualToSize(size, current)) {
         BOOL wasMeasured3 = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
         CGSize old3 = wasMeasured3 ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
-        [_pstStableMeasuredIndexPaths addObject:indexPath];
+        [_pstStableMeasuredFrames setObject:[NSValue valueWithCGRect:frame] forKey:indexPath];
         [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
         // A delegate seed is stored as a measurement but is not a cell report.
         if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:wasMeasured3 ? &old3 : NULL];
@@ -446,7 +446,7 @@ static char kPSTCachedItemRectsKey;
     BOOL wasMeasured = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
     CGSize old = wasMeasured ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
     [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
-    [_pstStableMeasuredIndexPaths removeObject:indexPath];
+    [_pstStableMeasuredFrames removeObjectForKey:indexPath];
     [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];
     return YES;
 }
@@ -461,8 +461,21 @@ static char kPSTCachedItemRectsKey;
     return [self.collectionView.delegate respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)];
 }
 
-- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath {
-    return [_pstStableMeasuredIndexPaths containsObject:indexPath];
+- (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame {
+    NSValue *confirmed = [_pstStableMeasuredFrames objectForKey:indexPath];
+    return confirmed && CGRectEqualToRect([confirmed CGRectValue], frame);
+}
+
+- (void)pstForgetStableMeasurementForItemAtIndexPath:(NSIndexPath *)indexPath {
+    // A newly configured/reused cell may have different content even at the same path.
+    [_pstStableMeasuredFrames removeObjectForKey:indexPath];
+}
+
+- (void)pstInvalidateForPreferredSizeChanges {
+    BOOL previous = _pstPreservingStableMeasurements;
+    _pstPreservingStableMeasurements = YES;
+    @try { [self invalidateLayout]; } // preserve subclass invalidation overrides
+    @finally { _pstPreservingStableMeasurements = previous; }
 }
 
 - (BOOL)hasDynamicDelegateGeometry {

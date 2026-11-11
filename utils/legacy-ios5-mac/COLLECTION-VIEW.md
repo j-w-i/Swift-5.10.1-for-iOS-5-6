@@ -1359,3 +1359,41 @@ that the whole modern API surface matches iOS 27. Variable/stepped self-sizing, 
 prefetch cancellation, exact animated event order and modern APIs with the Swift overlay together
 remain unverified through this generated route. Public duplicate classes and the production importer
 also remain unresolved. Neither system UIKit nor the existing shipping selection was changed.
+
+### Round 107: measured fitting-call reduction, with stepped geometry mismatch left explicit
+
+Added a shared native/PST JSON trace for 60 variable-height items (30+2*index), estimate 200x40,
+viewport 200x120, no prefetch, steps y=0/300/600/900/1200/back-to-0. It records actual fitting calls and
+proposals, data-source requests, measured paths, visible paths, content size, offset and all item
+frames. These are work/geometry measurements, not FPS or wall-clock performance claims.
+
+Before the fix, initial geometry matched UIKit but PST fitted 11 times versus native's 8. Internal
+measurement invalidation cleared every cell's stability, including frames just confirmed unchanged.
+PST now preserves confirmations across internal measurement invalidation **only for an unchanged full
+proposal frame**. Explicit invalidation clears them, and a newly configured cell forgets its path's
+confirmation. Subclass invalidateLayout overrides still run, and scoped preservation state is restored
+with @finally. A shifted origin is not incorrectly treated as stable merely because size is unchanged.
+
+The shared trace now measures **8/8 initial fittings**, with the same initial frames, 4 requests each
+and content height 1980. Returning to the start still fits each of the four newly configured cells.
+The initial-only fitting budget is an optional gate; the runner does not label stepped parity as passing.
+
+The larger mismatch is unchanged and precisely reproduced: at y=300 native/PST content heights are
+2434/2556 and visible paths are [8,9,10,11]/[7,8,9,10]; at y=1200 they are 3201/3398.18 and
+[25,26]/[22,23,24]. Fifty-six item frames differ after each step. Native preserves different unmeasured
+proposal ranges while PST replaces them with its global running mean. The trace supports that cache
+policy distinction; it does not yet establish a full replacement algorithm. Source comments no longer
+claim that PST's stepped proposal policy already matches UIKit.
+
+Verification: visible/offscreen sizing mutation gate, sizing-delegate geometry gate, first-layout
+proposal gate, and a new four-case stability gate pass against iOS 27. The stability gate covers explicit
+invalidation, changed proposal origin and returning-cell reconfiguration. During its development, an
+initial preferred height equal to estimate (80) showed a separate native observation: after another
+cell fitted to 50, native row 0's attributes became 50 despite its earlier 80 report, while PST retained
+80. That edge case remains unresolved; the isolated stability regression starts the first item at 90
+instead, so it tests invalidation without pretending that separate initial-cache difference is fixed.
+
+The rebuilt armv7 engine also passes the persistent **21-check modern API gate on each physical iPod**
+with both animated callbacks finished=YES and unchanged SpringBoard PIDs. No simulator-only fix was
+accepted without an iOS 5 build/run. No iPhone 6 run or hardware speedup claim is made this round. The
+broad goal, stepped geometry, public duplicates and production importer integration remain incomplete.

@@ -1905,8 +1905,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 /// Self-sizing cells (flow layout estimatedItemSize). Each visible cell that has not yet reported a size
 /// equal to the laid out one is asked for its preferred attributes. If any answers with a different size
 /// the layout is invalidated so it is rebuilt with the measured sizes; the next pass re-measures, and a
-/// cell whose answer matches what it was given is left alone from then on. Bounded, so a cell whose size
-/// depends on its own frame cannot loop forever.
+/// cell whose answer matches is left alone while its proposal frame and configuration remain valid.
+/// Bounded, so a cell whose size depends on its own frame cannot loop forever.
 - (void)pstMeasureSelfSizingCells {
     if (![_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) return;
     PSTCollectionViewFlowLayout *flow = (PSTCollectionViewFlowLayout *)_layout;
@@ -1916,17 +1916,17 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     NSArray *keys = [_allVisibleViewsDict allKeys];
     for (PSTCollectionViewItemKey *key in keys) {
         if (key.type != PSTCollectionViewItemTypeCell) continue;
-        if ([flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath]) continue;
         PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
         PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
         if (!cell || !proposed) continue;
+        if ([flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) continue;
         PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
         CGSize size = preferred ? preferred.size : proposed.size;
-        if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath]) changed = YES;
+        if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) changed = YES;
     }
     if (changed) {
         _pstSelfSizingRounds++;
-        [_layout invalidateLayout];
+        [flow pstInvalidateForPreferredSizeChanges];
         [_collectionViewData validateLayoutInRect:self.bounds];
         [self updateVisibleCellsNow:YES];
         CGSize contentSize = [_collectionViewData collectionViewContentRect].size;
@@ -1946,6 +1946,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _pstLayoutAttributesBeingApplied = layoutAttributes;
     PSTCollectionViewCell *cell = [self.dataSource collectionView:self cellForItemAtIndexPath:indexPath];
     _pstLayoutAttributesBeingApplied = previousAttributes;
+    if ([_layout isKindOfClass:[PSTCollectionViewFlowLayout class]] && [(PSTCollectionViewFlowLayout *)_layout pstUsesSelfSizing]) {
+        [(PSTCollectionViewFlowLayout *)_layout pstForgetStableMeasurementForItemAtIndexPath:indexPath];
+    }
 
     // Apply attributes
     [cell applyLayoutAttributes:layoutAttributes];
