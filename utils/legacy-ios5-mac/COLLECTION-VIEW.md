@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The branch's content gap does not come from the estimate expression (round 224)
+
+On `prep-fit-measurement-path`, mapped the remaining content differences against the settled oracle: 22 of 64
+steps, with the same signature the invalidation-context version had (initial -37, -12, step3 +196 for the
+three-section case; +58.2 and +8.5 for horizontal narrow). Then tried three candidate causes, all measured:
+
+| attempt | layouts steps exact |
+| --- | ---: |
+| branch as committed | 42/64 |
+| variant B: no learned breakpoint -> plain estimate | 42/64 |
+| require two measurements before a section mean applies | 42/64 |
+| only fit cells that intersect the visible bounds | 42/64 |
+
+Identical numbers in all four is itself the result: the content gap is **not** in the proposal expression, not in
+whether a single measurement is trusted, and not in how many cells are fitted. (PST does report one fit more per
+step than native - 10 vs 9, 22 vs 21, 30 vs 29 - but changing the fitted set did not change the content, so that
+is a symptom, not the driver.)
+
+Reverted all three experiments; the branch remains at `b8fdd47a`, which is the version that achieves exact
+lifecycle parity and 0 of 420 differing visible frames. Main stays the published, verified state.
+
+Where that leaves the search: the content difference must come from *when* the measurements are applied relative
+to the layout being prepared (the pass-end relayout), not from the value chosen for unmeasured items. That is a
+different axis than anything tried so far and is the next thing to instrument.
+
 ## Breakthrough on ordering: fit through the measurement path, not the invalidation context (round 223)
 
 Every earlier preparation-fitting attempt drove the invalidation-context route
