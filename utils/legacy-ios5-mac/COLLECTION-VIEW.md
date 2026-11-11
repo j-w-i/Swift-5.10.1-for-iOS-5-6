@@ -1,5 +1,15 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preparation experiment (round 143)
+
+A local experiment moved fitting into PST cell preparation, recorded its answer and invalidated there,
+using the existing layout machinery. It eliminated display-before-fit (0 in both cases) and passed the
+existing stability test, but still produced 10 display callbacks against native's 8 for changed sizes.
+The experiment was reverted rather than shipping a partial lifecycle fix. It demonstrates that synchronous
+fitting must be paired with correct invalidation/data-cache handling; it is not sufficient by itself.
+The lifecycle gate now requires display counts to match the oracle as well as fitting before display.
+No runtime changes from this experiment remain.
+
 ## Current parity correction: self-sizing before display (round 142)
 
 The earlier passing display-event tests used fixed-size cells. They did not establish self-sizing lifecycle

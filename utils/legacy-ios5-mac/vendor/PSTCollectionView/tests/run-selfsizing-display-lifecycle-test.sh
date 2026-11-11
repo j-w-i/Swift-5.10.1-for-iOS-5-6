@@ -12,14 +12,15 @@ done
 python3 - "$OUT" "$MODE" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]); bad=False
+oracle=json.loads((p/'native.json').read_text())
 for engine in ('native','pst'):
     rows=json.loads((p/f'{engine}.json').read_text())
     assert len(rows)==2
-    for r in rows:
+    for r,reference in zip(rows,oracle):
         assert r['displays']>0
         print(f"{engine:6} changed={r['changed']} displays={r['displays']} displayed-before-fit={r['unfittedDisplays']}")
         if engine=='native': assert r['unfittedDisplays']==0, 'Oracle no longer fits before display; investigate'
-        bad |= r['unfittedDisplays']!=0
+        bad |= r['unfittedDisplays']!=0 or r['displays']!=reference['displays']
 print(f'Artifacts: {p}')
 if sys.argv[2]=='--gate' and bad: raise SystemExit(1)
 PY
