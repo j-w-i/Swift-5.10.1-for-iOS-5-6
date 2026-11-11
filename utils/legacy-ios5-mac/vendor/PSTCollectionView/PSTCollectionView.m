@@ -716,7 +716,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // the key/value retain-and-release work on every reload.
     NSDictionary *retiring = _allVisibleViewsDict;
     _allVisibleViewsDict = [NSMutableDictionary new];
-    // UIKit retires in index order; dictionary order is arbitrary.
+    // UIKit's retire order is an unspecified hash order; use a deterministic one.
     NSArray *retiringKeys = [[retiring allKeys] sortedArrayUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *x, PSTCollectionViewItemKey *y) {
         if (x.type != y.type) return x.type < y.type ? NSOrderedAscending : NSOrderedDescending;
         return [x.indexPath compare:y.indexPath];
@@ -1680,7 +1680,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     }
 
     // Collect the new visible key set first: UIKit retires views leaving the
-    // rect (didEndDisplaying, in index order) before it displays arriving ones.
+    // rect (didEndDisplaying) before it displays arriving ones.
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
         [_pstVisibleItemKeysScratch addObject:[PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes]];
     }
@@ -1702,7 +1702,8 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }
     }
 
-    // Retire views that left the rect, ascending like UIKit, before adding arrivals.
+    // Retire views that left the rect before adding arrivals. UIKit's own retire
+    // order is an unspecified hash order, so sort for a deterministic one.
     if (_pstVisibleItemKeysToRemoveScratch.count > 1)
         [_pstVisibleItemKeysToRemoveScratch sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *x, PSTCollectionViewItemKey *y) {
             if (x.type != y.type) return x.type < y.type ? NSOrderedAscending : NSOrderedDescending;
@@ -1736,8 +1737,11 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         }
     }
 
-    // Add new cells.
+    // Add new views. UIKit displays arriving cells before supplementary and
+    // decoration views, whatever order the layout listed them in.
+    for (int pstPhase = 0; pstPhase < 2; pstPhase++)
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
+        if ((layoutAttributes.representedElementCategory == PSTCollectionViewItemTypeCell) != (pstPhase == 0)) continue;
         PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
 
         // check if cell is in visible dict; add it if not.
