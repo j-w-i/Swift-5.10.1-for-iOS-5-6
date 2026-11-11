@@ -1,5 +1,34 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Per-scenario map of the preparation-fitting residual (round 197)
+
+Re-applied the full combination (preparation-time fitting, content-size cache fix, per-section estimate) and
+recorded the content-size delta by scenario and step instead of a single total. This turns "15/32, off by up to
+196" into a work list:
+
+| Scenario | delta native -> PST, per step |
+| --- | --- |
+| three sections + headers | -37, -12, **0**, +196 |
+| insets + spacing | 0, 0, 0, 0 |
+| two sections, narrow | -43, 0, 0, 0 |
+| horizontal + headers | 0, 0, 0, 0 |
+| horizontal, narrow | 0, 0, 0, 0 |
+| four sections, small headers | -24, -8, -18, +14 |
+| delegate insets/spacing/footers | +8, 0, -10, +11 |
+| delegate, horizontal | 0, 0, 0, 0 |
+
+**Four of the eight scenarios are now exact at every step**, including both horizontal ones and the delegate
+insets case at three of four steps. The residual is confined to multi-section cases (and one outlier: the last
+step of the three-section scenario at +196), which is consistent with the remaining difference being how a
+section that is still unmeasured is estimated when *other* sections have measurements - the one rule this round
+and the last both probed without a clean answer.
+
+Also unchanged: fitted-item parity 11/32 under the combination, so some fits still differ even where content
+matches exactly.
+
+Reverted; baseline verified (golden PASS, layouts 31/32, fitted-item parity 32/32). The map is the most useful
+artefact of this round: half the shapes need no further model work, and the outlier is a single step.
+
 ## Unmeasured sections keep the estimate, not the global mean (round 196)
 
 Tested the natural follow-up to the per-section estimate: when a section has measured nothing at all, fall back
