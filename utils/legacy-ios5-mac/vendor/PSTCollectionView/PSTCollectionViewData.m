@@ -89,6 +89,11 @@
     _validLayoutRect = CGRectNull;  // don't set CGRectZero in case of _contentSize=CGSizeZero
 }
 
+- (void)invalidateLayoutPreservingItemCounts {
+    _collectionViewDataFlags.layoutIsPrepared = NO;
+    _validLayoutRect = CGRectNull;
+}
+
 - (void)invalidateLayoutAttributes {
     _validLayoutRect = CGRectNull;
     _contentSize = [self.layout collectionViewContentSize];

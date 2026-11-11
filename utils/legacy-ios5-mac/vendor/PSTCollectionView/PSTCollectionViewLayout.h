@@ -83,6 +83,7 @@ __attribute__((swift_name("UICollectionViewLayout")))
 // Call -invalidateLayout to indicate that the collection view needs to requery the layout information.
 // Subclasses must always call super if they override.
 - (void)invalidateLayout;
+- (void)invalidateLayoutWithContext:(PSTCollectionViewLayoutInvalidationContext *)context;
 
 /// @name Registering Decoration Views
 - (void)registerClass:(Class)viewClass forDecorationViewOfKind:(NSString *)kind;

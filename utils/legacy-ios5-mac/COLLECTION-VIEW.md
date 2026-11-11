@@ -1,5 +1,15 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Base context execution (round 148)
+
+Added the base layout's context invalidation entry point and a cache operation that preserves data-source
+counts while marking preparation invalid. A native differential test with a custom layout verifies both empty
+and item-path contexts: prepareLayout runs again, item counts are not queried again. Full/count-invalidating
+contexts use the existing full cache invalidation. The geometry-only primitive's test also remains passing.
+This is limited base execution: content adjustment application and flow-specific invalidation flags/geometry
+are not handled yet; callers must not treat the context API as complete. Existing self-sizing still uses
+its old private invalidation path. The new entry point does not resolve the lifecycle parity failure.
+
 ## Geometry-only collection data invalidation primitive (round 147)
 
 Added an internal `invalidateLayoutAttributes` operation distinct from the existing full invalidation.

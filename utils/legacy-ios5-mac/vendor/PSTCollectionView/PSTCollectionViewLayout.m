@@ -283,6 +283,16 @@
     [_collectionView setNeedsLayout];
 }
 
+- (void)invalidateLayoutWithContext:(PSTCollectionViewLayoutInvalidationContext *)context {
+    NSParameterAssert(context);
+    if (context.invalidateEverything || context.invalidateDataSourceCounts) {
+        [[_collectionView collectionViewData] invalidate];
+    } else {
+        [[_collectionView collectionViewData] invalidateLayoutPreservingItemCounts];
+    }
+    [_collectionView setNeedsLayout];
+}
+
 + (Class)invalidationContextClass { return [PSTCollectionViewLayoutInvalidationContext class]; }
 
 - (PSTCollectionViewLayoutInvalidationContext *)invalidationContextForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
