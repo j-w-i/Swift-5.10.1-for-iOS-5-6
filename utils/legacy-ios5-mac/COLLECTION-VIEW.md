@@ -1,5 +1,23 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## `automaticSize` is a Swift-overlay declaration, not an ObjC runtime symbol (round 178)
+
+Checked whether `UICollectionViewFlowLayout.automaticSize` (iOS 10) is missing on the backported routes.
+Findings:
+
+* It has **no Objective-C class method** - neither the iOS 27 simulator SDK nor this build exposes
+  `+[UICollectionViewFlowLayout automaticSize]`; it is declared in the Swift UIKit overlay only. A client that
+  writes `layout.estimatedItemSize = .automaticSize` therefore needs the *declaration* to be lowered by the
+  compiler below iOS 10, not a method installed at runtime.
+* Its runtime semantics are already implemented and gated on **both** routes: the sentinel
+  `CGSize(CGFLOAT_MAX, CGFLOAT_MAX)` is recognised in the sizing paths (with UIKit's 50x50 seed when the
+  sentinel reaches the estimate), and `run-automatic-size-test.sh` sets exactly that sentinel after changing
+  `itemSize` and passes with 0 sole-item gaps.
+
+So this is **not** a runtime API gap: it is part of the declaration-lowering work that cannot be exercised in
+this environment (no installed `swift_ios5` toolchain; see round 170). Recorded rather than "fixed" by adding a
+fabricated ObjC accessor, which would not match Swift's spelling or availability.
+
 ## Windowed (valid-range) packed layout, phase 1 (round 177)
 
 Implemented the first piece of `SELF-SIZING-VALID-RANGE-PLAN.md`: the packed row builder is now split into
