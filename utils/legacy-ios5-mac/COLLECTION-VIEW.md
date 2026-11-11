@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The gate now compares resolved geometry, and preparation fitting still fails it (round 219)
+
+Acted on round 218's conclusion: `selfsizing-layouts-trace.m` records every step **twice** - as-is, and after
+`settleFully` pushes both engines through repeated layout passes until the content size stops changing. The gate
+now covers 64 steps instead of 32, and the doubled coverage is useful on its own: **0 of 420 visible cell frames
+differ** and **fitted-item parity is 64/64** (it was 32/32 over half the steps).
+
+Two facts came out of it:
+
+1. The one known difference is **genuine, not a placeholder**: after settling, horizontal+narrow still reports
+   707.09 against PST's 773.09. So native really lays that case out narrower; the settled twin of that step is
+   the second allowed deviation, and the gate's allowance is documented as exactly those two.
+2. **Preparation fitting does not converge to native either**: measured against the settled oracle it is 15/32,
+   the same as against the as-is snapshots. Its differences are therefore not transient "native hasn't caught up
+   yet" artefacts - preparation fitting changes PST's *final* sizes. That closes the question of whether the
+   content regression was an artefact of comparison timing: it is not.
+
+So the shipped baseline converges to native's resolved layout on 31 of 32 cases (the exception being the real
+horizontal-narrow difference), while preparation fitting does not converge on half. That is now a measured
+statement rather than an inference.
+
+Committed the settled instrument and the documented allowance; baseline gates green (gate passes with 62/64,
+0/420 frames, 64/64 fitted parity).
+
 ## Native's attributes for unmeasured sections are degenerate (round 218)
 
 Chasing the content inflation under preparation fitting, compared per-section extents in scenario 0:

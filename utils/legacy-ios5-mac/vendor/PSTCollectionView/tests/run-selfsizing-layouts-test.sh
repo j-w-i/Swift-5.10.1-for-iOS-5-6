@@ -37,7 +37,12 @@ print(f"fitted-item sets identical in {tot-fitsBad} of {tot} steps")
 # One scenario still differs in content size at its first step only (horizontal, narrow items): UIKit reports a
 # content width from a layout it has not finished fitting yet. Documented in COLLECTION-VIEW.md; every cell frame,
 # header, visible set and later step matches. The gate allows exactly that one step and nothing else.
-KNOWN=1
+# Every step is recorded twice: as it is, and after forcing both engines to a resolved layout with repeated
+# passes (native leaves unmeasured sections as degenerate placeholders). The settled form is the one that matters,
+# and it confirms the single known difference is genuine rather than a placeholder: horizontal+narrow still
+# reports 707.09 natively against PST's 773.09 after settling. That one step (and its settled twin) is allowed;
+# nothing else is.
+KNOWN=2
 # Fitted-item parity is reported always and enforced by --fit-parity, because a differing set is what the
 # valid-range work is meant to fix (see SELF-SIZING-VALID-RANGE-PLAN.md).
 if gate and (bad>KNOWN or wrong>0): sys.exit(1)
