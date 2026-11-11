@@ -1,5 +1,33 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Per-section estimate: hardware cost on the iPod touch 3 (round 198)
+
+Re-measured the PST route on the iPod touch 3 (iOS 5.1.1) at 5,000 self-sizing items with the per-section
+estimate in place, against round 175's numbers (before it):
+
+| Configuration | then | now |
+| --- | ---: | ---: |
+| no delegate, cold | 147.7 ms | 146.7 ms |
+| no delegate, scroll | 16.9 ms | 16.8 ms |
+| no delegate, reload | 146.7 ms | 146.5 ms |
+| with delegate, cold | 287.5 ms | 301.6 ms |
+| with delegate, scroll | 3.0 ms | 3.2 ms |
+| with delegate, reload | 335.0 ms | 369.9 ms |
+
+The no-delegate path - the one the objective is about - is unchanged within noise. The **delegate** path is about
+5-10% slower on cold and reload. Most likely cost: the per-section accumulator is an `NSMutableDictionary`
+lookup plus an `NSMutableArray` read/write per report, and with a size delegate every item reports. That is a
+plausible regression to remove by keeping per-section sums in a small C array indexed by section (the layout
+knows the section count), which is a contained follow-up rather than a design question.
+
+Honest caveat: single run, one device, no interleaved baseline in the same session - the delegate deltas could
+be partly drift.
+
+**Device hygiene:** 23 of this session's probe apps were still resident on the iPod touch 3 (and had to be
+killed by PID; `killall` by name missed several because the process name differs from the bundle suffix). Both
+iPods are now verified at zero `org.example` processes. No `ps` on iOS 5, so `launchctl list` + PID kill is the
+reliable cleanup recipe.
+
 ## Per-scenario map of the preparation-fitting residual (round 197)
 
 Re-applied the full combination (preparation-time fitting, content-size cache fix, per-section estimate) and
