@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The fit sequence itself is the difference (round 226)
+
+Built the reporting-sequence instrument the last round called for: the trace cell now records
+`(section, item, proposedHeight, reportedHeight)` in report order, per step, in `fitSequence`. First useful output
+(scenario 0, step 1):
+
+    native: (0,5,46,30) (0,6,43.33,46) (0,7,43.71,62) (0,7,62,62) (0,6,46,46) (0,5,30,30)   = 6 fits
+    PST:    (0,5,30,30) (0,6,43.33,46) (0,7,43.33,62) (0,8,43.33,38) (0,5,30,30) (0,6,46,46) (0,7,62,62) = 7
+
+Three concrete differences, all sequence-level rather than value-level:
+
+1. **First proposal for item 5**: native 46, PST 30. Native has already learned something about item 5 before this
+   pass; PST offers the plain estimate.
+2. **Proposal for item 7**: native 43.71, PST 43.33 - different running mean at the moment of the report.
+3. **PST fits an extra item** (8) that native never fits, and therefore carries one more measurement.
+
+This is the first direct evidence for what rounds 224-225 inferred: the difference is in *which cells report, in
+what order, and with what proposal* - not in the arithmetic applied to the answers. It also explains why every
+value-level experiment came out identical: the inputs to those expressions never changed.
+
+Committed the instrument (test-only, gate still green: 62/64 steps, 0 of 420 frames, 64/64 fitted parity).
+
+Next: the ordering rules in `pstMeasureSelfSizingCells` were reconstructed from disassembly and are demonstrably
+close (native's own sequence shows nearest-origin-first then confirmations, 6 fits against PST's 7). The work is to
+make PST report exactly native's sequence - starting with why it offers 30 rather than 46 for item 5, which is a
+statement about when a section's learned sizes are visible to the proposal query.
+
 ## Instrumented the branch: the fit path runs, content is affected, value is not (round 225)
 
 Instrumented the preparation fit on `prep-fit-measurement-path` and found the block does run
