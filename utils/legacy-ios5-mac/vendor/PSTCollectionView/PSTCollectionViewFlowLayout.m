@@ -98,6 +98,7 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     NSMutableArray *_preparedSectionItemCounts;
     BOOL _preparedLayoutIsReusable;
     BOOL _needsPrepareLayout;
+    BOOL _preserveGeometryForContext;
     char filler[200]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 
@@ -381,7 +382,25 @@ static char kPSTCachedItemRectsKey;
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Invalidating the Layout
 
+- (void)invalidateLayoutWithContext:(PSTCollectionViewLayoutInvalidationContext *)context {
+    if (![context isKindOfClass:[PSTCollectionViewFlowLayoutInvalidationContext class]]) {
+        [NSException raise:NSInvalidArgumentException format:@"Flow layout requires a flow-layout invalidation context"];
+    }
+    PSTCollectionViewFlowLayoutInvalidationContext *flowContext = (id)context;
+    BOOL full = context.invalidateEverything || context.invalidateDataSourceCounts;
+    BOOL metrics = full || (flowContext.invalidateFlowLayoutAttributes && flowContext.invalidateFlowLayoutDelegateMetrics);
+    _preserveGeometryForContext = !metrics && _data != nil;
+    if (metrics) {
+        _preparedLayoutIsReusable = NO;
+        [_pstStableMeasuredFrames removeAllObjects];
+        [self pstClearProposalRuns];
+    }
+    _needsPrepareLayout = YES;
+    [super invalidateLayoutWithContext:context];
+}
+
 - (void)invalidateLayout {
+    _preserveGeometryForContext = NO;
     // Explicit app invalidation permits content-driven sizes to change. Internal
     // measurement invalidations retain confirmations for unchanged proposal frames.
     if (!_pstPreservingStableMeasurements) {
@@ -411,6 +430,11 @@ static char kPSTCachedItemRectsKey;
 
 - (void)prepareLayout {
     _needsPrepareLayout = NO;
+    if (_preserveGeometryForContext) {
+        _preserveGeometryForContext = NO;
+        _visibleBounds = self.collectionView.bounds;
+        return;
+    }
 
     if ([self canReusePreparedLayout]) {
         // Same bounds/item size/insets/spacings/section item counts: the existing

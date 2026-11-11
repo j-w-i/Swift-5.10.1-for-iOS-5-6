@@ -1,5 +1,16 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Flow-context delegate metrics (round 150)
+
+Flow now rejects non-flow contexts and distinguishes contexts requesting a delegate-metrics rebuild from
+contexts retaining current geometry. A new native differential case changes a delegate's item height from
+40 to 60 after layout and tests all four attribute/metric flag combinations. Only both flags YES queries
+the delegate again and changes content height 320 to 480; all other combinations keep height 40 and content
+320. PST matches those four cases, and the existing self-sizing stability gate passes. This is deliberately
+limited evidence: attribute-only recomputation of already stored rows, invalidated item-path handling,
+coalesced contexts, and preferred-size incremental updates are not implemented/verified by these cases.
+The current retained-geometry path is not yet the complete native flow invalidation algorithm.
+
 ## Context adjustment timing (round 149)
 
 Base context execution now applies explicit content-size and offset deltas synchronously, before the next
