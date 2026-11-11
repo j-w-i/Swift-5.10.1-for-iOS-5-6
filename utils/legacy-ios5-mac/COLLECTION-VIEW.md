@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Device gate passes again, and a correction to round 238 (round 239)
+
+Re-ran the Apple-route device gate on the iPod touch 5 (iOS 6.1.3) - the device had been locked since round 229.
+It **PASSES, 20 checks, 0 failures**, and this run matters more than the last one because the app compiles
+`UICCollectionViewDisplay.m`, the file round 238 changed. So the fix is verified on real iOS 6 hardware:
+`willDisplayCell` once per visible cell, prefetch behaviour, the iOS 9 accessors, self-sizing at 16020.0,
+animated insert/delete and the visible-cell counts all behave.
+
+**Correction to round 238.** I called the Foundation subscripting an "iOS 5 defect". That was overstated. The
+installation function returns before any of that code can run on iOS 5:
+
+    Class collectionView = objc_getClass("UICollectionView");
+    if (!collectionView) return;   // iOS 5: PSTCollectionView carries this itself
+
+so on an iOS 5 device the display hook is inert and the selector is never sent. The change is still correct and
+worth keeping - `build-backports-runtime.sh` audits *every* object for iOS 6-only selectors, the reference is a
+real one in a library that ships to iOS 5, and the audit is what caught it - but it was a latent-rule violation,
+not a live crash. Recording that rather than leaving the stronger claim standing.
+
 ## Found and fixed a real iOS 5 bug while rebuilding the release runtime (round 238)
 
 Tried the release step that round 237 identified: rebuild the backports runtime so the toolchain's
