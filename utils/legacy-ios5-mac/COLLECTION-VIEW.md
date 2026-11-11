@@ -1093,3 +1093,45 @@ inherited a default-buffered stdout, so a slow run lost its output, and the scri
 after a fixed 8 s while the two animations take longer, then grepped an incomplete file. The test now
 sets `setvbuf(stdout, NULL, _IONBF, 0)` and the runner polls for the `RESULT:` line (up to 40 s) instead
 of sleeping a fixed time. Worth remembering when adding device gates: a fixed sleep is a flaky grep.
+
+### Round 99: what "inject so it swaps in natively" would take
+
+Asked whether the routes could swap automatically the way the Auto Layout backport does. First, a fact
+worth having measured rather than assumed (`nsclass on the iPod touch 3, iOS 5.1.1, PST runtime loaded):
+
+    class named UICollectionView exists at runtime: 1
+      name=UICollectionView superclass=PSUICollectionView_
+      instance=UICollectionView
+      UICollectionViewCell exists: 1; LayoutAttributes: 1
+
+So on iOS 5 the process already exposes classes **named** `UICollectionView`, `UICollectionViewCell`,
+`UICollectionViewLayoutAttributes`, created by PST's constructor through
+`objc_allocateClassPair(PSTClass, "UICollectionView", 0)` (the map in `PSTRegisterClasses`). Class names
+are not the obstacle. The obstacle is that a class created at runtime has no linker symbol, while code
+compiled against Apple's declarations references `_OBJC_CLASS_$_UICollectionView`, which iOS 5's UIKit
+does not export: dyld would fail to bind it (or bind a weak import to nil).
+
+Three ways to close that gap:
+
+1. **Patch iOS 5's UIKit itself** so it exports the classes. That means editing a framework inside the
+   dyld shared cache on the device. Highest blast radius of anything in this project (every app on the
+   device depends on it, and a mistake leaves the device unbootable). Not worth it: the same runtime
+   behaviour is reachable in-process.
+2. **Ship the engine as a dylib that defines the symbols** - build the PST classes under the UIKit names
+   and link the app `-flat_namespace` (or load it with `DYLD_INSERT_LIBRARIES`). On iOS 5 dyld binds the
+   app's `UICollectionView` references to that dylib; on iOS 6+ UIKit is loaded first and exports the same
+   symbols, so dyld binds Apple's and **Apple's implementation wins automatically**. This is the design
+   that actually does what was asked, and it is what upstream PST approximated with
+   `class_setSuperclass` (this kit compiles that out). Costs: renaming the vendored classes for that
+   build, flat-namespace linking (not App Store legal; fine for this kit's deployment), a second symbol
+   definition per class, and re-running every gate on both routes. It also changes what a class symbol
+   means per OS, which is exactly the kind of indirection the compile-time choice avoids on purpose.
+3. **App-level indirection** - `NSClassFromString(@"UICollectionView") ?: NSClassFromString(@"PSTCollectionView")`
+   behind a protocol. No injection, works today, one binary, PST on 5 and native on 6+. Loses Swift's
+   typed API and the compiler's availability lowering.
+
+The Auto Layout backport needs none of this because its API lives on classes that exist on every OS and
+is purely additive (`UICInstallMissingMethods` copies absent selectors); a collection view needs a whole
+engine that is absent on iOS 5. Recommended order if a single artifact is wanted: (3) as an additive
+helper, and (2) only as a deliberate spike on a branch, accepted against the existing gates on the
+iPod touch 3 and the iPod touch 5.
