@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Corrected again: the benchmark never launches, it does not crash (round 243)
+
+Ran the experiment round 242 called for - the same harness **without** `INSTALL_BACKPORT_HOOKS`: still
+`n2launch` result 6, and again no output file. So the hook installation is not the cause.
+
+Then the decisive check: **no new crash log appeared** in `/var/mobile/Library/Logs/CrashReporter/`. The crash
+report I read in round 242 was `PairedBench_2026-11-11-214350`, i.e. from the earlier session, not from these
+launches. So the app is not crashing at all - it is never being started, and result 6 means registration/launch
+failure on the device side.
+
+That corrects two rounds of inference: the abort was not "an ObjC exception during launch", and the `@try/@catch`
+harness wrapper (still committed, harmless and useful) was aimed at a phantom. What is left is a packaging or
+registration difference between this app and the gate app that does launch on the same device with essentially the
+same install steps; the gate app is built and installed by its own runner, so the next step is to diff those two
+install sequences rather than to keep rebuilding the benchmark.
+
+Device cleaned (0 test apps). Performance evidence unchanged: PST at HEAD on the iPod touch 3 (round 230), Apple
+route behaviour-verified on the iPod touch 5 (round 239).
+
 ## Crash log read: it is an uncaught exception at launch, before the harness runs (round 242)
 
 Pulled `LatestCrash-PairedBench.plist` off the iPod touch 5 and parsed it on the host (the device has neither
