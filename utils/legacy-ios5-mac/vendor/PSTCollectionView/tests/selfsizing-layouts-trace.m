@@ -19,13 +19,16 @@
 static BOOL horizontal_,perSection_;
 static NSMutableArray *fitted_;   // [section,item] pairs reported during the current step
 static NSMutableArray *fits_;     // [section,item,proposedH,reportedH] in report order
+static NSMutableArray *allFits_;  // the same, never reset: shows reports made during initial layout
 @interface LC:UICollectionViewCell @end
 @implementation LC
 - (UICollectionViewLayoutAttributes*)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes*)a{
  [fitted_ addObject:@[@(a.indexPath.section),@(a.indexPath.item)]];
  UICollectionViewLayoutAttributes*r=[a copy];CGFloat d=30+((a.indexPath.item*7+a.indexPath.section*3)%5)*8;
  r.size=horizontal_?CGSizeMake(d,a.size.height):CGSizeMake(a.size.width,d);
- [fits_ addObject:@[@(a.indexPath.section),@(a.indexPath.item),@(a.size.height),@(r.size.height)]];return r;}
+ [fits_ addObject:@[@(a.indexPath.section),@(a.indexPath.item),@(a.size.height),@(r.size.height)]];
+ if(!allFits_)allFits_=[NSMutableArray array];
+ [allFits_ addObject:@[@(a.indexPath.section),@(a.indexPath.item),@(a.size.height),@(r.size.height)]];return r;}
 @end
 @interface LH:UICollectionReusableView @end
 @implementation LH @end
@@ -81,7 +84,7 @@ static void snap(NSString*name,UICollectionView*cv,UICollectionViewFlowLayout*l,
  for(NSString*kind in @[UICollectionElementKindSectionHeader,UICollectionElementKindSectionFooter])for(NSIndexPath*p in [[cv indexPathsForVisibleSupplementaryElementsOfKind:kind] sortedArrayUsingSelector:@selector(compare:)]){
   UICollectionReusableView*v=[l.collectionView.subviews filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id o,id b){return [o isKindOfClass:[UICollectionReusableView class]]&&![o isKindOfClass:[UICollectionViewCell class]];}]].firstObject;(void)v;
   UICollectionViewLayoutAttributes*sa=[l layoutAttributesForSupplementaryViewOfKind:kind atIndexPath:p];[suppFrames addObject:@[kind,@(p.section),r4(sa.frame)]];}
- NSDictionary*rec=@{@"step":name,@"fitted":[fitted_ copy],@"rects":rects,@"supp":heads,@"content":r4((CGRect){.size=cv.contentSize}),@"visible":vis,@"cellFrames":cellFrames,@"visibleSupp":suppFrames,@"rectsBySection":keyed?keyed:@{},@"fitSequence":[fits_ copy]};
+ NSDictionary*rec=@{@"step":name,@"fitted":[fitted_ copy],@"rects":rects,@"supp":heads,@"content":r4((CGRect){.size=cv.contentSize}),@"visible":vis,@"cellFrames":cellFrames,@"visibleSupp":suppFrames,@"rectsBySection":keyed?keyed:@{},@"fitSequence":[fits_ copy],@"allFits":[allFits_ copy]};
  puts([[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:rec options:0 error:NULL] encoding:NSUTF8StringEncoding].UTF8String);
  [fits_ removeAllObjects];}
 int main(int argc,char**argv){@autoreleasepool{[UIApplication sharedApplication];setvbuf(stdout,NULL,_IONBF,0);

@@ -146,6 +146,10 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // only has to scan/reorder subviews when this is true; the common cell-only
     // grid must not copy and scan the whole subview array per inserted cell.
     BOOL _pstHasFloatingViews;
+    BOOL _pstDeferWillDisplayForFitting;
+    // Views created in this pass whose willDisplay waits for the fitting transaction: UIKit announces a cell
+    // only after its preferred attributes have been applied, and the fits happen inside that transaction.
+    NSMutableSet *_pstPendingDisplayKeys;
     char filler[232]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 @property (nonatomic, strong) PSTCollectionViewData *collectionViewData;
@@ -1689,6 +1693,10 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 }
 
 - (void)updateVisibleCellsNow:(BOOL)now {
+    // Announce cells only once their preferred attributes are applied: the fitting transaction runs at the end of
+    // this pass, so anything created here waits in _pstPendingDisplayKeys until then.
+    if ([_layout isKindOfClass:[PSTCollectionViewFlowLayout class]] &&
+        [(PSTCollectionViewFlowLayout *)_layout pstUsesSelfSizing]) _pstDeferWillDisplayForFitting = YES;
     PSTCollectionViewStatsCountersStorage[PSTStatPasses]++;
     uint64_t pstPassStart = PSTCollectionViewStatsNowNanoseconds();
 #define PST_STATS_END_PASS() do { \
@@ -1819,7 +1827,23 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _pstLastVisibleBounds = self.bounds;
     _pstVisibleViewsMatchAttributes = YES;
     PST_STATS_END_PASS();
-    [self pstMeasureSelfSizingCells];
+    if ([_layout isKindOfClass:[PSTCollectionViewFlowLayout class]] &&
+        [(PSTCollectionViewFlowLayout *)_layout pstUsesSelfSizing]) {
+        _pstDeferWillDisplayForFitting = YES;
+        [self pstMeasureSelfSizingCells];   // fits first, then announces (see -pstNotifyWillDisplayView:)
+    }
+    _pstDeferWillDisplayForFitting = NO;
+    _pstDeferWillDisplayForFitting = NO;
+    if (_pstPendingDisplayKeys.count) {   // views that never needed a fit are announced as usual
+        NSMutableArray *rest = [NSMutableArray array];
+        for (PSTCollectionViewItemKey *k in [_allVisibleViewsDict allKeys])
+            if ([_pstPendingDisplayKeys containsObject:k]) [rest addObject:k];
+        [rest sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
+            return [a.indexPath compare:b.indexPath]; }];
+        [_pstPendingDisplayKeys removeAllObjects];
+        for (PSTCollectionViewItemKey *k in rest) [self pstNotifyWillDisplayView:[_allVisibleViewsDict objectForKey:k] forKey:k];
+    }
+
     [self pstPrefetchAfterPass];
 }
 #undef PST_STATS_END_PASS
@@ -1983,6 +2007,11 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
                 PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
                 CGSize size = preferred ? preferred.size : proposed.size;
                 if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) changed = YES;
+                // Announced only now: the preferred attributes for this cell have just been applied.
+                if (_pstPendingDisplayKeys.count && [_pstPendingDisplayKeys containsObject:key]) {
+                    [_pstPendingDisplayKeys removeObject:key];
+                    [self pstNotifyWillDisplayView:[_allVisibleViewsDict objectForKey:key] forKey:key];
+                }
             }
             if (changed) {
                 [flow pstInvalidateForPreferredSizeChanges];
@@ -2093,6 +2122,11 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
 /// created, configured and added. Decoration views have no such callback in UIKit.
 - (void)pstNotifyWillDisplayView:(PSTCollectionReusableView *)view forKey:(PSTCollectionViewItemKey *)key {
     if (!view || !key) return;
+    if (_pstDeferWillDisplayForFitting) {
+        if (!_pstPendingDisplayKeys) _pstPendingDisplayKeys = [NSMutableSet set];
+        [_pstPendingDisplayKeys addObject:key];
+        return;
+    }
     if (key.type == PSTCollectionViewItemTypeCell) {
         if (_collectionViewFlags.delegateWillDisplayCell)
             [self.delegate collectionView:self willDisplayCell:(PSTCollectionViewCell *)view forItemAtIndexPath:key.indexPath];
