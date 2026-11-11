@@ -1601,3 +1601,35 @@ the measured items as sparse overrides, so a rebuild is O(rows plus measured ite
 O(items). Rows holding a measured item need a full row layout; the rest can be uniform. This touches
 `PSTGridLayoutSection`, row alignment and the proposal cache, and must keep the stepped-geometry
 traces and the centering matrix passing. Not started.
+
+### Correction: the "no delegate" native column above is not self-sizing; Apple-route gap found
+
+The probe now prints the content height at cold layout. On the iPod touch 5 (iOS 6.1.3, Apple's
+`UICollectionView` plus the backport hooks), **without a delegate the layout is not self-sizing**:
+
+| Items | iOS 27 simulator (real self-sizing) | Apple route on iOS 6.1.3 | PST on iOS 6.1.3 |
+| ---: | ---: | ---: | ---: |
+| 200 | 10,933 | **2,000** | 10,880 |
+| 1,000 | 54,667 | **10,000** | 54,400 |
+| 5,000 | 273,333 | **50,000** | 272,014 |
+
+2,000 for 200 items is the default 50x50 `itemSize` in a six-column grid, so `estimatedItemSize` was
+ignored. The cause is in `UICCollectionViewDisplay.m`: self-sizing works by injecting
+`collectionView:layout:sizeForItemAtIndexPath:` into the delegate's class, and `UICInstallSizeHook`
+returns immediately when the collection view has no delegate. iOS 8+ self-sizes with no delegate.
+
+Consequences, stated plainly:
+- **The 1.0x-15.6x "no delegate" ratios in the previous section are invalid.** They compared PST's real
+  self-sizing against a fixed grid on the Apple route. The flat ~38 ms native curve was a uniform-grid
+  fast path, not lazy measurement. The earlier hypothesis was right and the previous section's
+  "unexplained 100 vs 19 fitting calls" is explained: the grid is 50 pt cells, so 50 are visible.
+- **The "with delegate" columns are valid.** Both engines do real per-item work there: PST/native
+  0.57-1.24 on the same iPod touch 5, content heights identical (11,564 / 57,982 / 289,970).
+- **Open defect on the Apple route (iOS 6-9):** `estimatedItemSize` without a delegate does not
+  self-size. The existing device test sets a delegate, which is why it passed. A fix needs the layout to
+  receive per-item sizes without an app delegate, for example an internal delegate that the `delegate`
+  getter hides, which has side effects on scroll-view delegate forwarding. Not fixed; needs its own
+  design and a test that leaves the delegate nil.
+
+The earlier statement that PST "measures every item up front" was already corrected: the cost that
+grows is the O(items) layout rebuild, not item measurement.
