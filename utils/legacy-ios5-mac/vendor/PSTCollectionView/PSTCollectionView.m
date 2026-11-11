@@ -716,8 +716,14 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // the key/value retain-and-release work on every reload.
     NSDictionary *retiring = _allVisibleViewsDict;
     _allVisibleViewsDict = [NSMutableDictionary new];
-    [retiring enumerateKeysAndObjectsUsingBlock:^(PSTCollectionViewItemKey *key, id obj, BOOL *stop) {
-        if (![obj isKindOfClass:UIView.class]) return;
+    // UIKit retires in index order; dictionary order is arbitrary.
+    NSArray *retiringKeys = [[retiring allKeys] sortedArrayUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *x, PSTCollectionViewItemKey *y) {
+        if (x.type != y.type) return x.type < y.type ? NSOrderedAscending : NSOrderedDescending;
+        return [x.indexPath compare:y.indexPath];
+    }];
+    for (PSTCollectionViewItemKey *key in retiringKeys) {
+        id obj = [retiring objectForKey:key];
+        if (![obj isKindOfClass:UIView.class]) continue;
         PSTCollectionReusableView *view = obj;
         [view removeFromSuperview];
         if (key.type == PSTCollectionViewItemTypeCell) {
@@ -733,7 +739,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [self.delegate collectionView:self didEndDisplayingSupplementaryView:view forElementOfKind:key.identifier atIndexPath:key.indexPath];
             [self reuseDecorationView:view];
         }
-    }];
+    }
 
     for (NSIndexPath *indexPath in _indexPathsForSelectedItems) {
         PSTCollectionViewCell *selectedCell = [self cellForItemAtIndexPath:indexPath];
@@ -1673,10 +1679,66 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         [_pstVisibleItemKeysScratch removeAllObjects];
     }
 
+    // Collect the new visible key set first: UIKit retires views leaving the
+    // rect (didEndDisplaying, in index order) before it displays arriving ones.
+    for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
+        [_pstVisibleItemKeysScratch addObject:[PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes]];
+    }
+
+    // Detect what items should be removed and queued back.  The previous code
+    // allocated two NSSets and two NSArrays per pass just to compute this set
+    // difference; the scratch array keeps the collection order and allocation
+    // out of the steady-state path.
+    if (!_pstVisibleItemKeysToRemoveScratch) {
+        _pstVisibleItemKeysToRemoveScratch = [NSMutableArray array];
+    } else {
+        [_pstVisibleItemKeysToRemoveScratch removeAllObjects];
+    }
+    NSEnumerator *visibleKeyEnumerator = [_allVisibleViewsDict keyEnumerator];
+    PSTCollectionViewItemKey *candidateKey = nil;
+    while ((candidateKey = [visibleKeyEnumerator nextObject]) != nil) {
+        if (![_pstVisibleItemKeysScratch containsObject:candidateKey]) {
+            [_pstVisibleItemKeysToRemoveScratch addObject:candidateKey];
+        }
+    }
+
+    // Retire views that left the rect, ascending like UIKit, before adding arrivals.
+    if (_pstVisibleItemKeysToRemoveScratch.count > 1)
+        [_pstVisibleItemKeysToRemoveScratch sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *x, PSTCollectionViewItemKey *y) {
+            if (x.type != y.type) return x.type < y.type ? NSOrderedAscending : NSOrderedDescending;
+            return [x.indexPath compare:y.indexPath];
+        }];
+    for (PSTCollectionViewItemKey *itemKey in _pstVisibleItemKeysToRemoveScratch) {
+        PSTCollectionReusableView *reusableView = [_allVisibleViewsDict objectForKey:itemKey];
+        if (reusableView) {
+            [reusableView removeFromSuperview];
+            [_allVisibleViewsDict removeObjectForKey:itemKey];
+            if (itemKey.type == PSTCollectionViewItemTypeCell) {
+                if (_collectionViewFlags.delegateDidEndDisplayingCell) {
+                    [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)reusableView forItemAtIndexPath:itemKey.indexPath];
+                }
+                [self reuseCell:(PSTCollectionViewCell *)reusableView];
+            }
+            else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView) {
+                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
+                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
+                }
+                [self reuseSupplementaryView:reusableView];
+            }
+            else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
+                // UIKit routes retiring decorations through the reusable-view
+                // end-display callback too; the kind identifies the decoration.
+                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
+                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
+                }
+                [self reuseDecorationView:reusableView];
+            }
+        }
+    }
+
     // Add new cells.
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
         PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
-        [_pstVisibleItemKeysScratch addObject:itemKey];
 
         // check if cell is in visible dict; add it if not.
         PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:itemKey];
@@ -1707,52 +1769,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             if (!PSTLayoutAttributesAlreadyApplied(layoutAttributes, view)) {
                 PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
                 [view applyLayoutAttributes:layoutAttributes];
-            }
-        }
-    }
-
-    // Detect what items should be removed and queued back.  The previous code
-    // allocated two NSSets and two NSArrays per pass just to compute this set
-    // difference; the scratch array keeps the collection order and allocation
-    // out of the steady-state path.
-    if (!_pstVisibleItemKeysToRemoveScratch) {
-        _pstVisibleItemKeysToRemoveScratch = [NSMutableArray array];
-    } else {
-        [_pstVisibleItemKeysToRemoveScratch removeAllObjects];
-    }
-    NSEnumerator *visibleKeyEnumerator = [_allVisibleViewsDict keyEnumerator];
-    PSTCollectionViewItemKey *candidateKey = nil;
-    while ((candidateKey = [visibleKeyEnumerator nextObject]) != nil) {
-        if (![_pstVisibleItemKeysScratch containsObject:candidateKey]) {
-            [_pstVisibleItemKeysToRemoveScratch addObject:candidateKey];
-        }
-    }
-
-    // Finally remove views that have not been processed and prepare them for re-use.
-    for (PSTCollectionViewItemKey *itemKey in _pstVisibleItemKeysToRemoveScratch) {
-        PSTCollectionReusableView *reusableView = [_allVisibleViewsDict objectForKey:itemKey];
-        if (reusableView) {
-            [reusableView removeFromSuperview];
-            [_allVisibleViewsDict removeObjectForKey:itemKey];
-            if (itemKey.type == PSTCollectionViewItemTypeCell) {
-                if (_collectionViewFlags.delegateDidEndDisplayingCell) {
-                    [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)reusableView forItemAtIndexPath:itemKey.indexPath];
-                }
-                [self reuseCell:(PSTCollectionViewCell *)reusableView];
-            }
-            else if (itemKey.type == PSTCollectionViewItemTypeSupplementaryView) {
-                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
-                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
-                }
-                [self reuseSupplementaryView:reusableView];
-            }
-            else if (itemKey.type == PSTCollectionViewItemTypeDecorationView) {
-                // UIKit routes retiring decorations through the reusable-view
-                // end-display callback too; the kind identifies the decoration.
-                if (_collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
-                    [self.delegate collectionView:self didEndDisplayingSupplementaryView:reusableView forElementOfKind:itemKey.identifier atIndexPath:itemKey.indexPath];
-                }
-                [self reuseDecorationView:reusableView];
             }
         }
     }
