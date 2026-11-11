@@ -71,7 +71,7 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     CGRect _preRotationBounds;
     CGPoint _rotationBoundsOffset;
     int _rotationAnimationCount;
-    int _pstSelfSizingRounds;
+    BOOL _pstMeasuringSelfSizing;
     // Prefetching (iOS 10): items already announced and not yet displayed, and where the last pass stood.
     NSMutableSet *_pstPrefetchedIndexPaths;
     CGPoint _pstPrefetchLastOrigin;
@@ -1902,37 +1902,78 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     }
 }
 
-/// Self-sizing cells (flow layout estimatedItemSize). Each visible cell that has not yet reported a size
-/// equal to the laid out one is asked for its preferred attributes. If any answers with a different size
-/// the layout is invalidated so it is rebuilt with the measured sizes; the next pass re-measures, and a
-/// cell whose answer matches is left alone while its proposal frame and configuration remain valid.
-/// Bounded, so a cell whose size depends on its own frame cannot loop forever.
+/// Self-sizing cells (flow layout estimatedItemSize). Visible cells whose size is not yet confirmed for their
+/// proposal are asked for their preferred attributes, and the layout is rebuilt with the answers.
+///
+/// UIKit does this in several small steps rather than one: it fits the cells nearest the visible origin first,
+/// and about half of the cells it has not fitted yet per step, then relays out so the next step's proposals
+/// already reflect the sizes just learned. The order and step size decide which proposals each cell sees and
+/// so the final geometry; matching them reproduces UIKit's frames. Confirmations (a cell whose answer equals
+/// its proposal) are cheap and are checked last, in index order.
+///
+/// Bounded: a cell is fitted at most PSTSelfSizingAttemptsPerCell times and a transaction runs at most
+/// PSTSelfSizingMaxPasses passes, so a cell whose size depends on its own frame cannot loop forever.
+enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
+
 - (void)pstMeasureSelfSizingCells {
-    if (![_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) return;
+    if (_pstMeasuringSelfSizing || ![_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) return;
     PSTCollectionViewFlowLayout *flow = (PSTCollectionViewFlowLayout *)_layout;
-    if (![flow pstUsesSelfSizing]) { _pstSelfSizingRounds = 0; return; }
-    if (_pstSelfSizingRounds >= 6) { _pstSelfSizingRounds = 0; return; }
-    BOOL changed = NO;
-    NSArray *keys = [_allVisibleViewsDict allKeys];
-    for (PSTCollectionViewItemKey *key in keys) {
-        if (key.type != PSTCollectionViewItemTypeCell) continue;
-        PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
-        PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
-        if (!cell || !proposed) continue;
-        if ([flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) continue;
-        PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
-        CGSize size = preferred ? preferred.size : proposed.size;
-        if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) changed = YES;
-    }
-    if (changed) {
-        _pstSelfSizingRounds++;
-        [flow pstInvalidateForPreferredSizeChanges];
-        [_collectionViewData validateLayoutInRect:self.bounds];
-        [self updateVisibleCellsNow:YES];
-        CGSize contentSize = [_collectionViewData collectionViewContentRect].size;
-        if (!CGSizeEqualToSize(self.contentSize, contentSize)) self.contentSize = contentSize;
-    } else {
-        _pstSelfSizingRounds = 0;
+    if (![flow pstUsesSelfSizing]) return;
+    _pstMeasuringSelfSizing = YES;   // a relayout inside this transaction must not start another
+    NSMutableDictionary *attempts = [NSMutableDictionary dictionary];
+    @try {
+        for (NSUInteger pass = 0; pass < PSTSelfSizingMaxPasses; pass++) {
+            NSMutableArray *fresh = [NSMutableArray array], *confirm = [NSMutableArray array];
+            for (PSTCollectionViewItemKey *key in [_allVisibleViewsDict allKeys]) {
+                if (key.type != PSTCollectionViewItemTypeCell) continue;
+                PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
+                PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
+                if (!cell || !proposed) continue;
+                if ([flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) continue;
+                NSUInteger tries = [[attempts objectForKey:key.indexPath] unsignedIntegerValue];
+                if (tries >= PSTSelfSizingAttemptsPerCell) continue;
+                [(tries ? confirm : fresh) addObject:key];
+            }
+            if (!fresh.count && !confirm.count) break;
+
+            NSArray *chosen;
+            if (fresh.count) {
+                const CGPoint origin = self.bounds.origin;
+                [fresh sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
+                    CGPoint x = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:a]).layoutAttributes.frame.origin;
+                    CGPoint y = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:b]).layoutAttributes.frame.origin;
+                    CGFloat da = (x.x - origin.x) * (x.x - origin.x) + (x.y - origin.y) * (x.y - origin.y);
+                    CGFloat db = (y.x - origin.x) * (y.x - origin.x) + (y.y - origin.y) * (y.y - origin.y);
+                    if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
+                    return [a.indexPath compare:b.indexPath];
+                }];
+                chosen = [fresh subarrayWithRange:NSMakeRange(0, MAX((NSUInteger)1, fresh.count / 2))];
+            } else {
+                [confirm sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) { return [a.indexPath compare:b.indexPath]; }];
+                chosen = confirm;
+            }
+
+            BOOL changed = NO;
+            for (PSTCollectionViewItemKey *key in chosen) {
+                PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
+                PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
+                if (!cell || !proposed) continue;
+                NSUInteger tries = [[attempts objectForKey:key.indexPath] unsignedIntegerValue];
+                [attempts setObject:@(tries + 1) forKey:key.indexPath];
+                PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
+                CGSize size = preferred ? preferred.size : proposed.size;
+                if ([flow pstRecordPreferredSize:size forItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) changed = YES;
+            }
+            if (changed) {
+                [flow pstInvalidateForPreferredSizeChanges];
+                [_collectionViewData validateLayoutInRect:self.bounds];
+                [self updateVisibleCellsNow:YES];
+                CGSize contentSize = [_collectionViewData collectionViewContentRect].size;
+                if (!CGSizeEqualToSize(self.contentSize, contentSize)) self.contentSize = contentSize;
+            }
+        }
+    } @finally {
+        _pstMeasuringSelfSizing = NO;
     }
 }
 

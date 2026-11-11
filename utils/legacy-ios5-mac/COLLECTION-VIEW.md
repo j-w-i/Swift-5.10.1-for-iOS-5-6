@@ -1924,3 +1924,54 @@ automatic size and nine batch-insert gates.
 Simulator, 5,000 items, no delegate: cold 3.4 -> 0.45 ms, scroll 0.91 -> 0.11 ms, reload 5.4 -> 0.60 ms.
 With a size delegate: cold 2.5 -> 1.2 ms, reload 2.8 -> 1.1 ms (the delegate round trips remain). No
 hardware measurement yet.
+
+### Promoted: UIKit's stepped self-sizing geometry, now faster than before
+
+With packed storage making a rebuild cheap, the scheduling prototype could be promoted into the runtime.
+The measurement pass in `PSTCollectionView` now works as UIKit does: it fits the visible cells nearest
+the origin first, about half of the not-yet-fitted cells per step, relayouts between steps, and confirms
+the rest last. In the flow layout, unmeasured proposals are kept as a few breakpoints (`PSTProposalRun`)
+rather than one value per item: after a preferred-size batch the new running mean applies from one row
+before the earliest changed item onward, earlier estimates stay, and a first report equal to its proposal
+leaves the item an estimate. Origins are rounded to pixels and the content size to points. The pass is
+bounded: at most 6 fittings per cell and 256 passes per transaction. New gate
+`run-selfsizing-bounds-test.sh`: a cell that never converges stops after 18 fittings instead of hanging.
+
+**Geometry against iOS 27 UIKit**, over the same ten stepped fixtures (3,600 item rectangles):
+
+| | Fixtures exact | Rectangles differing |
+| --- | ---: | ---: |
+| Before | 0 of 10 | 2,290 (63.6%) |
+| Now | **8 of 10** | **417 (11.6%)** |
+
+Two fixtures remain inexact (a one-column case at viewport 60 where fitting order differs for one item,
+and a three-column grid at viewport 120). Every other gate passes: geometry golden, centering,
+stability, first-layout proposal, display order, supplementary display, hidden items, cell resize,
+attribute snapshots, mutation, delegate sizing, automatic size (now 0 subpixel differences), prefetch
+lifecycle and the nine batch-insert scenarios.
+
+**Cost, measured on hardware**, 5,000 self-sizing items, one launch, promoted code against the previous
+commit (which had neither packing nor the new scheduler):
+
+| Device, no delegate | Cold | Scroll | Reload |
+| --- | ---: | ---: | ---: |
+| iPod touch 3 (iOS 5.1.1) | 719 -> 142 ms | 225 -> 16 ms | 1,317 -> 147 ms |
+| iPod touch 5 (iOS 6.1.3) | 261 -> 62 ms | 94 -> 7 ms | 511 -> 63 ms |
+
+With a size delegate: cold 0.49-0.58x, reload 0.43-0.45x, scroll unchanged within noise (about 1-3 ms).
+
+**Paired against the Apple route, iPod touch 5** (interleaved, median of 9 pairs, 5 at 5,000), PST / native:
+
+| Items | Self-size + delegate: cold / reload / batch | No delegate: cold / reload / batch |
+| ---: | --- | --- |
+| 200 | 0.61 / 0.27 / 0.44 | 0.57 / 0.28 / 0.39 |
+| 1,000 | 0.51 / 0.22 / 0.37 | 0.30 / 0.14 / 0.30 |
+| 5,000 | 0.49 / 0.29 / n/a | 0.21 / 0.15 / n/a |
+
+Fixed-size workloads are unchanged (cold 0.87-1.00, reload 0.07-0.77, batch 0.49-0.55). **No paired
+cell is now above 1.0 except fixed-size cold at 1,000 items, which is 1.00.**
+
+Limits: 8 of 10 fixtures exact, not 10; the model is fitted to native behaviour observed on one-column
+and fixed-width two- and three-column grids, with unit-size estimates, and is not validated for
+multiple sections, horizontal flow, variable widths or sections with headers. The Apple route here is
+stock iOS 6.1.3 plus the backport hooks. The iPhone 6 was not run.

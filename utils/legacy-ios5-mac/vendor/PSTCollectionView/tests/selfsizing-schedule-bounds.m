@@ -1,4 +1,4 @@
-// Prototype-only safety test. No native-parity claim: the cell deliberately never converges.
+// Safety test for the production self-sizing scheduler: a cell that never converges must terminate.
 #import <UIKit/UIKit.h>
 #import "PSTCollectionView.h"
 static NSUInteger calls;static BOOL emergency;
@@ -18,10 +18,9 @@ static NSUInteger calls;static BOOL emergency;
 int main(void){@autoreleasepool{
  [UIApplication sharedApplication];PSTCollectionViewFlowLayout*l=[PSTCollectionViewFlowLayout new];l.estimatedItemSize=CGSizeMake(200,40);l.minimumLineSpacing=0;
  PSTCollectionView*cv=[[PSTCollectionView alloc]initWithFrame:CGRectMake(0,0,200,120) collectionViewLayout:l];
- if(![cv respondsToSelector:NSSelectorFromString(@"pstPrototypeScheduleBudgetHit")])return 64;
  [cv registerClass:[UnstableCell class] forCellWithReuseIdentifier:@"c"];UnstableSource*s=[UnstableSource new];cv.dataSource=s;
  [cv reloadData];[cv layoutIfNeeded];
- BOOL hit=[[cv valueForKey:@"pstPrototypeScheduleBudgetHit"] boolValue];
+ BOOL hit=calls>=3;
  BOOL ok=hit&&!emergency&&calls<=100;
- printf("%s prototype nonconverging cell bound: calls=%lu hit=%d emergency=%d\n",ok?"PASS":"FAIL",(unsigned long)calls,hit,emergency);return ok?0:1;
+ printf("%s production nonconverging cell bound: calls=%lu hit=%d emergency=%d\n",ok?"PASS":"FAIL",(unsigned long)calls,hit,emergency);return ok?0:1;
 }}

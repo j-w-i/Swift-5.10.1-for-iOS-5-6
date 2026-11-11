@@ -14,6 +14,7 @@
 #import <objc/runtime.h>
 
 #import "PSTCollectionViewStats.h"
+#include <math.h>
 
 NSString *const PSTCollectionElementKindSectionHeader = @"UICollectionElementKindSectionHeader";
 NSString *const PSTCollectionElementKindSectionFooter = @"UICollectionElementKindSectionFooter";
@@ -23,7 +24,25 @@ NSString *const PSTFlowLayoutCommonRowHorizontalAlignmentKey = @"UIFlowLayoutCom
 NSString *const PSTFlowLayoutLastRowHorizontalAlignmentKey = @"UIFlowLayoutLastRowHorizontalAlignmentKey";
 NSString *const PSTFlowLayoutRowVerticalAlignmentKey = @"UIFlowLayoutRowVerticalAlignmentKey";
 
+// Proposal for items no cell has reported on. UIKit proposes the running mean of the reported sizes, and after a
+// preferred-size invalidation it applies the new mean from one row before the earliest invalidated item onward,
+// keeping the earlier estimates. That is kept as a few breakpoints (first item, size), not a value per item.
+typedef struct { NSInteger section, item; CGSize size; } PSTProposalRun;
+static BOOL PSTProposalRunBefore(PSTProposalRun r, NSInteger section, NSInteger item) {
+    return r.section < section || (r.section == section && r.item < item);
+}
+// Self-sizing origins are laid out on pixel boundaries and the content size in whole points; preferred sizes
+// stay fractional.
+static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
+    r.origin.x = round(r.origin.x * scale) / scale;
+    r.origin.y = round(r.origin.y * scale) / scale;
+    return r;
+}
+
 @implementation PSTCollectionViewFlowLayout {
+    NSMutableData *_pstProposalRuns;
+    NSUInteger _pstProposalRunCount;
+    NSIndexPath *_pstEarliestChangedPath;        // earliest path whose preferred size changed since the last batch
     // class needs to have same iVar layout as UICollectionViewLayout
     struct {
         unsigned int delegateSizeForItem : 1;
@@ -156,11 +175,17 @@ static char kPSTCachedItemRectsKey;
     // Apple calls _layoutAttributesForItemsInRect
     if (!_data || _needsPrepareLayout) [self prepareLayout];
 
+    // Packed (self-sizing) origins are rounded to pixels after layout, so rows that only touch the rect by less than a
+    // pixel before rounding are still searched.
+    const CGFloat pstScale = [UIScreen mainScreen].scale;
+    BOOL pstAnyPacked = NO;
+    for (PSTGridLayoutSection *s in _data.sections) if (s.packed) { pstAnyPacked = YES; break; }
+    const CGRect pstSearch = pstAnyPacked ? CGRectInset(rect, -1 / pstScale, -1 / pstScale) : rect;
     NSMutableArray *layoutAttributesArray = [NSMutableArray array];
     NSUInteger pstSectionCursor = 0;
     for (PSTGridLayoutSection *section in _data.sections) {
         NSUInteger pstSectionIndex = pstSectionCursor++;
-        if (CGRectIntersectsRect(section.frame, rect)) {
+        if (CGRectIntersectsRect(section.frame, pstSearch)) {
 
             // if we have fixed size, calculate item frames only once.
             // this also uses the default PSTFlowLayoutCommonRowHorizontalAlignmentKey alignment
@@ -189,8 +214,8 @@ static char kPSTCachedItemRectsKey;
             // testing every row of the section on every scroll step.
             NSUInteger pstRowCount = (NSUInteger)[section rowCount];
             BOOL pstHorizontal = _data.horizontal;
-            CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(rect) : CGRectGetMinY(rect);
-            CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(rect) : CGRectGetMaxY(rect);
+            CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(pstSearch) : CGRectGetMinY(pstSearch);
+            CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(pstSearch) : CGRectGetMaxY(pstSearch);
             CGFloat pstSectionOrigin = pstHorizontal ? section.frame.origin.x : section.frame.origin.y;
             NSUInteger pstLow = 0, pstHigh = pstRowCount;
             while (pstLow < pstHigh) {
@@ -207,7 +232,7 @@ static char kPSTCachedItemRectsKey;
                 normalizedRowFrame.origin.y += section.frame.origin.y;
 
                 if ((pstHorizontal ? CGRectGetMinX(normalizedRowFrame) : CGRectGetMinY(normalizedRowFrame)) > pstRectMax) break;
-                if (CGRectIntersectsRect(normalizedRowFrame, rect)) {
+                if (CGRectIntersectsRect(normalizedRowFrame, pstSearch)) {
                     // TODO be more fine-grained for items
 
                     const BOOL pstPacked = section.packed;
@@ -231,6 +256,7 @@ static char kPSTCachedItemRectsKey;
                         }
 
                         CGRect normalisedItemFrame = CGRectMake(normalizedRowFrame.origin.x + itemFrame.origin.x, normalizedRowFrame.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);
+                        if (pstPacked) normalisedItemFrame = PSTPixelOrigin(normalisedItemFrame, pstScale);
 
                         if (CGRectIntersectsRect(normalisedItemFrame, rect)) {
                             layoutAttributes = [[self.class layoutAttributesClass] layoutAttributesForCellWithIndexPath:[NSIndexPath indexPathForRow:(NSInteger)sectionItemIndex inSection:(NSInteger)sectionIndex]];
@@ -272,7 +298,7 @@ static char kPSTCachedItemRectsKey;
         CGRect packedRow = [section rowCount] > pstRowNumber ? [section rowFrameAtIndex:pstRowNumber] : CGRectZero;
         packedRow.origin.x += section.frame.origin.x;
         packedRow.origin.y += section.frame.origin.y;
-        packedAttributes.frame = CGRectMake(packedRow.origin.x + itemFrame.origin.x, packedRow.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);
+        packedAttributes.frame = PSTPixelOrigin(CGRectMake(packedRow.origin.x + itemFrame.origin.x, packedRow.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height), [UIScreen mainScreen].scale);
         return packedAttributes;
     }
     if (section.fixedItemSize && section.itemsByRowCount > 0 && indexPath.row / section.itemsByRowCount < [section rowCount]) {
@@ -335,7 +361,10 @@ static char kPSTCachedItemRectsKey;
 - (CGSize)collectionViewContentSize {
     if (!_data || _needsPrepareLayout) [self prepareLayout];
 
-    return _data.contentSize;
+    CGSize result = _data.contentSize;
+    BOOL anyPacked = NO;
+    for (PSTGridLayoutSection *s in _data.sections) if (s.packed) { anyPacked = YES; break; }
+    return anyPacked ? CGSizeMake(round(result.width), round(result.height)) : result;
 }
 
 - (void)setSectionInset:(UIEdgeInsets)sectionInset {
@@ -351,7 +380,10 @@ static char kPSTCachedItemRectsKey;
 - (void)invalidateLayout {
     // Explicit app invalidation permits content-driven sizes to change. Internal
     // measurement invalidations retain confirmations for unchanged proposal frames.
-    if (!_pstPreservingStableMeasurements) [_pstStableMeasuredFrames removeAllObjects];
+    if (!_pstPreservingStableMeasurements) {
+        [_pstStableMeasuredFrames removeAllObjects];
+        [self pstClearProposalRuns];
+    }
     [super invalidateLayout];
     objc_setAssociatedObject(self, &kPSTCachedItemRectsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Keep _data: prepareLayout will verify the prepared-generation token and
@@ -418,6 +450,54 @@ static char kPSTCachedItemRectsKey;
     [_pstMeasuredItemSizes removeAllObjects];
     [_pstStableMeasuredFrames removeAllObjects];
     _pstMeasuredSizeSum = CGSizeZero; _pstMeasuredSizeCount = 0;
+    [self pstClearProposalRuns];
+}
+
+- (void)pstClearProposalRuns {
+    [_pstProposalRuns setLength:0]; _pstProposalRunCount = 0; _pstEarliestChangedPath = nil;
+}
+
+- (CGSize)pstProposalAtSection:(NSInteger)section item:(NSInteger)item {
+    if (!_pstProposalRunCount) return _pstProposalAtLayout;
+    const PSTProposalRun *runs = _pstProposalRuns.bytes;
+    NSUInteger lo = 0, hi = _pstProposalRunCount;     // last run starting at or before (section, item)
+    while (lo < hi) {
+        NSUInteger mid = lo + (hi - lo) / 2;
+        if (PSTProposalRunBefore(runs[mid], section, item) || (runs[mid].section == section && runs[mid].item == item)) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo ? runs[lo - 1].size : _pstProposalAtLayout;
+}
+
+/// Called once per preferred-size invalidation batch: applies the current mean from one row before the
+/// earliest changed item. Rows are taken from the layout built for the batch that just measured.
+- (void)pstApplyProposalForChangedItems {
+    NSIndexPath *path = _pstEarliestChangedPath; _pstEarliestChangedPath = nil;
+    if (!path || !_pstMeasuredSizeCount || [self pstDelegateProvidesSizes]) return;
+    NSInteger section = path.section, item = path.item, first = 0;
+    if (section >= 0 && section < (NSInteger)_data.sections.count) {
+        PSTGridLayoutSection *s = [_data.sections objectAtIndex:(NSUInteger)section];
+        if (s.packed && item >= 0 && item < s.itemsCount) {
+            NSInteger previous = MAX(0, [s packedRowOfItem:item] - 1);
+            first = [s packedFirstItemOfRow:previous];
+        }
+    }
+    if (!_pstProposalRuns) _pstProposalRuns = [NSMutableData data];
+    if (!_pstProposalRunCount) {
+        PSTProposalRun seed = {0, 0, _pstProposalAtLayout};
+        [_pstProposalRuns appendBytes:&seed length:sizeof seed]; _pstProposalRunCount = 1;
+    }
+    CGSize mean = CGSizeMake(_pstMeasuredSizeSum.width / (CGFloat)_pstMeasuredSizeCount, _pstMeasuredSizeSum.height / (CGFloat)_pstMeasuredSizeCount);
+    const PSTProposalRun *runs = _pstProposalRuns.bytes;
+    NSUInteger keep = 0;
+    while (keep < _pstProposalRunCount && PSTProposalRunBefore(runs[keep], section, first)) keep++;
+    BOOL coalesce = keep && CGSizeEqualToSize(runs[keep - 1].size, mean);
+    [_pstProposalRuns setLength:keep * sizeof(PSTProposalRun)];
+    _pstProposalRunCount = keep;
+    if (!coalesce) {
+        PSTProposalRun next = {section, first, mean};
+        [_pstProposalRuns appendBytes:&next length:sizeof next]; _pstProposalRunCount++;
+    }
 }
 
 /// The layout's current size for an item: what its cell last reported, else the estimate.
@@ -433,6 +513,7 @@ static char kPSTCachedItemRectsKey;
         [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:seed] forKey:indexPath];
         return seed;
     }
+    if (_pstMeasuredSizeCount) return [self pstProposalAtSection:indexPath.section item:indexPath.item];
     return [self pstUnmeasuredProposal];
 }
 
@@ -460,9 +541,13 @@ static char kPSTCachedItemRectsKey;
         BOOL wasMeasured3 = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
         CGSize old3 = wasMeasured3 ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
         [_pstStableMeasuredFrames setObject:[NSValue valueWithCGRect:frame] forKey:indexPath];
-        [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
-        // A delegate seed is stored as a measurement but is not a cell report.
-        if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:wasMeasured3 ? &old3 : NULL];
+        // A first report equal to the proposal leaves the item an estimate, as UIKit does; only a report that
+        // differs from its proposal is retained and feeds the mean. A delegate seed is stored as a measurement
+        // but is not a cell report.
+        if (wasMeasured3 || [self pstDelegateProvidesSizes]) {
+            [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+            if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:&old3];
+        }
         return NO;
     }
     BOOL wasMeasured = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
@@ -470,6 +555,7 @@ static char kPSTCachedItemRectsKey;
     [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
     [_pstStableMeasuredFrames removeObjectForKey:indexPath];
     [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];
+    if (!_pstEarliestChangedPath || [indexPath compare:_pstEarliestChangedPath] == NSOrderedAscending) _pstEarliestChangedPath = indexPath;
     return YES;
 }
 
@@ -485,7 +571,8 @@ static char kPSTCachedItemRectsKey;
 
 - (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame {
     NSValue *confirmed = [_pstStableMeasuredFrames objectForKey:indexPath];
-    return confirmed && CGRectEqualToRect([confirmed CGRectValue], frame);
+    // An item that never changed from its estimate has no retained size to compare; its confirmation stands.
+    return confirmed && (![_pstMeasuredItemSizes objectForKey:indexPath] || CGRectEqualToRect([confirmed CGRectValue], frame));
 }
 
 - (void)pstForgetStableMeasurementForItemAtIndexPath:(NSIndexPath *)indexPath {
@@ -494,6 +581,7 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (void)pstInvalidateForPreferredSizeChanges {
+    [self pstApplyProposalForChangedItems];
     BOOL previous = _pstPreservingStableMeasurements;
     _pstPreservingStableMeasurements = YES;
     @try { [self invalidateLayout]; } // preserve subclass invalidation overrides
@@ -576,6 +664,7 @@ static char kPSTCachedItemRectsKey;
 - (void)fetchItemsInfo {
     // Freeze the mean of reported sizes for this rebuild (see pstSizeForSelfSizing...).
     if (_pstMeasuredSizeCount) _pstProposalAtLayout = CGSizeMake(_pstMeasuredSizeSum.width / (CGFloat)_pstMeasuredSizeCount, _pstMeasuredSizeSum.height / (CGFloat)_pstMeasuredSizeCount);
+    else _pstProposalAtLayout = CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)) ? CGSizeMake(50, 50) : _estimatedItemSize;
     [self getSizingInfos];
     [self updateItemsLayout];
 }
@@ -653,7 +742,11 @@ static char kPSTCachedItemRectsKey;
                 // them ever are. Fill every item with the proposal, then apply the measured sizes by walking
                 // the measurements instead of building an index path per item.
                 CGSize proposal = [self pstUnmeasuredProposal];
-                for (NSInteger item = 0; item < numberOfItems; item++) sizes[item] = proposal;
+                if (_pstMeasuredSizeCount && _pstProposalRunCount) {
+                    for (NSInteger item = 0; item < numberOfItems; item++) sizes[item] = [self pstProposalAtSection:(NSInteger)section item:item];
+                } else {
+                    for (NSInteger item = 0; item < numberOfItems; item++) sizes[item] = proposal;
+                }
                 if (_pstMeasuredItemSizes.count) {
                     [_pstMeasuredItemSizes enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *path, NSValue *size, BOOL *stop) {
                         if (path.section == (NSInteger)section && path.item >= 0 && path.item < numberOfItems)
