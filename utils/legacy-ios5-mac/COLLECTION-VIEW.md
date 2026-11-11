@@ -1,5 +1,22 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Unmeasured sections keep the estimate, not the global mean (round 196)
+
+Tested the natural follow-up to the per-section estimate: when a section has measured nothing at all, fall back
+to the global mean rather than the plain estimate. It **broke the baseline** - layouts fell from 31/32 to 2/32
+with 0 visible frame differences, so the item geometry stayed right while the content size moved everywhere.
+
+That is a useful negative result: native really does leave a section it has not reached at the estimate (as the
+round-131 per-section scoping concluded), so the per-section model must fall back to `_pstProposalAtLayout0` and
+nothing else. Reverted; window 195's model is the correct shape.
+
+Full certification at HEAD afterwards - **25 of 25 collection gates pass**: golden 14/14, row centering,
+stability, proposal, display scroll/supplementary order, hidden items, cell resize, attribute snapshot, bounds,
+preferred predicate, invalidation context, attribute cache, context execution, packed updates 240, windowed 24,
+lazy section 414, lazy extension 48, preferred-context staging, automatic size, batch insert 9/9, prefetch,
+sizing updates, delegate sizing, and named-items flow flags. Layouts reports 31/32 on screen with 0 of 210
+visible frame differences and fitted-item parity 32/32.
+
 ## Per-section estimate implemented (round 195)
 
 PST estimated every unmeasured item from one **global** running mean. UIKit estimates a section from what it has
