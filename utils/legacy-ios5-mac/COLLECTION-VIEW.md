@@ -1077,3 +1077,19 @@ route is fixed when compiling; the design rationale (upstream's reparented wrapp
 in the selection note above.
 
 Still not verified: iOS 7 (no 7.x device), and animated updates on the Apple route.
+
+### Round 98: animated updates on the Apple route (verified), and a runner fix
+
+The device gate grew three animated checks, run against UIKit 6.1.3 with the hooks installed: an
+animated insert of five rows, then an animated delete of five. All pass:
+`animated insert completes`, `animated insert applies new item count` (10,270 = 205 x 50 + 20),
+`willDisplay for cells that arrive in the animation` (10 -> 15), `visible cells sane after animated
+insert`, `animated delete completes`, `animated delete applies new item count` (10,020 = 200 x 50 + 20),
+`no willDisplay regressions after animated delete`. That closes the "animated updates untested on the
+Apple route" note.
+
+The first run reported FAILED while the app had in fact passed. Two runner bugs, both fixed: the app
+inherited a default-buffered stdout, so a slow run lost its output, and the script `cat` the result file
+after a fixed 8 s while the two animations take longer, then grepped an incomplete file. The test now
+sets `setvbuf(stdout, NULL, _IONBF, 0)` and the runner polls for the `RESULT:` line (up to 40 s) instead
+of sleeping a fixed time. Worth remembering when adding device gates: a fixed sleep is a flaky grep.

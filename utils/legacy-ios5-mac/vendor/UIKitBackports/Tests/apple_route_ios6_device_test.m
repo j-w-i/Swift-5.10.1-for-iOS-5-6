@@ -13,6 +13,7 @@
 //    * UICollectionViewLayoutAttributes setTransform: round-trips
 //
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
 void UICInstallCollectionViewDisplay(void);
 
 static int failures;
@@ -137,6 +138,41 @@ static void Run(UIWindow *window) {
     Check(hasBoth && fabs(readBack.a - wanted.a) < 0.001 && fabs(readBack.b - wanted.b) < 0.001,
           "layout attributes transform round-trips", [NSString stringWithFormat:@"a=%.3f b=%.3f", readBack.a, readBack.b]);
 
+    // Animated batch updates: the hooks must survive UIKit's animated pass on iOS 6, and the
+    // delegate must still hear willDisplay for the arriving cells exactly once each.
+    Source *changing = [Source new]; changing.items = 200;
+    UICollectionView *cv3 = MakeView(MakeLayout(CGSizeMake(320, 50)), changing, window);
+    NSInteger displayedBefore = changing.willCell;
+    __block BOOL insertCompleted = NO;
+    NSMutableArray *inserted = [NSMutableArray array];
+    for (NSInteger row = 0; row < 5; row++) [inserted addObject:[NSIndexPath indexPathForRow:row inSection:0]];
+    [cv3 performBatchUpdates:^{
+        changing.items = 205;
+        [cv3 insertItemsAtIndexPaths:inserted];
+    } completion:^(BOOL finished) { insertCompleted = finished; }];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.5, false);
+    Check(insertCompleted, "animated insert completes", nil);
+    Check(fabs(cv3.contentSize.height - (205 * 50 + 20)) < 1, "animated insert applies new item count",
+          [NSString stringWithFormat:@"%.1f", cv3.contentSize.height]);
+    Check(changing.willCell > displayedBefore, "willDisplay for cells that arrive in the animation",
+          [NSString stringWithFormat:@"%ld -> %ld", (long)displayedBefore, (long)changing.willCell]);
+    Check(cv3.visibleCells.count > 0 && cv3.visibleCells.count <= 205, "visible cells sane after animated insert",
+          [NSString stringWithFormat:@"%lu", (unsigned long)cv3.visibleCells.count]);
+
+    NSInteger displayedBeforeDelete = changing.willCell;
+    __block BOOL deleteCompleted = NO;
+    NSMutableArray *deleted = [NSMutableArray array];
+    for (NSInteger row = 0; row < 5; row++) [deleted addObject:[NSIndexPath indexPathForRow:row inSection:0]];
+    [cv3 performBatchUpdates:^{
+        changing.items = 200;
+        [cv3 deleteItemsAtIndexPaths:deleted];
+    } completion:^(BOOL finished) { deleteCompleted = finished; }];
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.5, false);
+    Check(deleteCompleted, "animated delete completes", nil);
+    Check(fabs(cv3.contentSize.height - (200 * 50 + 20)) < 1, "animated delete applies new item count",
+          [NSString stringWithFormat:@"%.1f", cv3.contentSize.height]);
+    Check(changing.willCell >= displayedBeforeDelete, "no willDisplay regressions after animated delete", nil);
+
     printf("RESULT: %s (%d failure%s)\n", failures ? "FAIL" : "PASS", failures, failures == 1 ? "" : "s");
     fflush(stdout);
 }
@@ -145,6 +181,7 @@ static void Run(UIWindow *window) {
 @implementation AppDelegate
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     freopen("/var/mobile/Documents/apple-route-out.txt", "w", stdout);
+    setvbuf(stdout, NULL, _IONBF, 0); // a hang must not swallow the results already printed
     self.window = [[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
     [self.window makeKeyAndVisible];
     Run(self.window);

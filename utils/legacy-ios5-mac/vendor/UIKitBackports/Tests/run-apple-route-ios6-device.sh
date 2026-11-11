@@ -40,9 +40,12 @@ cat > "$APP/Info.plist" <<PLIST
 PLIST
 ( cd "$OUT" && tar czf app.tgz AppleRoute.app )
 "${SCP[@]}" "$OUT/app.tgz" "$DEV:/tmp/" >/dev/null
+# The app ends with "RESULT: ..." but only after two real animations, so wait for that line instead
+# of a fixed sleep; a short sleep races it and reports a spurious failure.
 "${SSH[@]}" "$DEV" 'rm -f /var/mobile/Documents/apple-route-out.txt; rm -rf /Applications/AppleRoute.app;
   cd /Applications && tar xzf /tmp/app.tgz && chown -R root:wheel AppleRoute.app && chmod 755 AppleRoute.app/AppleRoute;
-  uicache; sleep 2; PATH=$PATH:/usr/local/bin n2launch org.example.AppleRoute >/dev/null 2>&1; sleep 8;
+  uicache; sleep 2; PATH=$PATH:/usr/local/bin n2launch org.example.AppleRoute >/dev/null 2>&1;
+  for i in $(seq 1 40); do sleep 1; grep -q "^RESULT:" /var/mobile/Documents/apple-route-out.txt 2>/dev/null && break; done;
   cat /var/mobile/Documents/apple-route-out.txt; rm -rf /Applications/AppleRoute.app /tmp/app.tgz; uicache' 2>/dev/null | tee "$OUT/result.txt"
 grep -q "^RESULT: PASS" "$OUT/result.txt" || { echo "Apple route device test FAILED (artifacts: $OUT)" >&2; exit 1; }
 echo "PASS: Apple route (real UIKit) on the attached iOS 6/7 device"
