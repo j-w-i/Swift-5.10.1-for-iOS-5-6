@@ -417,11 +417,18 @@
     return YES;
 }
 
-/// Lazy variant for uniform packed sections: materialises only rows up to `lastRow` and derives the rest of the
-/// extent from the uniform row size (exact when every item matches, see -packedSizesAreUniform). Unmaterialised
-/// rows have no geometry until extended; the section frame is identical to a full computeLayout.
+/// Lazy variant for packed sections: materialises only rows up to `lastRow` and estimates the rest of the extent.
+/// With uniform items the estimate is exact (see -packedSizesAreUniform); with variable items the caller passes
+/// `estimate`, the size an unmeasured row's items are expected to take, which is what UIKit assumes for rows it
+/// has not laid out. Unmaterialised rows have no geometry until extended.
 - (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow {
-    NSAssert(_packed && [self packedSizesAreUniform], @"lazy layout needs a uniform packed section");
+    CGSize estimate = CGSizeZero;
+    if (_packed && _packedCount > 0 && [self packedSizesAreUniform]) estimate = _packedSizes[0];
+    [self computeLayoutMaterialisingRowsThrough:lastRow estimate:estimate];
+}
+
+- (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow estimate:(CGSize)estimate {
+    NSAssert(_packed, @"lazy layout needs a packed section");
     if (_isValid) return;
     NSAssert(self.rows.count == 0, @"No rows shall be at this point.");
 
@@ -447,11 +454,11 @@
         [self pstLayOutPackedRowsFrom:0 to:limit dimension:dimension spacing:spacing sectionSize:&sectionSize];
         _packedPrefixExtent = sectionSize;
         _packedLaidOutRows = limit;
-        // Remainder of the rows share the last materialised row's scrolling extent, which is exact for
-        // uniform items: same arithmetic as pstLayOutPackedRowsFrom, continued without geometry.
+        // Remainder of the rows: same arithmetic as pstLayOutPackedRowsFrom, continued without geometry. For
+        // uniform items the last row's extent is exact; for variable items the caller's estimate is used.
         const NSInteger rest = rows - limit;
         if (rest > 0) {
-            const CGSize rowSize = _packedRowSize[limit - 1];
+            const CGSize rowSize = [self packedSizesAreUniform] ? _packedRowSize[limit - 1] : estimate;
             const CGFloat rowExtent = horizontal ? rowSize.width : rowSize.height;
             const CGFloat gap = horizontal ? self.horizontalInterstice : self.verticalInterstice;
             // Each remaining row adds its extent, and a gap only between rows (never after the last one); the

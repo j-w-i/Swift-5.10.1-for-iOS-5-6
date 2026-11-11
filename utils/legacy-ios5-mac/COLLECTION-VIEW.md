@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Lazy layout extended to variable sections (round 204)
+
+First step of the plan's addendum: `computeLayoutMaterialisingRowsThrough:` now takes an `estimate` and works for
+**any** packed section, not just uniform ones. Materialised rows are laid out exactly as a full build does; the
+remaining rows contribute the uniform row size (exact) or, for variable sections, the caller's estimate - which
+is what UIKit assumes for rows it has not reached. The old single-argument form keeps working by passing the
+uniform item size when the section is uniform.
+
+New gate `run-packed-lazy-variable-test.sh` (10 mixed-size sections, both axes, 8..40 items): every window from
+0 to the last row is laid out and compared with a rebuild for the materialised rows, the extent is checked to
+stay positive, and - the important invariant - a **full window reproduces the rebuild's frame, footer and row
+frames exactly**, proving nothing is left estimated when everything is materialised. Passing.
+
+Also re-verified: golden 14/14, layouts 31/32 with fitted-item parity 32/32, lazy section 414, lazy extension
+48, windowed 24, packed updates 240, and a strict armv7 `-Werror=unguarded-availability` compile.
+
+The flow layout still calls the full `computeLayout`, so behaviour is unchanged - this is the primitive the
+estimate rework needs. Next: pass the materialised range into the estimate (plan step 1) and wire the flow.
+
 ## The +196 outlier is a whole-section mean; but scoping it to runs is worse overall (round 202)
 
 Localised the round-197 outlier geometrically, without changing code. At step 3 of the three-section scenario,

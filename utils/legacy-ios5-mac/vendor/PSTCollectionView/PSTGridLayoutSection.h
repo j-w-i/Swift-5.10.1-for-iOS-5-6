@@ -98,6 +98,8 @@
 - (BOOL)materialisePackedRowsThroughRow:(NSInteger)row dimension:(CGFloat)dimension spacing:(CGFloat)spacing
                           scrollGrowth:(CGFloat *)growth;
 - (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow;
+// Packed sections of any kind: rows past `lastRow` take `estimate` while deriving the extent.
+- (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow estimate:(CGSize)estimate;
 
 - (PSTGridLayoutItem *)addItem;
 
