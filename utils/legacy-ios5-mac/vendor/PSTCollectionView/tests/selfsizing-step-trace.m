@@ -64,7 +64,9 @@ static void snapshot(NSString*phase,CGFloat requested,UICollectionView*cv,UIColl
  }
  for(NSIndexPath*p in [[cv indexPathsForVisibleItems] sortedArrayUsingSelector:@selector(compare:)])[visible addObject:@(p.item)];snapshotting=NO;
  NSNumber *rangeCount=[layout respondsToSelector:NSSelectorFromString(@"pstPrototypeRangeCount")]?[layout valueForKey:@"pstPrototypeRangeCount"]:@0;
- NSDictionary*record=@{@"proposalRanges":rangeCount,@"phase":phase,@"requested":@(requested),@"offset":@(cv.contentOffset.y),@"contentHeight":@(cv.contentSize.height),
+ NSNumber *passes=[cv respondsToSelector:NSSelectorFromString(@"pstPrototypeSchedulePasses")]?[cv valueForKey:@"pstPrototypeSchedulePasses"]:@0;
+ NSNumber *hit=[cv respondsToSelector:NSSelectorFromString(@"pstPrototypeScheduleBudgetHit")]?[cv valueForKey:@"pstPrototypeScheduleBudgetHit"]:@NO;
+ NSDictionary*record=@{@"schedulePasses":passes,@"scheduleBudgetHit":hit,@"proposalRanges":rangeCount,@"phase":phase,@"requested":@(requested),@"offset":@(cv.contentOffset.y),@"contentHeight":@(cv.contentSize.height),
   @"requests":@(requests),@"fittings":fitLog,@"measured":[[measured allObjects] sortedArrayUsingSelector:@selector(compare:)],@"visible":visible,@"frames":frames,@"rects":rects,@"itemWidth":@(layout.estimatedItemSize.width),@"events":events?:@[]};
  NSData*data=[NSJSONSerialization dataWithJSONObject:record options:0 error:NULL];
  puts([[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding].UTF8String);[fitLog removeAllObjects];[events removeAllObjects];

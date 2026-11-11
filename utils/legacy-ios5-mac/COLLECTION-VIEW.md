@@ -1483,3 +1483,37 @@ The next work is measurement scheduling/coalescing and full rectangle verificati
 uncovered variable-width/section/horizontal cases. The generator copies only simulator sizing sources
 and tests, not sibling device runtime projects, and installs nothing. No device, shipping selection,
 compiler or published toolchain is changed this round.
+
+### Round 111: scheduling prototype reaches exact baseline rectangles, not complete parity
+
+Added isolated one/two/half-batch scheduling variants. They use iterative relayout with a scoped
+reentrancy guard, six attempts per path, a 256-pass transaction cap and a latched budget-hit diagnostic;
+no recursive per-cell relayout stack is added. Fresh candidates are prioritised spatially, confirmed
+candidates are deferred until fresh work is processed, and all variants remain under the test generator.
+A deliberately nonconverging cell terminates after 18 fitting calls with the expected budget flag and
+without its 500-call emergency escape. Ordinary traces never hit either bound.
+
+Ablation matters: fixed one- and two-cell batches still differ in 52–53 stepped rectangles. Processing
+half the fresh candidates matches the baseline's fitting counts at all six steps, unlike those
+controls. But it is **not established as UIKit's general scheduling algorithm**: the larger grid has
+coalescing/order counterexamples, and the current spatial priority differs in some warm cases.
+
+Separate switches isolate two other effects: centering unequal-size items within a row (PST was top
+aligned), and rounding self-sizing origins to screen pixels/content size to points while broad-phase
+queries admit the rounding fringe. A changed-only/half-batch/estimated-stability/center/pixel candidate
+matches **all 360 baseline rectangles to 1e-6**, content heights, visible paths and fitting counts
+(8/8, 8/8, 6/6, 6/6, 4/4, 4/4). The exact gate rejects the otherwise similar raw-coordinate control,
+so the result is not merely the older half-point tolerance. Fitting order and equal data-source work
+are not claimed: final baseline requests are PST 24 versus native 20.
+
+Three of four grid configurations also match every rectangle exactly at all six snapshots, but can
+still perform extra fitting/data-source work. The width60/viewport120 grid matches initially and at
+y=200, then has 33 wrong rectangles at y=400 and later; an additional fitted path changes the mean.
+Native and prototype ordering also differ there. Thus the combined prototype is **not promoted**.
+
+The latest isolated candidate passes explicit-invalidation/changed-origin/returning-cell stability,
+visible/offscreen mutation and sizing-delegate geometry gates. New trace fields expose pass/budget
+state, and an analyser keeps exact baseline requirements separate from failing grid diagnostics. No
+hardware run, latency/FPS result, production runtime change, compiler change or publication is claimed.
+The next work is to isolate centering/quantisation and resolve fresh-cell creation/priority/coalescing
+rather than treating a useful half-batch heuristic as the finished native scheduler.

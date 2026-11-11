@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate an isolated compact-range prototype. NEVER edits the vendor originals.
 Usage: prototype-selfsizing-ranges.py PST_SOURCE NEW_COPY [changed-only|all-reports]
+       [none|one|two|half] [frame|estimate] [top|center] [raw|pixel]
 This is a cache-response experiment, not a shipping implementation or parity claim.
 The copy supports the simulator sizing probes; sibling backport projects/device packaging
 are deliberately not copied or installed.
@@ -11,8 +12,14 @@ import sys
 
 src, out = (pathlib.Path(p).resolve() for p in sys.argv[1:3])
 mode = sys.argv[3] if len(sys.argv) > 3 else 'changed-only'
-if mode not in ('changed-only', 'all-reports') or out.exists() or out.is_relative_to(src):
-    raise SystemExit('Use a new output outside the vendor source; mode changed-only|all-reports')
+schedule = sys.argv[4] if len(sys.argv) > 4 else 'none'
+stability = sys.argv[5] if len(sys.argv) > 5 else 'frame'
+row_alignment = sys.argv[6] if len(sys.argv) > 6 else 'top'
+rounding = sys.argv[7] if len(sys.argv) > 7 else 'raw'
+if (mode not in ('changed-only', 'all-reports') or schedule not in ('none', 'one', 'two', 'half')
+        or stability not in ('frame', 'estimate') or row_alignment not in ('top', 'center') or rounding not in ('raw', 'pixel')
+        or out.exists() or out.is_relative_to(src)):
+    raise SystemExit('Use a new output outside the vendor source and documented experiment modes')
 out.mkdir()
 for path in src.iterdir():
     if path.is_file() and path.suffix in ('.h', '.m'):
@@ -115,5 +122,121 @@ if mode == 'changed-only':
             [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
             if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:&old3];
         }''')
+if stability == 'estimate':
+    replace('    return confirmed && CGRectEqualToRect([confirmed CGRectValue], frame);',
+            '    return confirmed && (![_pstMeasuredItemSizes objectForKey:indexPath] || CGRectEqualToRect([confirmed CGRectValue], frame));')
 p.write_text(text)
-print('Generated isolated compact-range prototype:', out, 'report mode:', mode)
+if schedule != 'none':
+    p = out / 'PSTCollectionView.m'
+    text = p.read_text()
+    replace('    int _pstSelfSizingRounds;', '''    int _pstSelfSizingRounds;
+    BOOL _pstPrototypeMeasuring, _pstPrototypeScheduleBudgetHit;
+    NSUInteger _pstPrototypeSchedulePasses;''')
+    start = text.index('- (void)pstMeasureSelfSizingCells {')
+    end = text.index('// fetches a cell from the dataSource', start)
+    body = '''- (NSUInteger)pstPrototypeSchedulePasses { return _pstPrototypeSchedulePasses; }
+- (BOOL)pstPrototypeScheduleBudgetHit { return _pstPrototypeScheduleBudgetHit; }
+- (void)pstMeasureSelfSizingCells {
+    if (_pstPrototypeMeasuring || ![_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) return;
+    PSTCollectionViewFlowLayout *flow = (id)_layout;
+    if (![flow pstUsesSelfSizing]) return;
+    _pstPrototypeMeasuring = YES;
+    NSMutableDictionary *attempts = [NSMutableDictionary dictionary];
+    BOOL settled = NO;
+    @try {
+        for (NSUInteger pass = 0; pass < 256; pass++) {
+            _pstPrototypeSchedulePasses++;
+            NSMutableArray *fresh = [NSMutableArray array], *confirm = [NSMutableArray array];
+            for (PSTCollectionViewItemKey *key in [_allVisibleViewsDict allKeys]) {
+                if (key.type != PSTCollectionViewItemTypeCell) continue;
+                PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
+                PSTCollectionViewLayoutAttributes *a = cell.layoutAttributes;
+                if (!a || [flow pstHasStableMeasuredSizeForItemAtIndexPath:key.indexPath proposedFrame:a.frame]) continue;
+                NSUInteger count = [[attempts objectForKey:key.indexPath] unsignedIntegerValue];
+                if (count >= 6) { _pstPrototypeScheduleBudgetHit = YES; continue; }
+                [(count ? confirm : fresh) addObject:key];
+            }
+            if (!fresh.count && !confirm.count) { settled = YES; break; }
+            CGPoint origin = self.bounds.origin;
+            [fresh sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
+                CGPoint x = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:a]).layoutAttributes.frame.origin;
+                CGPoint y = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:b]).layoutAttributes.frame.origin;
+                CGFloat dx=x.x-origin.x,dy=x.y-origin.y,ex=y.x-origin.x,ey=y.y-origin.y;
+                CGFloat da=dx*dx+dy*dy,db=ex*ex+ey*ey;
+                return da<db?NSOrderedAscending:da>db?NSOrderedDescending:[a.indexPath compare:b.indexPath];
+            }];
+            [confirm sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) { return [a.indexPath compare:b.indexPath]; }];
+            NSArray *chosen = fresh.count ? fresh : confirm;
+            NSUInteger limit = chosen.count;
+            if (fresh.count) limit = PROTOTYPE_LIMIT;
+            BOOL changed = NO;
+            for (NSUInteger index = 0; index < limit; index++) {
+                PSTCollectionViewItemKey *key = [chosen objectAtIndex:index];
+                PSTCollectionReusableView *cell = [_allVisibleViewsDict objectForKey:key];
+                PSTCollectionViewLayoutAttributes *proposed = cell.layoutAttributes;
+                if (!cell || !proposed) continue;
+                NSUInteger count = [[attempts objectForKey:key.indexPath] unsignedIntegerValue];
+                [attempts setObject:@(count+1) forKey:key.indexPath];
+                PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:proposed];
+                if ([flow pstRecordPreferredSize:preferred?preferred.size:proposed.size forItemAtIndexPath:key.indexPath proposedFrame:proposed.frame]) changed = YES;
+            }
+            if (changed) {
+                [flow pstInvalidateForPreferredSizeChanges];
+                [_collectionViewData validateLayoutInRect:self.bounds];
+                [self updateVisibleCellsNow:YES]; // reentrant measurement is suppressed by the scoped guard
+                CGSize size = [_collectionViewData collectionViewContentRect].size;
+                if (!CGSizeEqualToSize(self.contentSize,size)) self.contentSize=size;
+            }
+        }
+        if (!settled) _pstPrototypeScheduleBudgetHit=YES;
+    } @finally { _pstPrototypeMeasuring=NO; }
+}
+
+'''
+    limit = {'one': '1', 'two': 'MIN((NSUInteger)2,fresh.count)', 'half': 'MAX((NSUInteger)1,fresh.count/2)'}[schedule]
+    text = text[:start] + body.replace('PROTOTYPE_LIMIT', limit) + text[end:]
+    p.write_text(text)
+if row_alignment == 'center':
+    p = out / 'PSTGridLayoutRow.m'
+    text = p.read_text()
+    replace('        // calculate row frame as union of all items', '''        CGFloat prototypeCrossMax = isHorizontal ? self.section.itemSize.width : self.section.itemSize.height;
+        if (!self.fixedItemSize) {
+            prototypeCrossMax = 0;
+            for (PSTGridLayoutItem *i in self.items)
+                prototypeCrossMax = MAX(prototypeCrossMax, isHorizontal ? i.itemFrame.size.width : i.itemFrame.size.height);
+        }
+        // calculate row frame as union of all items''')
+    replace('                itemFrame.origin.y = itemOffset.y;',
+            '                itemFrame.origin.x = (prototypeCrossMax - itemFrame.size.width) / 2;\n                itemFrame.origin.y = itemOffset.y;')
+    replace('                itemFrame.origin.x = itemOffset.x;',
+            '                itemFrame.origin.y = (prototypeCrossMax - itemFrame.size.height) / 2;\n                itemFrame.origin.x = itemOffset.x;')
+    p.write_text(text)
+if rounding == 'pixel':
+    p = out / 'PSTCollectionViewFlowLayout.m'
+    text = p.read_text()
+    replace('// EXPERIMENT ONLY: contiguous breakpoints, not one object per unmeasured item.', '''#include <math.h>
+static CGRect PSTPrototypePixelOrigin(CGRect r, CGFloat scale) {
+    r.origin.x = round(r.origin.x * scale) / scale;
+    r.origin.y = round(r.origin.y * scale) / scale;
+    return r; // preferred sizes remain fractional; only origins are quantised
+}
+// EXPERIMENT ONLY: contiguous breakpoints, not one object per unmeasured item.''')
+    replace('    NSMutableArray *layoutAttributesArray = [NSMutableArray array];', '''    BOOL prototypePixel = [self pstUsesSelfSizing];
+    CGFloat prototypeScale = [UIScreen mainScreen].scale;
+    CGRect prototypeBroad = prototypePixel ? CGRectInset(rect, -1/prototypeScale, -1/prototypeScale) : rect;
+    NSMutableArray *layoutAttributesArray = [NSMutableArray array];''')
+    replace('CGRectIntersectsRect(section.frame, rect)', 'CGRectIntersectsRect(section.frame, prototypeBroad)')
+    replace('CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(rect) : CGRectGetMinY(rect);',
+            'CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(prototypeBroad) : CGRectGetMinY(prototypeBroad);')
+    replace('CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(rect) : CGRectGetMaxY(rect);',
+            'CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(prototypeBroad) : CGRectGetMaxY(prototypeBroad);')
+    replace('CGRectIntersectsRect(normalizedRowFrame, rect)', 'CGRectIntersectsRect(normalizedRowFrame, prototypeBroad)')
+    replace('                        if (CGRectIntersectsRect(normalisedItemFrame, rect)) {', '''                        if (prototypePixel) normalisedItemFrame = PSTPrototypePixelOrigin(normalisedItemFrame, prototypeScale);
+                        if (CGRectIntersectsRect(normalisedItemFrame, rect)) {''')
+    replace('    layoutAttributes.frame = CGRectMake(normalizedRowFrame.origin.x + itemFrame.origin.x, normalizedRowFrame.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);', '''    CGRect prototypeFrame = CGRectMake(normalizedRowFrame.origin.x + itemFrame.origin.x, normalizedRowFrame.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);
+    if ([self pstUsesSelfSizing]) prototypeFrame = PSTPrototypePixelOrigin(prototypeFrame, [UIScreen mainScreen].scale);
+    layoutAttributes.frame = prototypeFrame;''')
+    replace('    return _data.contentSize;', '''    CGSize result = _data.contentSize;
+    return [self pstUsesSelfSizing] ? CGSizeMake(round(result.width), round(result.height)) : result;''')
+    p.write_text(text)
+print('Generated isolated compact-range prototype:', out, 'report mode:', mode, 'schedule:', schedule, 'stability:', stability, 'row alignment:', row_alignment, 'rounding:', rounding)
