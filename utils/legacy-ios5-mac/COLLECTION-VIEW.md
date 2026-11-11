@@ -1,5 +1,39 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Auto Layout parity gate restored and passing (round 173)
+
+Finished the repair begun in round 172. Three defects from `49e3e408` were blocking the gate; all are now fixed
+without touching real runtime behaviour:
+
+1. `LegacyLayoutSolver.swift` lost its file-scope solver aliases when the Cassowary types moved into their own
+   module. Restored (`import Cassowary` plus `private typealias`es for `Expression`/`Variable`/`Constraint`/
+   `Strength`/`RelationalOperator`).
+2. The engine's debug-only diagnostics downcast to `UIView`, which a host parity build does not have. The
+   harness stub file now supplies minimal `UIView`/`UIWindow`/`UIScreen` stand-ins **only** under
+   `#if !canImport(UIKit)`, so the engine sources are untouched for iOS builds.
+3. `LegacyLinearSolver` constructed `AppleNSISSolver`, which needs the solver objects' `internal` identifiers
+   and therefore must be compiled into the same module as Cassowary. That construction is now guarded by
+   `#if canImport(UIKit)`; the Cassowary backend remains the default, and the integrated (iOS) build still
+   sees the NSIS path unchanged.
+
+Result - the Auto Layout parity gate runs again and **passes**:
+
+* engine parity: 11 suites OK (add-remove, priority, constants, reparent, remove-view, multiple-roots,
+  autoresizing, layout-guide, intrinsic, stats contract, mutation generation),
+* **`PASS: 80 golden frames match the previous rebuild-per-pass engine`**,
+* persistent vs rebuild benchmarks (200 rows / 800 constraints: 502.5 us/pass persistent against 4835.6 us/pass
+  rebuild).
+
+Acceptance criteria are now all green except the two this effort cannot exercise here:
+
+| Criterion | Status |
+| --- | --- |
+| No Auto Layout regression | **PASS** (gate restored, 11 suites + 80 golden frames) |
+| No UIStackView regression | PASS |
+| No scene/trait regression | PASS |
+| Collection golden geometry | PASS (14/14) |
+| Swift declaration lowering | not runnable (no installed `swift_ios5` toolchain) |
+
 ## Auto Layout gate: partial repair, still not runnable (round 172)
 
 Followed up round 171's finding. `49e3e408` left `LegacyLayoutSolver.swift` with the comment "pin the solver

@@ -41,7 +41,16 @@ internal enum LegacySolverBackend {
         return String(cString: raw).lowercased() == "nsis" ? "nsis" : "cassowary"
     }
     static func make() -> LegacyLinearSolver {
-        if selectedName == "nsis" { return AppleNSISSolver() }
+        if selectedName == "nsis" {
+            // The NSIS backend needs the solver objects' internal identifiers, so it must be compiled into
+            // the same module as Cassowary (as the integrated build does). A host parity build that links
+            // Cassowary as a separate module cannot construct it; the Cassowary backend is the default.
+            #if canImport(UIKit)
+            return AppleNSISSolver()
+            #else
+            return Solver()
+            #endif
+        }
         return Solver()
     }
 }

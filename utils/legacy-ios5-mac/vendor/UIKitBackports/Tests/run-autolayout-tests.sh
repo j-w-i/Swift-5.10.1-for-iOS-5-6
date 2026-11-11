@@ -70,6 +70,20 @@ enum LegacyAutoLayout {
     static var isActive: Bool { false }
 }
 func retainNativeAPIBootstrap() {}
+#if !canImport(UIKit)
+/// The engine's debug-only diagnostics downcast layout items to `UIView`. Host parity builds have no
+/// UIKit, so provide the minimal stand-in they need; nothing in the measured code path uses it.
+public class UIView {
+    public var window: UIWindow? { return nil }
+}
+public class UIWindow {
+    public var screen: UIScreen { return UIScreen.main }
+}
+public class UIScreen {
+    public static let main = UIScreen()
+    public var scale: Double { return 1 }
+}
+#endif
 SWIFT
 
 ENGINE_PATHS=()
