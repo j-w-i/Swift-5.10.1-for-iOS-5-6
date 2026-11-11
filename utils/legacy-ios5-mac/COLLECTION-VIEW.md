@@ -1530,3 +1530,38 @@ and the fix makes both routes produce **byte-identical frame matrices**. The fix
 `PSTGridLayoutRow` and only changes the default alignment option value (1); other private
 option values keep the former top/leading behaviour. Re-verified afterwards: visible/offscreen
 sizing mutation, four-case stability and sizing-delegate geometry gates all still pass.
+
+### Row layout: hoisted per-item property reads (measured on iPod touch 3)
+
+`PSTGridLayoutRow layoutRowAndGenerateRectArray:` re-read `self.section`, `self.itemCount`,
+`self.items` and several section properties on every loop iteration, each an Objective-C message.
+A sampled profile of a 5,000-item self-sizing cold layout put roughly two thirds of the time in
+`updateItemsLayout`, mostly `layoutRow`. The reads are now taken once per row. Behaviour is unchanged.
+
+Verified: the 14-scenario geometry golden recorded from the committed sources matches exactly, plus
+the 16-case centering, stability, mutation, delegate-sizing and first-layout-proposal gates.
+
+Measured on the **iPod touch 3 (iOS 5.1.1)**, same device, old versus new PST, median of 3 launches
+(`tests/selfsizing-scaling.m`, self-sizing with and without a size delegate):
+
+| Case, 5,000 items | Old | New | New / old |
+| --- | ---: | ---: | ---: |
+| No delegate, cold | 1458.9 ms | 1148.4 ms | 0.79 |
+| No delegate, reload | 2388.3 ms | 2019.7 ms | 0.85 |
+| Delegate, cold | 832.1 ms | 682.3 ms | 0.82 |
+| Delegate, reload | 954.8 ms | 800.3 ms | 0.84 |
+
+Every cold, scroll and reload case measured 0.79-0.88 of the old time, except two near-zero scroll
+steps (about 2.5 ms) that did not move. The simulator agrees (cold 5,000 items 5.9 -> 4.7 ms).
+
+**What this does not show.** Native UIKit 6.1.3 on the iPod touch 5 (with the backport hooks installed,
+since stock iOS 6 has no `estimatedItemSize`) measured about 38 ms cold at 200, 1,000 and 5,000
+items without a delegate, and PST on the iPod touch 3 about 58, 239 and 1,148 ms. These are
+different devices, so this is a comparison of shape, not a ratio: the Apple route's cost does not grow
+with item count in this probe, and PST's does. PST still measures every item up front, so the
+self-sizing gap documented in round 94 remains open and this change only makes the same algorithm
+cheaper. The two routes also do different work (native with hooks: 50 cell requests and 100 fitting
+calls at cold layout; PST: 10 and 19), which is unexplained. A paired same-device comparison needs the
+iPod touch 5 to run PST and native in one binary.
+
+Stock iOS 6.1.3 aborts in this probe without the hooks (`estimatedItemSize` does not exist there).

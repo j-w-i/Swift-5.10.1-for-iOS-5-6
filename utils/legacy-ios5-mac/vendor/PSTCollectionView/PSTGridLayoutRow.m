@@ -61,17 +61,30 @@
 - (NSArray *)layoutRowAndGenerateRectArray:(BOOL)generateRectArray {
     NSMutableArray *rects = generateRectArray ? [NSMutableArray array] : nil;
     if (!_isValid || generateRectArray) {
+        // Read every property the loops below need once. Variable-size sections run this per row
+        // over every item, and each repeated property read is an Objective-C message.
+        PSTGridLayoutSection *section = self.section;
+        PSTGridLayoutInfo *layoutInfo = section.layoutInfo;
+        NSDictionary *alignmentOptions = section.rowAlignmentOptions;
+        const BOOL fixedSize = self.fixedItemSize;
+        const NSInteger count = self.itemCount;
+        const CGSize fixedItemSize = section.itemSize;
+        const UIEdgeInsets margins = section.sectionMargins;
+        const CGFloat verticalInterstice = section.verticalInterstice;
+        const CGFloat horizontalInterstice = section.horizontalInterstice;
+        NSArray *rowItems = fixedSize ? nil : _items;
+
         // properties for aligning
-        BOOL isHorizontal = self.section.layoutInfo.horizontal;
-        BOOL isLastRow = self.section.indexOfImcompleteRow == self.index;
-        PSTFlowLayoutHorizontalAlignment horizontalAlignment = [[self.section.rowAlignmentOptions objectForKey:(isLastRow ? PSTFlowLayoutLastRowHorizontalAlignmentKey : PSTFlowLayoutCommonRowHorizontalAlignmentKey)] integerValue];
+        BOOL isHorizontal = layoutInfo.horizontal;
+        BOOL isLastRow = section.indexOfImcompleteRow == self.index;
+        PSTFlowLayoutHorizontalAlignment horizontalAlignment = [[alignmentOptions objectForKey:(isLastRow ? PSTFlowLayoutLastRowHorizontalAlignmentKey : PSTFlowLayoutCommonRowHorizontalAlignmentKey)] integerValue];
 
         // calculate space that's left over if we would align it from left to right.
-        CGFloat leftOverSpace = self.section.layoutInfo.dimension;
+        CGFloat leftOverSpace = layoutInfo.dimension;
         if (isHorizontal) {
-            leftOverSpace -= self.section.sectionMargins.top + self.section.sectionMargins.bottom;
+            leftOverSpace -= margins.top + margins.bottom;
         }else {
-            leftOverSpace -= self.section.sectionMargins.left + self.section.sectionMargins.right;
+            leftOverSpace -= margins.left + margins.right;
         }
 
         // calculate the space that we have left after counting all items.
@@ -80,24 +93,24 @@
         // This allows us to correctly justify-place the items in the grid.
         NSInteger usedItemCount = 0;
         NSInteger itemIndex = 0;
-        CGFloat spacing = isHorizontal ? self.section.verticalInterstice : self.section.horizontalInterstice;
+        CGFloat spacing = isHorizontal ? verticalInterstice : horizontalInterstice;
         // UIKit's default mode (1) centers unequal items on the row's scroll axis.
         // Preserve the former top/leading behaviour for other private option values.
-        id verticalOption = [self.section.rowAlignmentOptions objectForKey:PSTFlowLayoutRowVerticalAlignmentKey];
+        id verticalOption = [alignmentOptions objectForKey:PSTFlowLayoutRowVerticalAlignmentKey];
         BOOL centerItems = !verticalOption || ([verticalOption respondsToSelector:@selector(integerValue)] && [verticalOption integerValue] == 1);
-        CGFloat maxScrollDimension = self.fixedItemSize ? (isHorizontal ? self.section.itemSize.width : self.section.itemSize.height) : 0;
+        CGFloat maxScrollDimension = fixedSize ? (isHorizontal ? fixedItemSize.width : fixedItemSize.height) : 0;
         // the last row should justify as if it is filled with more (invisible) items so that the whole
         // UICollectionView feels more like a grid than a random line of blocks
-        while (itemIndex < self.itemCount || isLastRow) {
+        while (itemIndex < count || isLastRow) {
             CGFloat nextItemSize;
             // first we need to find the size (width/height) of the next item to fit
-            if (!self.fixedItemSize) {
-                PSTGridLayoutItem *item = [self.items objectAtIndex:(NSUInteger)MIN(itemIndex, self.itemCount - 1)];
-                nextItemSize = isHorizontal ? item.itemFrame.size.height : item.itemFrame.size.width;
-                if (centerItems && itemIndex < self.itemCount)
-                    maxScrollDimension = MAX(maxScrollDimension, isHorizontal ? item.itemFrame.size.width : item.itemFrame.size.height);
+            if (!fixedSize) {
+                CGSize measured = [(PSTGridLayoutItem *)[rowItems objectAtIndex:(NSUInteger)MIN(itemIndex, count - 1)] itemFrame].size;
+                nextItemSize = isHorizontal ? measured.height : measured.width;
+                if (centerItems && itemIndex < count)
+                    maxScrollDimension = MAX(maxScrollDimension, isHorizontal ? measured.width : measured.height);
             }else {
-                nextItemSize = isHorizontal ? self.section.itemSize.height : self.section.itemSize.width;
+                nextItemSize = isHorizontal ? fixedItemSize.height : fixedItemSize.width;
             }
 
             // the first item does not add a separator spacing,
@@ -122,12 +135,12 @@
         // Native self-sizing flow layout centers a section containing just one item
         // across its non-scrolling axis. Do not apply this to an incomplete last row
         // of a larger section, or to legacy fixed-size layouts.
-        BOOL soleSelfSizingItem = self.section.layoutInfo.selfSizing && self.section.itemsCount == 1;
+        BOOL soleSelfSizingItem = layoutInfo.selfSizing && section.itemsCount == 1;
         if (soleSelfSizingItem) {
-            CGSize size = self.fixedItemSize ? self.section.itemSize : ((PSTGridLayoutItem *)[self.items objectAtIndex:0]).itemFrame.size;
-            CGFloat available = self.section.layoutInfo.dimension - (isHorizontal
-                ? self.section.sectionMargins.top + self.section.sectionMargins.bottom
-                : self.section.sectionMargins.left + self.section.sectionMargins.right);
+            CGSize size = fixedSize ? fixedItemSize : ((PSTGridLayoutItem *)[rowItems objectAtIndex:0]).itemFrame.size;
+            CGFloat available = layoutInfo.dimension - (isHorizontal
+                ? margins.top + margins.bottom
+                : margins.left + margins.right);
             leftOverSpace = MAX(0, available - (isHorizontal ? size.height : size.width));
             usedItemCount = 1;
         }
@@ -150,11 +163,11 @@
 
         // calculate row frame as union of all items
         CGRect frame = CGRectZero;
-        CGRect itemFrame = (CGRect){.size=self.section.itemSize};
-        for (itemIndex = 0; itemIndex < self.itemCount; itemIndex++) {
+        CGRect itemFrame = (CGRect){.size=fixedItemSize};
+        for (itemIndex = 0; itemIndex < count; itemIndex++) {
             PSTGridLayoutItem *item = nil;
-            if (!self.fixedItemSize) {
-                item = [self.items objectAtIndex:(NSUInteger)itemIndex];
+            if (!fixedSize) {
+                item = [rowItems objectAtIndex:(NSUInteger)itemIndex];
                 itemFrame = [item itemFrame];
             }
             // depending on horizontal/vertical for an item size (height/width),
@@ -164,14 +177,14 @@
             if (isHorizontal) {
                 itemFrame.origin.x = centerItems ? (maxScrollDimension - itemFrame.size.width) / 2 : 0;
                 itemFrame.origin.y = itemOffset.y;
-                itemOffset.y += itemFrame.size.height + self.section.verticalInterstice;
+                itemOffset.y += itemFrame.size.height + verticalInterstice;
                 if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify) {
                     itemOffset.y += interSpacing;
                 }
             }else {
                 itemFrame.origin.y = centerItems ? (maxScrollDimension - itemFrame.size.height) / 2 : 0;
                 itemFrame.origin.x = itemOffset.x;
-                itemOffset.x += itemFrame.size.width + self.section.horizontalInterstice;
+                itemOffset.x += itemFrame.size.width + horizontalInterstice;
                 if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify) {
                     itemOffset.x += interSpacing;
                 }
