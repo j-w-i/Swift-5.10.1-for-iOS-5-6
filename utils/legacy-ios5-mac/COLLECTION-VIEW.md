@@ -1,5 +1,25 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Fourth attempt: settled-pass restart, reverted (round 168)
+
+Implemented the structural change round 167 pointed to: when preparing a cell invalidates the layout, the
+current visible pass marks itself stale, recycles the unused cell and recomputes the whole pass from freshly
+derived attributes (bounded to 4 restarts).
+
+Outcome: the display lifecycle again matched iOS 27 exactly (9/0 and 8/0) and visible cell frames stayed
+exact (0 of 210), but layouts stayed at 0/32 and **two new discrepancies appeared**: PST fitted 9/20/27 items
+per step against native's 6/14/18 (the restart re-fits the same cells), and content size remained pinned at
+the pure estimate 1770 rather than settling to 1854.
+
+So the restart is the right shape but not sufficient on its own: re-running the pass re-fits cells, and the
+recorded sizes still are not reaching the content computation. Reverted; baseline verified (layouts 31/32,
+0 of 210 frames). No runtime behaviour changed.
+
+Standing conclusion after four attempts (rounds 163-168): preparation-time fitting is proven for lifecycle
+order, display counts and visible frames, but switching it on requires the measurement bookkeeping and
+content-size settling to be rewritten together with a valid-range model - as one unit, not incrementally.
+The live path therefore still uses the post-layout scheduler, and the display lifecycle mismatch remains.
+
 ## Which cells each engine measures (round 167)
 
 Added a fitting log to the layouts trace (`fitted` per step: the (section,item) pairs that received
