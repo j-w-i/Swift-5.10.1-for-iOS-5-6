@@ -1,5 +1,25 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preparation-time fitting attempt: reverted (round 163)
+
+Tried moving the fit into cell preparation (where iOS 8.1 does it) so `willDisplayCell` stops arriving before
+the preferred-size callback. The lifecycle ordering and callback counts then matched iOS 27 exactly
+(`changed=0`: 9 displays / 0 unfitted, `changed=1`: 8 / 0, against native 9/0 and 8/0). But it **regressed a
+passing gate**: the eight-shape layouts test fell from 31/32 steps to 0/32. Visible cell frames still matched
+(0 of 210 differing) while the reported content size collapsed to the pure-estimate value (1770 instead of
+1854), i.e. recorded sizes were no longer committed into content geometry.
+
+Two narrow follow-ups were tried and both failed to restore it: suppressing the published estimate while a
+cell is being prepared, and forcing `canReusePreparedLayout` to rebuild for named contexts. The remaining
+cause is content-size cache validity: `invalidateItemAttributesPreservingContentSize` deliberately keeps the
+cached size (which the strict context probe requires, native keeps 800 there), yet the display path needs the
+size refreshed once measurements settle. Reconciling those two requires the real valid-range model where
+unmeasured rows stay estimated, not a further patch here.
+
+The change was reverted, so the tree is back at the verified round-162 state: 14-scenario golden passes,
+layouts 31/32, preferred-context staging probe passes, lifecycle still reports the known mismatch
+(9/9 and 10/10 displayed-before-fit against native 0). No runtime behaviour changed this round.
+
 ## Preferred-size context staging implemented (round 162)
 
 The flow layout's preferred-attributes factory now performs the staged update native was observed to do:
