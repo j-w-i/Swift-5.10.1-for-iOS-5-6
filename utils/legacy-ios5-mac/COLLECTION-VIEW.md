@@ -1669,3 +1669,39 @@ same shape as the delegate case, and is a real but modest target.
 Limits: the internal delegate depends on UIKit 6/7 asking the delegate during `prepareLayout`; it was
 verified on iOS 6.1.3 only, not iOS 7 or on the iPhone 6. Ratios are single runs on one device and the
 cell is a trivial subclass.
+
+### Self-sizing rebuild without a size delegate: sparse overrides instead of one lookup per item
+
+A profile of the 5,000-item no-delegate cold layout put 10.4% in `pstSizeForSelfSizingItemAtIndexPath:`
+and a further 8-9% in the per-item objects it feeds. With no size delegate every unmeasured item takes
+the same proposal, so the layout now seeds every item with that proposal once and applies the few
+measured sizes by walking the measurement dictionary, instead of building an `NSIndexPath` and doing a
+dictionary lookup for each of 5,000 items. With a delegate each item must still be visited, because
+the lookup records the app's seed, so that path is untouched. Sizes produced are identical.
+
+Verified identical to the previous commit: the 14-scenario geometry golden, the centering, stability,
+mutation, delegate and first-layout gates, and **6 of 6 stepped traces byte-identical** (frames, content
+height, visible paths, request counts and fitting sequences for one-column and 2-3 column grids).
+
+Same device, previous commit versus this change, median of 3 repetitions (this / previous):
+
+| Device, no delegate | 200 items cold | 1,000 cold | 5,000 cold | 5,000 reload | 5,000 scroll |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| iPod touch 3 (iOS 5.1.1) | 0.90 | 0.81 | 0.79 | 0.78 | 0.75 |
+| iPod touch 5 (iOS 6.1.3) | 0.82 | 0.75 | 0.77 | 0.93 | 0.90 |
+
+Against the Apple route on the iPod touch 5 (PST this change / native with hooks, no delegate):
+
+| Items | Cold | Scroll | Reload |
+| ---: | ---: | ---: | ---: |
+| 200 | 0.84 | 0.66 | 0.85 |
+| 1,000 | 1.20 | 0.73 | 0.99 |
+| 5,000 | **1.15** | 0.75 | **1.23** |
+
+Cold went from 1.50x to 1.15x and reload from 1.28x to 1.23x at 5,000 items. PST is faster on scroll at
+every size and faster on everything at 200 items. It is still 15-23% slower on cold layout and reload
+at 5,000 items, because every rebuild still allocates and links 5,000 item objects and lays out every
+row. Removing that needs a compact representation for the unmeasured majority of items.
+
+Limits: native column is a single run, PST a median of 3 in a separate launch; the cell is trivial;
+iPhone 6 not run.

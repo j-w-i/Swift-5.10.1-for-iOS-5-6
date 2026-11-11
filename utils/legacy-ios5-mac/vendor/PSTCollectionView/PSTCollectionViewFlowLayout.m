@@ -416,6 +416,11 @@ static char kPSTCachedItemRectsKey;
         [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:seed] forKey:indexPath];
         return seed;
     }
+    return [self pstUnmeasuredProposal];
+}
+
+/// The size proposed for an item no cell has reported on, and no delegate sized.
+- (CGSize)pstUnmeasuredProposal {
     // automaticSize is a sentinel, not a geometric size. Native UIKit proposes 50x50
     // on both axes, independently of itemSize; retain the sentinel in the public getter.
     if (CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)))
@@ -618,10 +623,27 @@ static char kPSTCachedItemRectsKey;
 
         // self-sizing: every item carries the size its cell reported (or the estimate)
         if ([self pstUsesSelfSizing]) {
-            for (NSInteger item = 0; item < numberOfItems; item++) {
-                NSIndexPath *indexPath = [NSIndexPath indexPathForRow:item inSection:(NSInteger)section];
-                PSTGridLayoutItem *layoutItem = [layoutSection addItem];
-                layoutItem.itemFrame = (CGRect){.size=[self pstSizeForSelfSizingItemAtIndexPath:indexPath]};
+            if (implementsSizeDelegate) {
+                // The app's size is each item's seed, and the lookup records it, so every item is visited.
+                for (NSInteger item = 0; item < numberOfItems; item++) {
+                    NSIndexPath *indexPath = [NSIndexPath indexPathForRow:item inSection:(NSInteger)section];
+                    PSTGridLayoutItem *layoutItem = [layoutSection addItem];
+                    layoutItem.itemFrame = (CGRect){.size=[self pstSizeForSelfSizingItemAtIndexPath:indexPath]};
+                }
+            } else {
+                // Without a size delegate only measured items differ from the common proposal, and few of
+                // them ever are. Seed every item with the proposal, then apply the measured sizes by
+                // walking the measurements instead of building an index path per item.
+                CGSize proposal = [self pstUnmeasuredProposal];
+                for (NSInteger item = 0; item < numberOfItems; item++)
+                    [layoutSection addItem].itemFrame = (CGRect){.size=proposal};
+                if (_pstMeasuredItemSizes.count) {
+                    NSArray *items = layoutSection.items;
+                    [_pstMeasuredItemSizes enumerateKeysAndObjectsUsingBlock:^(NSIndexPath *path, NSValue *size, BOOL *stop) {
+                        if (path.section == (NSInteger)section && path.item >= 0 && path.item < numberOfItems)
+                            ((PSTGridLayoutItem *)[items objectAtIndex:(NSUInteger)path.item]).itemFrame = (CGRect){.size=[size CGSizeValue]};
+                    }];
+                }
             }
         } else
         // if delegate implements size delegate, query it for all items
