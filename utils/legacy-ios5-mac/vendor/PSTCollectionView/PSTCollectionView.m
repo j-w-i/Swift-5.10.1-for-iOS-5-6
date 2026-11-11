@@ -1968,7 +1968,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 - (void)queueReusableView:(PSTCollectionReusableView *)reusableView inQueue:(NSMutableDictionary *)queue withIdentifier:(NSString *)identifier {
     NSParameterAssert(identifier.length > 0);
 
-    [reusableView removeFromSuperview];
+    // Retirement already detached the view in the usual case; a second call costs a
+    // full UIKit hierarchy update for nothing.
+    if (reusableView.superview) [reusableView removeFromSuperview];
     // Dequeue owns prepareForReuse; a view may remain queued indefinitely.
 
     // enqueue cell

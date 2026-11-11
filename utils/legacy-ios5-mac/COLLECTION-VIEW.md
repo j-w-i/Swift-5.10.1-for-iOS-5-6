@@ -457,3 +457,16 @@ multi-section cold 1.015, multi-section scroll 0.997. So only the size-change wo
 moved, from about 1.88x to about 1.37x native. That is an estimate from multiplying
 medians measured in separate runs, not a measured ratio. Reload (1.75x), scroll (1.34x)
 and cold layout (1.08x) are unchanged and still slower than native.
+
+Same round: reload profile (simulator, current code) shows `removeFromSuperview` at
+18.8% of main-thread time, and a probe (`reloadsem.m`-style, logging overridden
+`removeFromSuperview`) showed PST calling it twice per cell on reload: once while
+retiring and again when queueing for reuse. Native UIKit's cells still have a
+superview when `cellForItem` runs after a reload; PST's do not. `queueReusableView`
+now skips the second call when the view is already detached. Six alternating pairs on
+the iPhone 6 against the previous build, new/old PST median: reload 0.979 (6/6 faster),
+item-size 0.986 (6/6), bounds 0.988, multi-section cold 0.991 (6/6), idle 0.986, scroll
+0.995, multi-section scroll 0.972, cold 0.998, batch 1.000. A small gain, not a fix:
+reload is still roughly 1.7x native. The profile's remaining time is `insertSubview`
+(about 38%, UIKit) and view dequeue/creation. The cell-with-superview difference is
+not changed (native keeps the retired cell attached until it is reused).
