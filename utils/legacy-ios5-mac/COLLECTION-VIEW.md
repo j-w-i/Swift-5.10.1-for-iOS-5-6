@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The last failing value is a packing difference, not gap arithmetic (round 209)
+
+The layouts gate fails on exactly one value: `horizontal narrow`, initial step, content width 773.09 against
+native's 707.09 (+66). Dumped the item rects and compared the x positions, which localises it precisely:
+
+| | items 16-18 |
+| --- | --- |
+| native | (373, 8), (379, 8), (385, 8) - one item per column, x advancing by 6 |
+| PST | (375, 8), (375, 105), (375, 202) - three items per column, y advancing by 97 |
+
+So in native, the cross axis holds **one** item of that section per column; in PST it holds **three**. With item
+size 90 and a 7 gap, "three per column" needs a cross extent of ~286, and "one per column" needs the assumed
+size to exceed ~139. The section width then differs by exactly one column plus one interstice (60 + 6 = 66),
+which is why it looked like a trailing-gap bug and is not one: both accumulation paths already handle the final
+row correctly (lines 184-187 and 576-579 of `PSTGridLayoutSection.m`).
+
+The cause is therefore the same one the estimate work has been circling: **native and PST disagree on the size
+of an item in a section that has not been displayed yet**, and that disagreement changes how many items fit
+across the axis, which changes the column count, which changes the section width.
+
+This is a much sharper statement of the remaining gap than "one content-size step is off": the failing number,
+the mechanism (perRow), and the reason (estimate at packing time) are all now identified, and no further
+arithmetic change in the size accumulation can fix it.
+
 ## The settle seam makes visible frames worse, not better (round 208)
 
 Implemented the seam identified in round 207: the flow layout got `-pstSettleMaterialisationInRect:`, the data
