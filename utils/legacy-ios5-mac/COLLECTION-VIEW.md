@@ -417,3 +417,19 @@ shows the detail. This is closer to native than the fixed estimate was (PST's ea
 gap was up to the whole estimate-versus-mean difference), but it is not a match.
 Existing gates still pass: automatic-size (the 2 known subpixel differences remain),
 self-sizing mutation, delegate precedence, 14 geometry scenarios.
+
+### Round 75: Apple route given the same mean proposal (unit-level only)
+
+`UICCollectionViewDisplay.m` (iOS 6/7 self-sizing) now follows the PST rule: the
+estimate seeds the first layout, then unmeasured items are proposed at the mean of
+the cell-reported sizes, frozen when the layout is rebuilt; a re-reported item
+replaces its earlier size in the mean; delegate seeds are not counted; resetting
+clears it. `collection_size_hook_test.m` checks the arithmetic (seed, frozen until
+rebuild, mean of reports, replace-not-add, measured item keeps its own size, reset)
+and passes on the simulator and as an armv7 executable on the iPhone 6. The runtime
+compiles for armv7, armv7s and arm64.
+
+**Not verified:** this has never run inside Apple's iOS 6/7 flow layout. The iPod
+touch 5 has not been connected, and no oracle exists for how iOS 6/7's own engine
+responds to these proposals. The rule is copied from PST, which was fitted to the iOS
+27 and iOS 10 native behaviour, so on iOS 6/7 it is a hypothesis.

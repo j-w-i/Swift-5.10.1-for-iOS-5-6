@@ -138,6 +138,8 @@ void UICInstallCollectionViewDisplay(void) {
 // differs the layout is invalidated and laid out again, bounded to a few rounds.
 
 static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey;
+// Sum/count of cell-reported sizes and the mean frozen for the current rebuild (see UICSizeForItem).
+static char UICReportedKey, UICProposalKey;
 static char UICSizeWrapperKey;
 static IMP UICOriginalLayoutSubviews, UICOriginalPrepareLayout, UICOriginalReloadData;
 static IMP UICOriginalInvalidateFlowLayout;
@@ -160,11 +162,35 @@ static CGSize UICSizeForItem(id layout, NSIndexPath *indexPath) {
     CGSize estimate = [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
     // UIKit uses a 50x50 seed for automaticSize, even when itemSize was changed.
     // Never feed the CGFLOAT_MAX sentinel to the iOS 6/7 layout engine.
-    return CGSizeEqualToSize(estimate, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)) ? CGSizeMake(50, 50) : estimate;
+    if (CGSizeEqualToSize(estimate, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX))) estimate = CGSizeMake(50, 50);
+    // Once cells have reported sizes UIKit proposes their mean for unmeasured items; the
+    // estimate only seeds the first layout. The mean is frozen per rebuild by UICFreezeProposal.
+    NSValue *proposal = objc_getAssociatedObject(layout, &UICProposalKey);
+    return proposal ? [proposal CGSizeValue] : estimate;
+}
+/// Records a cell-reported size (replacing an earlier one for the same path) in the running sum.
+static void UICAccumulateReported(id layout, CGSize size, const CGSize *old) {
+    NSMutableArray *r = objc_getAssociatedObject(layout, &UICReportedKey); // @[sumW, sumH, count]
+    if (!r) { r = [NSMutableArray arrayWithObjects:@0.0, @0.0, @0, nil]; objc_setAssociatedObject(layout, &UICReportedKey, r, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    double w = [[r objectAtIndex:0] doubleValue], h = [[r objectAtIndex:1] doubleValue]; NSUInteger n = [[r objectAtIndex:2] unsignedIntegerValue];
+    if (old) { w -= old->width; h -= old->height; } else n++;
+    [r replaceObjectAtIndex:0 withObject:@(w + size.width)];
+    [r replaceObjectAtIndex:1 withObject:@(h + size.height)];
+    [r replaceObjectAtIndex:2 withObject:@(n)];
+}
+/// Freezes the mean of the reported sizes as the proposal for the next layout rebuild.
+static void UICFreezeProposal(id layout) {
+    NSArray *r = objc_getAssociatedObject(layout, &UICReportedKey);
+    NSUInteger n = [[r objectAtIndex:2] unsignedIntegerValue];
+    if (!r || !n) return;
+    CGSize mean = CGSizeMake([[r objectAtIndex:0] doubleValue] / (double)n, [[r objectAtIndex:1] doubleValue] / (double)n);
+    objc_setAssociatedObject(layout, &UICProposalKey, [NSValue valueWithCGSize:mean], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 static void UICResetMeasured(id layout) {
     objc_setAssociatedObject(layout, &UICMeasuredKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(layout, &UICStableKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(layout, &UICReportedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(layout, &UICProposalKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 /// The delegate hook: UIKit's flow layout calls this once the delegate responds to it.
@@ -277,7 +303,11 @@ static BOOL UICMeasureVisibleCells(UICollectionView *collectionView) {
         UICollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:[proposal copy]];
         CGSize size = preferred ? preferred.size : proposal.size;
         CGSize current = UICSizeForItem(layout, indexPath);
+        NSValue *previous = [measured objectForKey:indexPath];
+        CGSize previousSize = previous ? [previous CGSizeValue] : CGSizeZero;
         [measured setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+        // Delegate seeds are stored in `measured` too, but only cell reports feed the mean.
+        UICAccumulateReported(layout, size, previous ? &previousSize : NULL);
         if (CGSizeEqualToSize(size, current)) [stable addObject:indexPath];
         else { [stable removeObject:indexPath]; changed = YES; }
     }
@@ -290,6 +320,7 @@ static void UICLayoutSubviews(UICollectionView *self, SEL _cmd) {
     if (running) return;                                   // already inside the measuring loop
     objc_setAssociatedObject(self, &UICRoundsKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     for (int round = 0; round < 6 && UICMeasureVisibleCells(self); round++) {
+        UICFreezeProposal([self collectionViewLayout]);
         [[self collectionViewLayout] invalidateLayout];
         ((void (*)(id, SEL))UICOriginalLayoutSubviews)(self, _cmd);
     }

@@ -79,6 +79,23 @@ int main(void) { @autoreleasepool {
     Class attributesClass=[UICollectionViewLayoutAttributes class];
     IMP nativeTransform=class_getMethodImplementation(attributesClass,@selector(transform));
     IMP nativeSetTransform=class_getMethodImplementation(attributesClass,@selector(setTransform:));
+    {   // Running-mean proposal: estimate seeds the first layout, then the mean of cell reports.
+        UICollectionViewFlowLayout *mean=[UICollectionViewFlowLayout new];
+        UICEstimatedItemSizeSetter(mean,NULL,CGSizeMake(200,40));
+        NSIndexPath *p0=[NSIndexPath indexPathForItem:0 inSection:0], *p1=[NSIndexPath indexPathForItem:1 inSection:0], *p9=[NSIndexPath indexPathForItem:9 inSection:0];
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p9),CGSizeMake(200,40)), @"estimate seeds first layout");
+        UICAccumulateReported(mean,CGSizeMake(200,30),NULL); UICAccumulateReported(mean,CGSizeMake(200,36),NULL);
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p9),CGSizeMake(200,40)), @"proposal frozen until rebuild");
+        UICFreezeProposal(mean);
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p9),CGSizeMake(200,33)), @"unmeasured items take the mean of reports");
+        UICAccumulateReported(mean,CGSizeMake(200,50),&(CGSize){200,36}); // item re-reported: replace, not add
+        UICFreezeProposal(mean);
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p9),CGSizeMake(200,40)), @"re-report replaces the earlier size (30,50 -> 40)");
+        objc_setAssociatedObject(mean,&UICMeasuredKey,[NSMutableDictionary dictionaryWithObject:[NSValue valueWithCGSize:CGSizeMake(200,77)] forKey:p0],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p0),CGSizeMake(200,77)), @"measured item keeps its own size");
+        UICResetMeasured(mean);
+        require(CGSizeEqualToSize(UICSizeForItem(mean,p1),CGSizeMake(200,40)), @"reset returns to the estimate");
+    }
     UICInstallAttributesTransform(attributesClass);
     require(nativeTransform==class_getMethodImplementation(attributesClass,@selector(transform)) && nativeSetTransform==class_getMethodImplementation(attributesClass,@selector(setTransform:)), @"native affine property unchanged");
     UICInstallAttributesTransform([LegacyAttributesDouble class]);
