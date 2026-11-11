@@ -1,5 +1,27 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Instrumented run: the fit path is reached and records (round 190)
+
+Added temporary tracing (fit reached / changed / shouldInvalidate, context creation with the reported size, and
+`measured`/`runs` counts at every rebuild), ran the display-lifecycle probe, then removed it all - the tree is
+back at the committed state (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
+What the trace showed:
+
+* every cell in the pass **is** fitted during preparation (`fit item=N changed=... should=...`), and when the
+  report differs the context is created with that size (`ctx item=0 size=60.0`);
+* a rebuild follows each context creation and the layout then holds `measured=1`, i.e. the report *is* stored;
+* the measured count only rises when a report differs from the **current proposal**. A cell that agrees with
+  the proposal takes the equal branch, which stores its size but deliberately does not add it to the mean (that
+  has been the model since the early rounds). So "measured stays 1" is expected behaviour, not a bug.
+
+So for this probe the pipeline works end to end: fit during preparation, record, rebuild. The layouts scenario
+(cells reporting 30/38/46/54/62 against an estimate of 40) still produced content pinned at the pure estimate
+in round 188, which this trace does **not** reproduce, so its cause is scenario-specific and still unknown.
+
+Next step is the same instrumentation applied to the layouts scenario, where the difference actually appears -
+that is now a targeted measurement with a known-good control, not a guess.
+
 ## The stored-size reuse path is not what loses the report (round 189)
 
 Round 188 narrowed the remaining defect to "sizes reported during preparation never reach the rebuild that
