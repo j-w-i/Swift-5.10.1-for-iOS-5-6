@@ -1,5 +1,21 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## PST route re-measured on iOS 5 hardware at HEAD (round 175)
+
+The context/predicate/cache API added in rounds 144-173 is used by the layout's invalidation path, so the PST
+route was re-measured on the **iPod touch 3 (iOS 5.1.1, armv7)** at the current commit, 5,000 self-sizing
+items:
+
+| Configuration | cold | scroll | reload |
+| --- | ---: | ---: | ---: |
+| no size delegate | 147.7 ms (fits=18) | 16.9 ms | 146.7 ms |
+| with size delegate | 287.5 ms (fits=9) | 3.0 ms | 335.0 ms |
+
+Against the pre-context-API numbers recorded earlier (142/16.7/144.4 ms and 300/2.8/300 ms) every figure is
+within run-to-run noise, so the new API surface costs nothing on the oldest supported hardware. Objective item
+(iv) for the PST route is therefore still satisfied at HEAD; the iOS 6.1 paired numbers for the Apple route
+were recorded in round 165.
+
 ## Fifth attempt: fit-once-per-instance plus restart (round 174)
 
 Built on round 168's restart with the missing piece: a cell instance is fitted **once**, marked, and the mark is
