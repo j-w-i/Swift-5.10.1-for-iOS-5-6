@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Fitting-priorities gate restored; stale harness source lists (round 181)
+
+`run-fitting-tests.sh` (the `systemLayoutSizeFitting` / fitting-priority suite, scope item 1) had the same
+defect as the Auto Layout harness: `49e3e408` added `LegacyLinearSolver.swift` without adding it to the
+runner's source list, and the engine's debug paths downcast to `UIView`, which a host build lacks. Fixed both
+(same approach as round 173: list the source, provide host-only `UIView`/`UIWindow`/`UIScreen` stand-ins under
+`#if !canImport(UIKit)`).
+
+Now passing: fitting size, edge insets, non-mutating measurement, ordinary layout unchanged; required-to-optional
+mutation invalidates the folded presolve value; pinned chat parent survives stack fitting changes and input
+insertion.
+
+Swept the remaining harnesses for the same staleness - only these two referenced `LegacyLayoutSolver`, and both
+now list `LegacyLinearSolver`, so no other suite is silently skipping a source.
+
+### Device note
+
+The iPod touch 5 was left with two of this session's benchmark apps still running (`PairedBench` mid-run and
+`HookTrace`), which hung SpringBoard (SSH alive, UI frozen). Killed both, respringed SpringBoard, confirmed
+clean (no `org.example` processes, SpringBoard back). Lesson recorded: these device probes are persistent by
+design and must be terminated after use rather than left resident, especially the 5,000-item self-sizing
+benchmark on a 512 MB device.
+
 ## Apple route re-verified on real UIKit 6.1.3 hardware (round 180)
 
 Re-ran `Tests/run-apple-route-ios6-device.sh` on the attached **iPod touch 5 (iOS 6.1.3)** - the only test
