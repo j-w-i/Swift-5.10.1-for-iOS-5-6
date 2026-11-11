@@ -2149,3 +2149,13 @@ Foundation internals; not done.
 Consequence: any app that logs or depends on the order in which `preferredLayoutAttributesFitting` is called
 during the confirmation pass will see a different order on iOS 6-9 and on PST than on iOS 27. The geometry
 produced is the same.
+
+### Retraction: the three-column fit-order mismatch is not explained by NSIndexPath hashing
+
+The previous correction suggested that native's interleaved fit order on the three-column fixture
+(`[0,3,1,6,4,7,9,10,2,5,8]`) might be the same `NSDictionary` ordering effect as the confirmation pass. That
+was an untested guess, and it is wrong. Enumerating the pending set at each batch as a dictionary of index
+paths on iOS 27 gives `6,1,4,7,2,5,0,8,3` for the first batch (native fitted `0,3,1,6`), `9,4,7,2,10,5,8` for
+the second (native fitted `4,7,9,10`) and `5,8,2` for the third (native fitted `2`). Only the final
+confirmation pass follows dictionary order; the fitting batches follow a layout rule that is still unknown.
+The three-column fixture therefore remains inexact (9 of 10 stepped fixtures) for an unexplained reason.
