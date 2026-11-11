@@ -1,5 +1,15 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Context adjustment timing (round 149)
+
+Base context execution now applies explicit content-size and offset deltas synchronously, before the next
+layout. Native differential verification: offset 50 plus 7 immediately becomes 57; content height 400 plus
+20 immediately becomes 420, then returns to the layout's authoritative 400 after preparation. Repeated
+positive/negative vertical adjustments also match. A separate strict `--cross-axis` test exposes a remaining
+clamping difference with undersized content: native clamps a repeated negative x adjustment to 0 while PST
+reports -3 immediately (both settle to 0). This mode intentionally fails; no failure allowance. The new
+path is not used by the existing self-sizing scheduler. Context execution is still incomplete.
+
 ## Base context execution (round 148)
 
 Added the base layout's context invalidation entry point and a cache operation that preserves data-source

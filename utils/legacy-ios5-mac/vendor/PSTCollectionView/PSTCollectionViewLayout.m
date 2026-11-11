@@ -290,6 +290,17 @@
     } else {
         [[_collectionView collectionViewData] invalidateLayoutPreservingItemCounts];
     }
+    // UIKit applies explicit deltas synchronously; the next preparation supplies the authoritative content size.
+    CGSize sizeDelta = context.contentSizeAdjustment;
+    if (!CGSizeEqualToSize(sizeDelta, CGSizeZero)) {
+        CGSize size = _collectionView.contentSize;
+        _collectionView.contentSize = CGSizeMake(size.width + sizeDelta.width, size.height + sizeDelta.height);
+    }
+    CGPoint offsetDelta = context.contentOffsetAdjustment;
+    if (!CGPointEqualToPoint(offsetDelta, CGPointZero)) {
+        CGPoint offset = _collectionView.contentOffset;
+        _collectionView.contentOffset = CGPointMake(offset.x + offsetDelta.x, offset.y + offsetDelta.y);
+    }
     [_collectionView setNeedsLayout];
 }
 

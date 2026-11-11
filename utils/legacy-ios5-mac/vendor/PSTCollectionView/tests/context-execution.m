@@ -31,4 +31,22 @@ int main(void){@autoreleasepool{
  [l invalidateLayoutWithContext:x];[v layoutIfNeeded];
  printf("mode=%d prepared=%d recounted=%d\n",mode,prepares>p,counts>c);
  }
+ v.contentOffset=CGPointMake(0,50);[v layoutIfNeeded];
+ UICollectionViewLayoutInvalidationContext*adjustment=[UICollectionViewLayoutInvalidationContext new];
+ adjustment.contentOffsetAdjustment=CGPointMake(0,7);adjustment.contentSizeAdjustment=CGSizeMake(0,20);
+ [l invalidateLayoutWithContext:adjustment];
+ printf("immediate offset=%.0f size=%.0f\n",v.contentOffset.y,v.contentSize.height);
+ [v layoutIfNeeded];
+ printf("settled offset=%.0f size=%.0f\n",v.contentOffset.y,v.contentSize.height);
+ for(int sign=-1;sign<=1;sign+=2){
+ UICollectionViewLayoutInvalidationContext*delta=[UICollectionViewLayoutInvalidationContext new];
+ #ifdef TEST_CROSS_AXIS_ADJUSTMENT
+ delta.contentOffsetAdjustment=CGPointMake(sign*3,sign*4);delta.contentSizeAdjustment=CGSizeMake(sign*10,sign*15);
+#else
+ delta.contentOffsetAdjustment=CGPointMake(0,sign*4);delta.contentSizeAdjustment=CGSizeMake(0,sign*15);
+#endif
+ [l invalidateLayoutWithContext:delta];[l invalidateLayoutWithContext:delta];
+ printf("repeated sign=%d immediate=%.0f,%.0f %.0f,%.0f\n",sign,v.contentOffset.x,v.contentOffset.y,v.contentSize.width,v.contentSize.height);
+ [v layoutIfNeeded];printf("repeated sign=%d settled=%.0f,%.0f %.0f,%.0f\n",sign,v.contentOffset.x,v.contentOffset.y,v.contentSize.width,v.contentSize.height);
+ }
 }return 0;}
