@@ -93,3 +93,42 @@ violates (9/20/27).
 All work sits behind the flow layout's self-sizing path with the existing gates as the acceptance boundary.
 If any gate cannot be made green, revert to the round-162 baseline, which is the state verified today
 (layouts 31/32, 0 of 210 frames, preferred-context staging passing, lifecycle failing as documented).
+
+## Addendum (after rounds 195-202): the estimate is a function of layout state
+
+The remaining behavioural gap is no longer "which formula". Five variants were measured against the iOS 27
+oracle and none wins everywhere:
+
+| Variant | layouts steps exact | scenario-0 content deltas (initial..step3) |
+| --- | ---: | --- |
+| global running mean (pre-195) | 1/32 | large, direction varies |
+| per-section mean as proposal fallback (195, committed) | 15/32 | -37, -12, 0, +196 |
+| per-section mean only inside learned runs (202) | 4/32 | -64, -38, -9, +14 |
+| global mean fallback for unmeasured sections (196) | 2/32 | breaks baseline entirely |
+| no change to fallback, cache fix only (194) | 1/32 | stale |
+
+A wins the early steps, B wins the late ones, and the geometric localisation of A's outlier showed a single
+report being applied to a whole section that native had not reached. Taken together this says the estimate is a
+function of **what has been laid out so far**, not of which items happen to have reports: native extends its
+valid range as the view scrolls, and the estimate grows over the region it has materialised.
+
+### What that means for the implementation
+
+1. The estimate lookup needs the materialised range, so it belongs where the layout knows it - in the flow
+   layout's size query, not in a static proposal expression. `pstEstimateForSection:` becomes
+   `pstEstimateForSection:throughRow:`: measured mean for rows inside the materialised range, the plain
+   estimate beyond it.
+2. That only has meaning if non-uniform sections are also laid out lazily. Today only uniform packed sections
+   are (round 185); variable sections still call `computeLayout` and materialise everything, so their materialised
+   range is "all rows" and the rule degenerates to variant A. Extending the lazy path to variable sections is
+   therefore the prerequisite - `pstBreakPackedRows*` and `pstLayOutPackedRowsFrom:to:` already separate row
+   breaking from row layout, which is what makes that possible.
+3. Acceptance is unchanged and already instrumented: `run-selfsizing-layouts-test.sh --gate --fit-parity`
+   (per-scenario content deltas and the fitted-item set), then the 24 other collection gates, then the paired
+   device bench against a worktree baseline.
+
+### What not to do again
+
+Tuning the expression is exhausted: rounds 195, 196 and 202 each changed only the formula and each fixed one
+scenario while breaking others. Any further attempt should carry the materialised range into the estimate,
+which is a change of data flow, not of arithmetic.
