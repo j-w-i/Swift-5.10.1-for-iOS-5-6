@@ -5,6 +5,16 @@ static PSTGridLayoutSection *make(PSTGridLayoutInfo *info,CGSize *sizes,NSIntege
  PSTGridLayoutSection*s=[info addSection];s.headerDimension=17;s.footerDimension=13;s.sectionMargins=UIEdgeInsetsMake(3,5,7,9);s.verticalInterstice=4;s.horizontalInterstice=6;
  CGSize*buffer=[s preparePackedItems:count];for(NSInteger i=0;i<count;i++)buffer[i]=sizes[i];[s computeLayout];return s;
 }
+static PSTGridLayoutInfo *makeInfo(BOOL horizontal,CGSize sizes[3][31]){
+ PSTGridLayoutInfo*info=[PSTGridLayoutInfo new];info.horizontal=horizontal;info.selfSizing=YES;info.dimension=194;
+ CGFloat offset=0;
+ for(int s=0;s<3;s++){
+ PSTGridLayoutSection*section=make(info,sizes[s],31);CGRect frame=section.frame;
+ if(horizontal)frame.origin.x=offset;else frame.origin.y=offset;section.frame=frame;
+ offset+=horizontal?frame.size.width:frame.size.height;
+ }
+ info.contentSize=horizontal?CGSizeMake(offset,194):CGSizeMake(194,offset);return info;
+}
 int main(void){@autoreleasepool{
  NSUInteger checks=0;
  for(int horizontal=0;horizontal<2;horizontal++)for(int columns=1;columns<=3;columns++){
@@ -26,5 +36,20 @@ int main(void){@autoreleasepool{
  CGSize cross=sizes[0];if(horizontal)cross.height++;else cross.width++;
  if([incremental updatePackedItemAtIndex:0 size:cross scrollDelta:NULL])return 6;
  }
- printf("PASS: %lu incremental packed-row updates equal complete rebuilds (both axes, 1-3 columns)\n",(unsigned long)checks);
+ for(int horizontal=0;horizontal<2;horizontal++){
+ CGSize sizes[3][31];for(int s=0;s<3;s++)for(int i=0;i<31;i++)sizes[s][i]=horizontal?CGSizeMake(30+(i+s)%5*4,50):CGSizeMake(50,30+(i+s)%5*4);
+ PSTGridLayoutInfo*info=makeInfo(horizontal,sizes);
+ for(int step=0;step<30;step++){
+ int s=step%3,i=(step*7)%31;CGSize next=sizes[s][i];if(horizontal)next.width=25+step%7*9;else next.height=25+step%7*9;sizes[s][i]=next;
+ if(![info updatePackedItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:s] size:next scrollDelta:NULL])return 7;
+ PSTGridLayoutInfo*rebuilt=makeInfo(horizontal,sizes);
+ if(!CGSizeEqualToSize(info.contentSize,rebuilt.contentSize))return 8;
+ for(int k=0;k<3;k++){
+ PSTGridLayoutSection*a=info.sections[k],*b=rebuilt.sections[k];if(!near(a.frame,b.frame)||!near(a.footerFrame,b.footerFrame))return 9;
+ for(NSInteger r=0;r<a.rowCount;r++)if(!near([a rowFrameAtIndex:r],[b rowFrameAtIndex:r]))return 10;
+ }
+ checks++;
+ }
+ }
+ printf("PASS: %lu incremental updates equal complete rebuilds (both axes, 1-3 columns and sections)\n",(unsigned long)checks);
 }return 0;}

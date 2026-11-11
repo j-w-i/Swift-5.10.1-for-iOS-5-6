@@ -1,5 +1,15 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Incremental section propagation (round 155)
+
+The layout-info layer now routes a packed scrolling-axis size update into its section, shifts every later
+section by the returned delta and updates only the scrolling-axis content extent. Invalid section/item or
+cross-axis updates are rejected. Extended rebuild-equivalence testing to 60 further updates across three
+sections on both axes, comparing content extent, all section/footer frames and all row frames; 180 total
+updates pass, as does armv7 syntax checking. This operation is not connected to flow contexts yet. Work is
+still proportional to later rows/sections; this does not claim Apple's lazy valid-range complexity or a
+new performance measurement.
+
 ## Incremental packed row-size primitive (round 154)
 
 Added a section operation for a positive finite scrolling-axis-only item-size change: update the item's

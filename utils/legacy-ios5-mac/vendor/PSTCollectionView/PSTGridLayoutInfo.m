@@ -63,6 +63,28 @@
     return itemFrame;
 }
 
+- (BOOL)updatePackedItemAtIndexPath:(NSIndexPath *)indexPath size:(CGSize)size scrollDelta:(CGFloat *)delta {
+    if (delta) *delta = 0;
+    NSInteger sectionIndex = indexPath.section;
+    if (!indexPath || sectionIndex < 0 || sectionIndex >= (NSInteger)_sections.count) return NO;
+    PSTGridLayoutSection *section = [_sections objectAtIndex:sectionIndex];
+    CGFloat change = 0;
+    if (![section updatePackedItemAtIndex:indexPath.row size:size scrollDelta:&change]) return NO;
+    if (change != 0) {
+        for (NSUInteger i = (NSUInteger)sectionIndex + 1; i < _sections.count; i++) {
+            PSTGridLayoutSection *later = [_sections objectAtIndex:i];
+            CGRect frame = later.frame;
+            if (self.horizontal) frame.origin.x += change; else frame.origin.y += change;
+            later.frame = frame;
+        }
+        CGSize content = self.contentSize;
+        if (self.horizontal) content.width += change; else content.height += change;
+        self.contentSize = content;
+    }
+    if (delta) *delta = change;
+    return YES;
+}
+
 - (id)addSection {
     PSTGridLayoutSection *section = [PSTGridLayoutSection new];
     section.rowAlignmentOptions = self.rowAlignmentOptions;
