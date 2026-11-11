@@ -1,5 +1,16 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Named item contexts: unresolved content-size cache difference (round 152)
+
+Extended the flag probe to invalidate item 0 explicitly. With both flags YES, native and PST both re-query
+all eight delegate sizes (paths 0 through 7), change item 0 height to 60 and item 1 origin to 60. But native
+reports content height 320 after the pass while PST reports 480. Without a named item both report 480.
+The other named-item flag combinations match. This is retained as strict `--named-items` mode on the flow
+context test, currently failing, not patched with a guessed content-size exception. Default six-case mode
+continues to pass. It demonstrates a data-cache/context interaction still missing from the implementation;
+it does not establish that native permanently retains the old content size or that only one item's size
+is re-queried. No runtime change made for this finding.
+
 ## Coalesced flow invalidation (round 151)
 
 Extended the flag differential test to queue a metrics-rebuild context and a geometry-preserving context in
