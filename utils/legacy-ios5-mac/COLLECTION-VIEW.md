@@ -905,3 +905,41 @@ Scroll (about 215-235 us) and reload (about 810-830 us) are flat. A resize at 5,
 runs one pass over the items to count a row, and cell and view bookkeeping), roughly 0.2 us per
 item. Not yet remeasured: variable-size and self-sizing sections, which still build a row object
 per row and an item object per item.
+
+### Round 94: variable-size and self-sizing sections measured against item count
+
+Same phone and probe shape as round 92 (`scaling-all.m`), but with a
+`collectionView:layout:sizeForItemAtIndexPath:` delegate instead of a fixed item size, and then
+with `estimatedItemSize` set as well. Microseconds.
+
+**Variable size (delegate reports 40-70 pt heights).** This corrects round 92's guess that
+variable-size sections still scale badly: they do not, and they are close to native.
+
+| Items | Cold, native | Cold, PST | Scroll step, native | Scroll step, PST | Reload, native | Reload, PST |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 200 | 13,781 | 8,269 | 309 | 290 | 3,970 | 2,784 |
+| 1,000 | 10,226 | 12,755 | 273 | 175 | 14,434 | 10,996 |
+| 5,000 | 36,782 | 38,302 | 309 | 230 | 75,016 | 50,651 |
+
+Both engines are O(items) here because both ask the delegate per item, so the delegate call
+dominates and PST is at or better than native on every measurement except cold layout at 1,000
+items. The per-row object cost that mattered for fixed sizes is buried under that.
+
+**Self-sizing (`estimatedItemSize` plus the delegate).** A real difference, in where the work
+happens rather than how much:
+
+| Items | Cold, native | Cold, PST | Scroll step, native | Scroll step, PST |
+| ---: | ---: | ---: | ---: | ---: |
+| 200 | 9,674 | 12,618 | 627 | 247 |
+| 1,000 | 6,632 | 14,356 | 1,356 | 244 |
+| 5,000 | 18,418 | 54,128 | 6,109 | 248 |
+
+Native measures lazily: its scroll cost grows with the data set (627 to 6,109 us per step) and its
+cold cost stays low. PST measures every item in one pass during layout, so its scroll cost is
+flat (about 245 us) and its cold cost is 2.9x native's at 5,000 items. This is the same design
+difference behind the known stepped-self-sizing geometry mismatch, and it is not a matter of
+making one loop faster: matching native's scroll cost profile would mean measuring only what is
+about to become visible, which changes when cells are created, when
+`preferredLayoutAttributesFitting` runs, and therefore the content height that the existing
+self-sizing gates check. Not started; it needs its own round with the self-sizing gates as the
+safety net.
