@@ -1422,3 +1422,35 @@ native model reproducibly, and the initial-only fitting budget remains separatel
 implementation needs row-aware/multi-column evidence and a bounded measurement schedule, rather
 than simply replacing PST's global mean with an untested per-item heuristic. Shipping code and device
 state are unchanged this round; no hardware performance or completed parity claim is made.
+
+### Round 109: grid counterexamples distinguish previous-row caching and changed reports
+
+The trace now accepts fixed item width and records full rectangles. Four two-/three-column
+configurations compare ordinary and instrumented native layouts with widths 90/60 in a 200-point
+viewport, heights 60/120/240 and scroll steps 100/120/200. Full rectangles, fitting sequence, requests,
+visibility, content size and offset match with instrumentation in all cases.
+
+Eight competing response models are compared explicitly. Two-column cases alone are ambiguous, but
+three-column cases reject updating from the previous item or merely the row containing that item.
+Updating from the **previous whole row** and caching a new report **only when it differs from the
+proposal** reproduces all **1440 native item heights** in these four fixtures. One three-column case
+has 219 height errors if every report is cached instead. The checked diagnostic requires both this
+winning response model and counterexamples rejecting the naïve alternatives; it is not a PST parity
+gate. The older one-column fixtures do not distinguish the report-caching alternatives.
+
+The equal-proposal distinction also explains the earlier observation at the cache-response level:
+in the three-column/60-high fixture, item 2 first returns its 34-point proposal, yet its snapshot
+attributes subsequently use estimate 35.2. On returning later it reports 34 against a changed proposal
+and is then retained at 34. This is observed layout-attribute behaviour, not a claim about every live
+cell frame or an algorithm inferred from disassembly.
+
+PST grid differences remain explicit. For width 60/viewport height 120, initial native/PST content is
+810/766 with 57 rectangles differing; after y=200 it is 1011/1151. Width-90 fixtures can have equal
+content heights yet still differ in 4 or 6 initial rectangles. The single-column initial geometry and
+8-fitting budget still pass; the six-case one-column response matrix still passes too.
+
+This rejects an unsafe per-item cache patch before shipping it. The supported next prototype is a
+compact row-range cache with changed-report means, followed by full measurement-scheduling/rectangle
+checks before promotion. Variable widths, incomplete rows, multiple sections, horizontal flow, native
+batch prediction and pixel rounding remain outside these fixed-width models. No production runtime,
+physical-device state or published artifact changes this round.

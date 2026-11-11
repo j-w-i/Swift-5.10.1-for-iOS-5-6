@@ -4,7 +4,9 @@
 Input: artifacts from trace-selfsizing-steps.sh SIM --matrix.
 Model: preserve known fitted sizes; after a preferred invalidation batch, assign the
 running mean to unknown items starting one item before the batch's first index.
-Do not infer batching, multi-column behaviour, pixel rounding, or full layout parity.
+This one-column fixture does not distinguish changed-only from all-report caching;
+the column probe exercises that distinction. Do not infer batching, multi-column
+behaviour, pixel rounding, or full layout parity.
 """
 import json
 import pathlib
@@ -22,8 +24,8 @@ pairs += [(path, path.with_name(path.stem + '-events.jsonl'))
 failures = 0
 for plain_path, event_path in pairs:
     plain, instrumented = records(plain_path), records(event_path)
-    fields = ('frames', 'fittings', 'requests', 'visible', 'contentHeight', 'offset')
-    transparent = all(all(a[key] == b[key] for key in fields) for a, b in zip(plain, instrumented))
+    fields = ('frames', 'rects', 'fittings', 'requests', 'visible', 'contentHeight', 'offset')
+    transparent = all(all(a.get(key) == b.get(key) for key in fields) for a, b in zip(plain, instrumented))
     if not transparent:
         print('REJECT instrumented subclass changed baseline:', plain_path.name)
         failures += 1

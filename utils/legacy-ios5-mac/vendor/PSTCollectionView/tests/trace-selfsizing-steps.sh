@@ -1,9 +1,9 @@
 #!/bin/bash
 # Trace by default; --check-initial-fittings gates ONLY initial geometry/fitting-call budget.
 # --matrix validates a native fixed-fixture height-cache hypothesis, never PST stepped parity.
-# Usage: bash trace-selfsizing-steps.sh BOOTED_SIMULATOR_UUID [--check-initial-fittings|--matrix]
+# Usage: bash trace-selfsizing-steps.sh BOOTED_SIMULATOR_UUID [--check-initial-fittings|--matrix|--columns]
 set -euo pipefail
-CHECK=${2:-trace};[[ "$CHECK" = trace || "$CHECK" = --check-initial-fittings || "$CHECK" = --matrix ]] || exit 64
+CHECK=${2:-trace};[[ "$CHECK" = trace || "$CHECK" = --check-initial-fittings || "$CHECK" = --matrix || "$CHECK" = --columns ]] || exit 64
 SIM=${1:?booted simulator uuid};HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P);SRC="$HERE/.."
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/selfsizing-step-trace.XXXXXX");SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
 FLAGS=(-target arm64-apple-ios17.0-simulator -isysroot "$SDK" -O2 -fobjc-arc -fblocks -fno-modules
@@ -31,6 +31,15 @@ if [[ "$CHECK" = --matrix ]];then
  # Instrumented subclass is diagnostic only; its geometry/call sequence must match the uninstrumented baseline.
  xcrun simctl spawn "$SIM" "$OUT/native" 120 300 1 0 >"$OUT/native-events.jsonl" 2>"$OUT/native-events.stderr"
 fi
+if [[ "$CHECK" = --columns ]];then
+ for spec in '120 120 0 90' '120 200 0 60' '60 100 0 60' '240 200 0 90';do
+  read -r height step final width <<<"$spec"
+  for mode in native pst;do
+   xcrun simctl spawn "$SIM" "$OUT/$mode" "$height" "$step" 0 "$final" "$width" >"$OUT/$mode-c$width-v$height-s$step.jsonl" 2>"$OUT/$mode-c$width-v$height-s$step.stderr"
+  done
+  xcrun simctl spawn "$SIM" "$OUT/native" "$height" "$step" 1 "$final" "$width" >"$OUT/native-c$width-v$height-s$step-events.jsonl" 2>"$OUT/native-c$width-v$height-s$step-events.stderr"
+ done
+fi
 python3 - "$OUT" "$CHECK" <<'PY'
 import json,pathlib,sys
 p=pathlib.Path(sys.argv[1]);native=[json.loads(s) for s in (p/'native.jsonl').read_text().splitlines()];pst=[json.loads(s) for s in (p/'pst.jsonl').read_text().splitlines()]
@@ -47,6 +56,7 @@ if sys.argv[2]=='--check-initial-fittings':
  assert len(a['frames'])==len(b['frames'])==60
  assert all(max(abs(x[0]-y[0]),abs(x[1]-y[1]))<=.51 for x,y in zip(a['frames'],b['frames'])), 'initial geometry mismatch'
  assert abs(a['contentHeight']-b['contentHeight'])<=.51 and a['visible']==b['visible']
+ assert all(max(abs(v-w) for v,w in zip(x,y))<=.51 for x,y in zip(a['rects'],b['rects'])), 'initial full-rect mismatch'
  assert len(b['fittings'])<=len(a['fittings']), 'PST exceeds initial native fitting-call budget'
  print('PASS initial geometry and fitting-call budget ONLY; stepped mismatches above remain')
 if sys.argv[2]=='--matrix':
@@ -61,8 +71,18 @@ if sys.argv[2]=='--matrix':
  instrumented=[json.loads(s) for s in (p/'native-events.jsonl').read_text().splitlines()]
  transparent=len(instrumented)==len(native) and all(all(a[k]==b[k] for k in ('frames','fittings','requests','visible','contentHeight','offset')) for a,b in zip(native,instrumented))
  print('Instrumented subclass matches baseline geometry and fitting sequence:',transparent)
+if sys.argv[2]=='--columns':
+ for file in sorted(p.glob('native-c*.jsonl')):
+  if '-events' in file.stem:continue
+  a=[json.loads(s) for s in file.read_text().splitlines()]
+  b=[json.loads(s) for s in file.with_name(file.name.replace('native-','pst-',1)).read_text().splitlines()]
+  for i in (0,1,4):
+   differences=sum(max(abs(v-w) for v,w in zip(x,y))>.51 for x,y in zip(a[i]['rects'],b[i]['rects']))
+   print('COLUMNS',file.stem,a[i]['phase'],'native/PST content=',(a[i]['contentHeight'],b[i]['contentHeight']),'fittings=',(len(a[i]['fittings']),len(b[i]['fittings'])),'differing_rects=',differences)
 print('Trace artifacts:',p)
 PY
 if [[ "$CHECK" = --matrix ]];then
  python3 "$HERE/analyse-selfsizing-proposals.py" "$OUT"
+elif [[ "$CHECK" = --columns ]];then
+ python3 "$HERE/analyse-selfsizing-columns.py" "$OUT"
 fi
