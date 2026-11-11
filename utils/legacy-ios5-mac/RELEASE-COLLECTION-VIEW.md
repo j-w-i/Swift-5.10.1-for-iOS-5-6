@@ -42,7 +42,8 @@ gate; strict `armv7-apple-ios5.0` compile with `-Werror=unguarded-availability`.
 2. ~~The iOS 5 Swift profile resource is stale.~~ **Resolved**: the toolchain now builds and qualifies
    (overlays -> multiarch -> assemble -> sanitize -> qualify-ios5), and the Swift declaration rule is verified
    against the assembled toolchain (backported API accepted at iOS 5 with the legacy flag, rejected without it,
-   native path unchanged at iOS 8). Publishing the profile into a kit environment is the one remaining command.
+   native path unchanged at iOS 8). **Published** into the kit environment on 12 Nov 02:18
+   (`ios5-profile.json`, 8026 bytes), with the previous profile and toolchain archived rather than deleted.
 3. The iPhone 6 (iOS 10.3.3) native-route gate **passes** (round 253): after installing the backport runtime,
    every modern collection-view entry point still points at Apple's own implementation and Apple's layout still
    self-sizes. Run it with `Tests/run-native-route-ios10-device.sh <ssh-port>`.

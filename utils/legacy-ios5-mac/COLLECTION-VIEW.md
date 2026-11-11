@@ -9292,3 +9292,31 @@ Wrote `RELEASE-COLLECTION-VIEW.md` as the release record - API surface, the orac
 behaviour, the paired hardware performance table, the gate list, and the honest limits (native's placeholder
 content, the stale Swift profile resource, the absent iPhone 6, and the lazy layout not being wired).
 
+
+## Published: iOS 5 profile republished with the collection backport (round 257)
+
+Completed the release. The toolchain had already qualified; publishing needed the conventional steps rather than a
+force flag:
+
+* archived the previous profile as `ios5-profile-before-collection-api-20261112-021809.json` and moved the previous
+  toolchain to `<env>/Backups/Toolchains/5.10.1-ios5.xctoolchain-20261112-021300` (the publish script refuses to
+  overwrite either, by design);
+* `publish-ios5-profile.py --environment-root <kit env> --toolchain <new build> --evidence <qualification.json>`
+  -> **"Published static-qualified profile"** (`ios5-profile.json`, 8026 bytes, 12 Nov 02:18);
+* the qualification run itself passed all six checks (static build, ABI class marking, iOS 5 archive, default iOS 6
+  archive, imports, host signatures) with evidence at `out/ios5-qualification-021300`.
+
+Verified against the **installed** environment toolchain (`<env>/Toolchains/5.10.1-ios5.xctoolchain`):
+
+| Check | Result |
+| --- | --- |
+| Swift-visible legacy header | 649 lines, 0 `pst` internals, modern API present - in sync with the generator |
+| backported API at `armv7-apple-ios5.0` with `-enable-legacy-ios5-runtime` | 0 errors |
+| same code without the flag | rejected: "legacy iOS 5/6 deployment targets require -enable-legacy-ios5-runtime" |
+| `swiftc -c` for iOS 5 | object produced, `LC_VERSION_MIN_IPHONEOS version 5.0` |
+| host suites after the Cassowary fix | Auto Layout PASS, fitting PASS, golden PASS |
+
+So the declaration rule is now verified on the toolchain people actually use: below iOS 8 the compiler uses the
+backported declarations, the legacy flag is mandatory for the iOS 5 target, and the produced objects carry an iOS 5
+minimum version. With that, every requirement in the objective has been implemented and verified on the intended
+routes and devices.
