@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Fifth attempt: fit-once-per-instance plus restart (round 174)
+
+Built on round 168's restart with the missing piece: a cell instance is fitted **once**, marked, and the mark is
+cleared when it is recycled, so a restarted pass does not fit the same instance twice. Combined with
+display-aware invalidation (the pending section estimate is not published while displaying; named contexts
+force a row rebuild and re-read the content size).
+
+Results at the lifecycle level: **exact**. `changed=0` gives 9 displays / 0 before fit and `changed=1` gives
+8 / 0, against native 9/0 and 8/0; visible cell frames stayed exact (0 of 210).
+
+The remaining error is measurable and specific: **PST fits more cells than native**. Per step PST reports
+9, 20, 27 fits against native's 6, 14, 18, and content comes out 1910/1985/1966/2022 against
+1854/1854/1835/1846. Extra fits are cells created for the pre-restart attribute set, recycled and then fitted
+again on their next instance. Native never creates them, because it knows the settled visible set before
+creating anything - it lays out only rows near the visible rect.
+
+So the last gap is not fitting order, cache validity or the estimate formula, all of which are now verified
+correct in isolation. It is that PST computes visible attributes from a layout it then changes, while native
+computes them from a layout that only extends a valid range. That is the valid-range unit: keep per-section
+valid rect/range, extend it instead of invalidating everything, and derive the visible set from it.
+
+Reverted; tree verified at the round-162 baseline (layouts 31/32, 0 of 210 frames, context probe passing).
+No runtime behaviour changed.
+
 ## Auto Layout parity gate restored and passing (round 173)
 
 Finished the repair begun in round 172. Three defects from `49e3e408` were blocking the gate; all are now fixed
