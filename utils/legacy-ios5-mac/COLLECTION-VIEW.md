@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Declaration-lowering gate extended (round 170)
+
+The Swift-facing criterion ("declarations lowered by the compiler only below the OS that ships the API") is
+checked by `check-collection-api.sh`, which compiles a Swift client for `armv7-apple-ios5.0` and
+`armv7-apple-ios6.0`, requires the legacy `PSTCollection*` classes to be referenced at 5.0 and native
+`UICollectionView` at 6.0, and audits the UIKit runtime's exported classes.
+
+That checker **cannot run in this environment**: it requires an installed toolchain containing
+`$TC/usr/lib/swift_ios5`, which is not present here (the collection work has been verified with the
+standalone armv7 clang builds and simulator differential tests instead). Rather than leave it silently
+incomplete, its runtime audit now also requires the two new classes,
+`PSTCollectionViewLayoutInvalidationContext` and `PSTCollectionViewFlowLayoutInvalidationContext`, so that
+when it next runs it covers this round's API additions instead of passing while ignoring them.
+
+Verified here in place of the checker: the strict `-Werror=unguarded-availability` armv7 iOS 5 archive builds
+and exports all four audited collection classes (checked with `nm -gU`), and
+`test-collection-context-linkage.py` shows generated UIKit headers referencing the legacy context classes
+rather than absent native ones.
+
 ## Acceptance-criterion check: Auto Layout / stack / scene (round 169)
 
 The objective requires no regressions to the Auto Layout/stack parity work or the scene/trait backports, so

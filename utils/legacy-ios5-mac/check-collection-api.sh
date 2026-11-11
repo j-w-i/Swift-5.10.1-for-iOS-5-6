@@ -105,7 +105,8 @@ symbols = subprocess.check_output(['/usr/bin/nm', '-arch', 'armv7', '-gU', str(r
 for name in ('PSTCollectionView', 'PSTCollectionViewCell', 'PSTCollectionReusableView',
              'PSTCollectionViewLayout', 'PSTCollectionViewFlowLayout',
              'PSTCollectionViewLayoutAttributes', 'PSTCollectionViewController',
-             'PSTCollectionViewUpdateItem'):
+             'PSTCollectionViewUpdateItem', 'PSTCollectionViewLayoutInvalidationContext',
+             'PSTCollectionViewFlowLayoutInvalidationContext'):
     if '_OBJC_CLASS_$_' + name not in symbols:
         raise SystemExit('UIKit runtime does not contain collection support: ' + name)
 print('PASS: UIKit collection API, downstream modules, iOS5 runtime definitions and native iOS6 references')
