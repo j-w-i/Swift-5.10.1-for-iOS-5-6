@@ -1,5 +1,16 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preferred-attributes predicate API (round 144)
+
+Added `shouldInvalidateLayoutForPreferredLayoutAttributes:withOriginalAttributes:` to PST's base layout
+and flow layout, independently implementing the default behaviour read from the iOS 8.1 reference and
+verified against iOS 27. The base layout always returns NO. Flow layout returns YES only when self-sizing
+is enabled and width or height differs; origin and alpha changes alone do not invalidate. All 15 cases
+(base layout, fixed flow, estimated flow × unchanged, height, width, origin, alpha) match the oracle.
+This adds the predicate only: the invalidation context API and collection-view integration remain missing.
+It does not fix the failing self-sizing display lifecycle gate and has not yet been added to the Apple
+route's missing-API hooks or verified through Swift declaration lowering. No performance claim follows.
+
 ## Preparation experiment (round 143)
 
 A local experiment moved fitting into PST cell preparation, recorded its answer and invalidated there,

@@ -540,6 +540,10 @@ static char kPSTCachedItemRectsKey;
 /// Records a cell's preferred size. Returns YES when it differs from the size currently laid out
 /// (the layout is then invalidated and rebuilt with it). A size equal to the laid out one is marked
 /// stable for that proposal frame, until explicit invalidation or cell reconfiguration.
+- (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
+    return [self pstUsesSelfSizing] && !CGSizeEqualToSize(preferredAttributes.size, originalAttributes.size);
+}
+
 - (BOOL)pstRecordPreferredSize:(CGSize)size forItemAtIndexPath:(NSIndexPath *)indexPath proposedFrame:(CGRect)frame {
     if (!_pstMeasuredItemSizes) _pstMeasuredItemSizes = [NSMutableDictionary dictionary];
     if (!_pstStableMeasuredFrames) _pstStableMeasuredFrames = [NSMutableDictionary dictionary];

@@ -283,6 +283,10 @@
     [_collectionView setNeedsLayout];
 }
 
+- (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
+    return NO;
+}
+
 - (BOOL)shouldInvalidateLayoutForBoundsChange:(CGRect)newBounds {
     // not sure about his..
     if ((self.collectionView.bounds.size.width != newBounds.size.width) || (self.collectionView.bounds.size.height != newBounds.size.height)) {
