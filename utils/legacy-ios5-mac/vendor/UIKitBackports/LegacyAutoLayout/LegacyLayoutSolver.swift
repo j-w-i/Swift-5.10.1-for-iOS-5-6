@@ -162,6 +162,12 @@
 
 import Foundation
 import CoreGraphics
+
+// Two build shapes share these sources: a SwiftPM target that imports Cassowary as its own module, and the UIKit
+// overlay, where the Cassowary sources are compiled *into* the same module. Only the first needs the import and
+// the qualified aliases; in the overlay `Cassowary.Expression` would resolve back to the alias itself and the
+// compiler reports "type alias references itself".
+#if canImport(Cassowary)
 import Cassowary
 
 // `Foundation.Expression` (the iOS 18 Predicate type) collides with the
@@ -172,6 +178,7 @@ private typealias Variable = Cassowary.Variable
 private typealias Constraint = Cassowary.Constraint
 private typealias Strength = Cassowary.Strength
 private typealias RelationalOperator = Cassowary.RelationalOperator
+#endif
 
 
 
