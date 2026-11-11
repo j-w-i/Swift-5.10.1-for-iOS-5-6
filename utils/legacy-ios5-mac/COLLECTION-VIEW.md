@@ -978,3 +978,21 @@ Honest limits, unchanged: this is a synchronous CPU microbenchmark on one iPhone
 delivery, not iOS 6 hardware, and the cells are plain views or plain labels. Self-sizing still
 measures everything up front (round 94) and its scroll/cold profile differs from native's.
 Nothing has been published.
+
+### Round 95 (continued): iOS 5 device re-check after the layout rework; device status
+
+The layout code changed substantially in rounds 90-92 (windowed attribute query, row reuse,
+compact fixed-size rows), so the display-event sequence was re-run on the iPod touch 3
+(iOS 5.1.1) as an app and compared with the native oracle: **still matches** (45 lines,
+`compare-display-events.py`). Combined with round 92's geometry dump on the same device (agrees
+with the simulator within single-precision printing), the iOS 5 route has no detected regression
+from the rework.
+
+Device status, since the objective names three devices: `idevice_id -l` lists the iPod touch 3
+(`c5f61927...`) and the iPhone 6 (`2775f7a9...`), plus `00008130-001C0D5811D2001C`, which
+`ideviceinfo` identifies as an iPhone 16 Pro on iOS 27.0.1 — not a test target and not touched.
+The iPod touch 5 (`39a2bacad9a5524e7a6a46ae031f1bea6249d2ab`) is still **not connected**: its
+iproxy listener on port 2227 is stale (`Device ... not found`), so the Apple iOS 6/7 hook route
+remains verified only on the simulator, as stated in earlier rounds. That iPhone 16 could serve as
+a second real-hardware native oracle, but it is the user's personal phone with a current iOS and
+no role in the Apple 6-9 route, so it was left alone.
