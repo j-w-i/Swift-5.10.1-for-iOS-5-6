@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Apple-route device gate re-verified at HEAD (round 221)
+
+Re-ran `Tests/run-apple-route-ios6-device.sh` on the iPod touch 5 (iOS 6.1.3, real UIKit 6 through the backport
+hooks) at the current HEAD, since many changes have landed since this gate last ran:
+
+**PASS - 0 failures, 20 checks**, covering everything the objective's part (2) requires of the Apple route:
+
+* iOS 9 supplementary accessors installed; `visibleSupplementaryViewsOfKind` returns the header;
+  `indexPathsForVisibleSupplementaryElementsOfKind` reports `[0, 0]`;
+* iOS 10 prefetching installed: no prefetch while stationary, 7 paths announced on a forward scroll, no repeats;
+* `willDisplayCell` once per visible cell (10 callbacks, 10 visible) and `willDisplaySupplementaryView` for the
+  header;
+* self-sizing drives content height exactly (16020.0 against the expected 16020.0) and the self-sized cell takes
+  its preferred height ({{0,20},{320,80}});
+* layout attributes transform round-trips; animated insert completes and applies the new count (10270.0), with
+  `willDisplay` for the cells that arrive in the animation (10 -> 15), then animated delete (10020.0) with no
+  `willDisplay` regressions.
+
+So the dual-route requirement is verified on real iOS 6 hardware at HEAD, not just in the simulator: Apple's own
+UICollectionView gets the modern API through the hooks, and PST gets it natively.
+
 ## The last difference is native's stub layout for undisplayed sections (round 220)
 
 Dumped the settled snapshot of `horizontal narrow` (the one genuine difference) with keyed rects and
