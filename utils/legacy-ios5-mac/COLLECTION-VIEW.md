@@ -4659,6 +4659,27 @@ Wrote `RELEASE-COLLECTION-VIEW.md` as the release record - API surface, the orac
 behaviour, the paired hardware performance table, the gate list, and the honest limits (native's placeholder
 content, the stale Swift profile resource, the absent iPhone 6, and the lazy layout not being wired).
 
+## Correction and the real remaining lead: the assembled dylibs come from the multiarch stage (round 255)
+
+Round 254's note guessed that `link-overlay-stage.sh` defaulted to an iOS 7 deployment and therefore skipped the
+`5.*` branch that force-loads the collection archive. **That was wrong.** `build-all.sh` already passes
+`IOS_DEPLOYMENT_TARGET=5.0` and `LINK_OUTPUT_NAME=linked510-legacy` on the link call (line ~199), so the legacy
+branch does run. The temporary export I added for it has been reverted.
+
+The likelier explanation for the missing invalidation classes: `build-all.sh` resumes per stage, and the
+`multiarch` stamp was left over from an **earlier** build. The assembled toolchain copies per-slice dylibs from
+that stage's outputs, so a stale `multiarch` would supply a `libswiftUIKit.dylib` built before this session's
+collection work - which is exactly what the qualification saw. Re-running `overlays` alone cannot refresh it.
+
+Also learned, by hitting them in sequence: resuming from a middle stage loses environment that earlier stages
+exported (`LLVM_INCLUDE_DIR`, `LLVM_CONFIG_INCLUDE_DIR`) and artifacts they produce (the embedded concurrency
+runtime under `b515/build/runtime-ios5`). A correct refresh is therefore either a full `build-all.sh` run from an
+empty root, or deleting `overlays`, `multiarch`, `assemble`, `sanitize` and `qualify-ios5` **and** supplying those
+two LLVM include paths and the concurrency runtime.
+
+The Cassowary fix from round 254 stands and is committed: the overlays stage builds all seven overlays and emits
+`UIKit510.o`, which was the blocking defect.
+
 ## Toolchain overlay failure found and fixed: it was my own Cassowary aliasing (round 254)
 
 The overlays stage was failing because of a change made earlier in this session, not an environment problem.
