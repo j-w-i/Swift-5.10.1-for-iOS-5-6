@@ -2904,14 +2904,16 @@ __attribute__((constructor)) static void PSTCreateUICollectionViewClasses(void) 
 }
 
 CGFloat PSTSimulatorAnimationDragCoefficient(void) {
-    static CGFloat (*UIAnimationDragCoefficient)(void) = NULL;
+    // UIKit's UIAnimationDragCoefficient returns a float. Declaring it as returning CGFloat
+    // (a double on 64-bit) reads the wrong register on arm64 and yielded garbage.
+    static float (*UIAnimationDragCoefficient)(void) = NULL;
 #if TARGET_IPHONE_SIMULATOR
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         UIAnimationDragCoefficient = (CGFloat (*)(void))dlsym(RTLD_DEFAULT, "UIAnimationDragCoefficient");
     });
 #endif
-    return UIAnimationDragCoefficient ? UIAnimationDragCoefficient() : 1.f;
+    return UIAnimationDragCoefficient ? (CGFloat)UIAnimationDragCoefficient() : 1.f;
 }
 
 // helper to check for ivar layout

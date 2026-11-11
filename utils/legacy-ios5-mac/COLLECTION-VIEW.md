@@ -580,3 +580,35 @@ animation work appears to depend on conditions these probes do not satisfy (a wi
 and a run loop are present here). Until that is understood, `completion` timing and
 the animated frames should be treated as unmatched. This overlaps the earlier user note
 that PST animations were missing.
+
+### Round 81: why PST batch updates did not animate on the simulator (fixed)
+
+Instrumenting a scratch copy showed `animateWithDuration:` being called with a duration
+of about 1.6e-315. `PSTSimulatorAnimationDragCoefficient()` looked up UIKit's
+`UIAnimationDragCoefficient` with `dlsym` and called it through a pointer typed as
+returning `CGFloat`. UIKit's function returns a `float`; on 64-bit, `CGFloat` is a
+double, so the wrong width was read from the return register and the duration came out
+as garbage near zero. Every batch update therefore completed in about 1 ms and snapped.
+It is simulator-only (the lookup is under `TARGET_IPHONE_SIMULATOR`), so devices were
+not affected, but it means the earlier animation commit `b6a45a5c` was never exercised on
+the simulator oracle. The pointer is now typed `float` and the result widened.
+
+Delete probe (two rows, view in a window), animation and callbacks:
+- native iOS 27 sim: completion at 448 ms; deleted cell alpha 0.17 at 150 ms, 0.01 at
+  300 ms; the cell below is at y=46.6 at 150 ms and 40.5 at 300 ms.
+- PST now, iOS 27 sim: completion at 305 ms; deleted cell alpha 0.48 at 150 ms, 0 at
+  300 ms; the cell below is at y=59.1 at 150 ms and 40 at 300 ms.
+- native iPhone 6 (iOS 10.3.3): completion at 357-409 ms over three runs.
+- PST on the iPod touch 3 (iOS 5.1.1): completion at 331 ms, `didEndDisplaying` rows 1
+  then 2 with the view hidden, delivered with completion.
+
+So the animation now runs and the callbacks arrive with it, but the **duration and
+curve differ from native**: PST uses 0.3 s ease-in-out, and native takes about 0.36-0.45 s
+and moves less in the first 150 ms (the cell below had moved 6.6 of 40 points natively
+against 19 in PST). The native timing is not a plain 0.3 s UIView animation on any of
+the three measured devices, so a match needs its own timing function; not done.
+
+This corrects the previous section, which said PST animations did not run for reasons
+unknown and that the retirement change was not the cause: the cause was this return-type
+bug, present since `b6a45a5c`. Existing gates pass; the earlier "snapping" evidence was
+the same bug.
