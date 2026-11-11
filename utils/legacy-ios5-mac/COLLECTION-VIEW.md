@@ -1,5 +1,27 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Toolchain build: the failing module is not identified by any message (round 250)
+
+Followed the overlays failure one level deeper. The stage is `build-overlay-stage.sh`, which builds each overlay
+module in parallel into `$STAGE/logs/<Module>.log` and fails the stage when any of them exits non-zero:
+
+    for pid in $(jobs -p); do wait "$pid" || FAILED=1; done
+    [ "$FAILED" = 0 ] || { echo "overlay build failed; see the per-module logs" >&2; exit 1; }
+
+Checking every per-module log at `bootstrap/logs/`: `CoreImage`, `Foundation`, `Metal`, `QuartzCore`, `UIKit` each
+contain 14-33 matches for "error:", but on inspection **all of them are warnings** - the matched text is the
+Objective-C selector suffix in `NSKeyedArchiverShims.h` (`unarchivedObjectOfClass:fromData:error:`), an
+iOS 11-availability warning, not a compile failure. There is no diagnostic naming the failing module.
+
+Also learned why a quick standalone typecheck cannot substitute: `bootstrap/probes/modules510` is prepared from
+**Swift 5.1.5** interfaces, and the 5.10.1 frontend rejects them directly
+("failed to build module 'CoreFoundation'; this SDK is not supported by the compiler"); the stage works because it
+handles the interface mode itself. So the overlay build must be driven by `build-overlay-stage.sh`, not reproduced
+by hand.
+
+Next step, cheap and specific: run that script for a single module with `bash -x` and capture the failing command's
+exit status - the script's own `tail -40` should then print the reason it currently swallows.
+
 ## Full toolchain rebuild attempted; overlay stage fails and needs its own investigation (round 249)
 
 Took the last engineering route to the Swift-profile republish: the build root is staged and resumable
