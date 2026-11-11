@@ -1,5 +1,35 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Restoring the scheduler fixes half the preparation-fitting regressions (round 215)
+
+Took the remaining blocker at its word. Instead of suppressing the post-layout scheduler, keep it **and** fit
+during preparation, so the display-ordering benefit survives while the invalidation paths that expect the
+scheduler still get it.
+
+Result, against the round-213 baseline (which broke four gates):
+
+| Gate | baseline | scheduler suppressed (213) | scheduler restored (215) |
+| --- | --- | --- | --- |
+| display lifecycle | FAIL | PASS | **PASS** (exact) |
+| self-sizing stability | PASS | FAIL | **PASS** |
+| automatic size | PASS | FAIL | **PASS** |
+| sizing updates | PASS | FAIL | FAIL |
+| self-sizing bounds | PASS | FAIL | FAIL - "non-converging cell hung layout (no exit in 40s)" |
+| layouts content steps | 31/32 | 15/32 | 15/32 (frames exact, 0 of 210) |
+| fitted-item parity | 32/32 | 11/32 | 9/32 |
+
+So restoring the scheduler recovers two of the four, and the remaining two are different in kind: `bounds`
+**hangs**, which means the preparation fit can drive a non-converging cell into an endless
+invalidate/re-prepare loop. Added a cap of two preparation fits per cell; the hang persisted, so the loop is not
+simply "the same cell refitted" - it is more likely the pass restart in `updateVisibleCellsNow` re-entering
+through the scheduler.
+
+Reverted to keep the suite green; baseline re-verified (golden PASS, layouts 31/32, bounds PASS).
+
+This is the closest the preparation-fitting work has come to shippable: lifecycle, stability and automatic size
+all green with frames exact. The two remaining failures and the endless loop are the whole remaining problem, and
+the loop is now a concrete symptom to debug rather than a hypothesis.
+
 ## The four preparation-fitting regressions are not in the fit path (round 214)
 
 Tried two fixes for the four gates that the preparation-fitting combination breaks (stability, automatic size,
