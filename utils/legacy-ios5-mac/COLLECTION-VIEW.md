@@ -996,3 +996,42 @@ iproxy listener on port 2227 is stale (`Device ... not found`), so the Apple iOS
 remains verified only on the simulator, as stated in earlier rounds. That iPhone 16 could serve as
 a second real-hardware native oracle, but it is the user's personal phone with a current iOS and
 no role in the Apple 6-9 route, so it was left alone.
+
+### Round 96: checking the "faster than native" claim instead of trusting it
+
+A claim that PST beats native needs the work compared, not just the clock. Three checks on the
+iPhone 6, fixed 320x58 items, 200 items, 20 scroll steps of 37 pt:
+
+**(1) Same visible output.** `indexPathsForVisibleItems` after every step is **identical** for
+native and PST, step for step (same rows, same order). The layout result agrees, which the
+geometry and display-event gates already said.
+
+**(2) Same work?** No, and not in PST's favour on cell creation:
+
+| Counter over 20 steps | native | PST |
+| --- | ---: | ---: |
+| `cellForItemAtIndexPath:` | 17 | 14 |
+| `prepareForReuse` | 11 | 13 |
+| `willDisplayCell:` | 14 | 14 |
+| `didEndDisplayingCell:` | 13 | 13 |
+| `layoutAttributesForElementsInRect:` (layout's own) | 2 | 20 |
+
+Native creates 3 more cells over the same scroll and PST queries its layout's attributes 18 more
+times. So PST's advantage is not "same work done quicker" and not "skipping the query".
+
+**(3) Deferred work?** Giving native (and PST) the chance to finish work outside the timed block
+does not remove the gap: with `CATransaction flush` after each step the ratio stays 0.85-0.87,
+with a run-loop turn 0.83-0.91, with both 0.81-0.93, and with a real window attached (rendering
+involved) 0.81-0.85. `layoutIfNeeded` alone: 0.85-0.87. Timed work simply is not being hidden by
+deferral.
+
+**So what does "faster" mean here?** For a minimal workload - plain cells, fixed size, no
+prefetching, no self-sizing, no decorations, no safe-area insets, no focus engine, no drag and
+drop - the synchronous layout path in PST costs about 15 percent less CPU than UIKit's. Part of
+that is that UIKit does more per pass and creates more cells; part is that a smaller
+implementation has less bookkeeping per cell and per layout. It is *not* evidence that PST is a
+better collection view: on self-sizing, where native measures lazily and PST measures everything
+up front, native is **2.9x faster** in cold layout at 5,000 items (round 94, 18.4 ms against
+54.1 ms). The honest summary is workload-specific: PST is competitive to modestly ahead on simple
+fixed and delegate-sized layouts, well behind on self-sizing, measured as CPU on one device
+without frame pacing, GPU or rendering in the figure.
