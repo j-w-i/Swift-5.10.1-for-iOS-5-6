@@ -1035,3 +1035,45 @@ up front, native is **2.9x faster** in cold layout at 5,000 items (round 94, 18.
 54.1 ms). The honest summary is workload-specific: PST is competitive to modestly ahead on simple
 fixed and delegate-sized layouts, well behind on self-sizing, measured as CPU on one device
 without frame pacing, GPU or rendering in the figure.
+
+### Round 97: the Apple route runs on real iOS 6 hardware; iOS 6 performance baseline
+
+The objective's longest-standing caveat is gone: the hooks that give Apple's own `UICollectionView` the
+modern API now have a hardware run. iPod touch 5 (iPod5,1), **iOS 6.1.3 (10B329)**, armv7f, CoreFoundation
+793.0 (below the 1140 threshold), reachable on iproxy 2227.
+
+`vendor/UIKitBackports/Tests/apple_route_ios6_device_test.m` plus
+`run-apple-route-ios6-device.sh` build an armv7 app (runtime at its iOS 5.0 floor, app at 6.0), install
+it over SSH, run it and check 12 properties. All pass on the device:
+
+| Check | Result |
+| --- | --- |
+| iOS 9 supplementary accessors installed | PASS |
+| iOS 10 prefetching installed | PASS |
+| `willDisplayCell` once per visible cell | PASS, 10 callbacks for 10 visible |
+| `willDisplaySupplementaryView` for a header | PASS, 1 callback |
+| `visibleSupplementaryViewsOfKind:` returns the header | PASS |
+| `indexPathsForVisibleSupplementaryElementsOfKind:` | PASS, [0, 0] |
+| no prefetch while stationary | PASS, 0 paths |
+| prefetch announces items ahead of a forward scroll | PASS, 7 paths |
+| prefetch does not repeat at the same position | PASS |
+| self-sizing drives content height | PASS, 16020.0 (200 x 80 + 20 header) |
+| self-sized cell takes its preferred height | PASS, {0, 20; 320, 80} |
+| layout attributes `transform` round-trips | PASS |
+
+The "once per visible cell" row is the one that matters most: it shows the hooks are strictly additive
+and do not double-deliver on top of UIKit's own pass.
+
+**Performance baseline on the same device and OS** (`tests/ios6-native-baseline`, paired PST/native,
+9 pairs, median, 200 items, 20 scroll steps): PST/native **1.02** (layoutIfNeeded only), **1.02**
+(+CATransaction flush), **1.02** (+run-loop turn), **1.02** (+both), and **1.01-1.03** with a window
+attached. Visible cells and `cellForItem` counts were identical (10 and 14) in every mode. So on iOS 6.1.3
+hardware the PST route and Apple's collection view cost the same in this benchmark.
+
+**Route selection, verified rather than assumed** (`tests/route-selection-probe.m`): a deployment-target 5.0
+build run on iOS 6.1.3 creates a `PSTCollectionView` whose superclass is `UIScrollView`, with
+`isKindOfClass:UICollectionView` 0, while Apple's `UICollectionView` is present and usable alongside. The
+route is fixed when compiling; the design rationale (upstream's reparented wrappers break Swift casts) is
+in the selection note above.
+
+Still not verified: iOS 7 (no 7.x device), and animated updates on the Apple route.
