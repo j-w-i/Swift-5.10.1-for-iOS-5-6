@@ -1,5 +1,31 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Decoded: native's proposals are the running mean, and PST starts each step with fewer measurements (round 227)
+
+The trace's cell reports height `30 + ((item*7 + section*3) % 5) * 8`, so section 0's items are
+`30, 46, 62, 38, 54, 30, 46, 62, 38, 54`. Decoding native's sequence against that:
+
+| native fit | proposal | what the proposal equals |
+| --- | ---: | --- |
+| item 5 | 46 | mean of the five measured items `30,46,62,38,54` = **46.0** |
+| item 6 | 43.33 | mean of six measured = **43.33** |
+| item 7 | 43.71 | mean of seven measured = **43.71** |
+| item 7 (again) | 62 | learned run for that row = **62** |
+| item 6 / item 5 | 46 / 30 | confirmations (proposal equals report) |
+
+So native's proposal for an unmeasured item is exactly the running mean of the section's reports *at that moment*,
+and later fits use the learned per-row size. That is the model PST already implements - the values agree exactly
+(43.33 and 43.71 both appear in PST's own sequence).
+
+The difference is therefore only the **measured set at the start of the step**: native's first fit in step 1 is
+offered the mean of five reports, PST's is offered 30 (the mean of one). Native enters the step with items 0..4
+already measured; PST enters with one. Everything downstream - the extra fit of item 8, the differing proposal for
+item 7 - follows from that single difference in how much is measured before the step begins.
+
+Next: instrument where the initial-layout measurements go. The trace records zero fits on the `initial` step for
+*both* engines, yet native arrives at step 1 knowing five sizes, so those five reports happen somewhere the
+instrument does not currently see (most likely during the settle loop, before the snapshot's reset).
+
 ## The fit sequence itself is the difference (round 226)
 
 Built the reporting-sequence instrument the last round called for: the trace cell now records
