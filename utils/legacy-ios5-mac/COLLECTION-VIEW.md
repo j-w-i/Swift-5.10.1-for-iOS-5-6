@@ -1,5 +1,24 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Red herring cleared; overlay failure still unidentified (round 251)
+
+Checked whether the overlay failure was a compiler crash: the host has crash reports timestamped inside the build
+window (`P-2026-11-12-005754.ips`, `EXC_BREAKPOINT`/SIGTRAP). Reading them shows `procPath` is a **simulator app
+container** (`CoreSimulator/.../Application/.../P.app/P`) - it is my own `P`-named test bundle from the round-216
+experiments, not `swift-frontend`. So there is no compiler crash report, and no signal to read.
+
+State of the toolchain question, unchanged and now bounded:
+
+* the overlays stage fails a module build (`build-overlay-stage.sh`'s `wait ... || FAILED=1`);
+* that module's log ends on main-actor isolation **warnings** with no error line and no signal;
+* every per-module log's "error:" matches are warnings re-printed from `NSKeyedArchiverShims.h`;
+* a standalone typecheck cannot reproduce the environment (modules510 is 5.1.5-interface based and the 5.10.1
+  frontend rejects it outside the stage's own interface handling).
+
+Next step remains the same and is cheap: instrument `build_one` to record the failing command's exit status
+explicitly (it currently only records `FAILED=1`), so the reason the module returned non-zero is printed rather
+than swallowed.
+
 ## Toolchain build: the failing module is not identified by any message (round 250)
 
 Followed the overlays failure one level deeper. The stage is `build-overlay-stage.sh`, which builds each overlay
