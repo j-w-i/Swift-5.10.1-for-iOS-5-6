@@ -1,5 +1,33 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Per-section sums in C arrays: delegate-path cost removed (round 199)
+
+Round 198 measured the per-section estimate costing 5-10% on the delegate path (cold 287.5 -> 301.6 ms,
+reload 335.0 -> 369.9 ms on the iPod touch 3), attributed to an `NSMutableDictionary` lookup plus an
+`NSMutableArray` read/write for every report - and with a size delegate every item reports.
+
+Replaced those with three flat C arrays indexed by section (`_pstSectionSumW/SumH/Hits`, grown by doubling,
+zeroed on reset), which is exactly what the layout's other hot state already does. Same arithmetic, same
+results.
+
+Re-measured on the same device, 5,000 items:
+
+| Configuration | pre-change (round 175) | dictionary (198) | C arrays (199) |
+| --- | ---: | ---: | ---: |
+| delegate, cold | 287.5 ms | 301.6 ms | 286.1 ms |
+| delegate, reload | 335.0 ms | 369.9 ms | 334.9 ms |
+| delegate, scroll | 3.0 ms | 3.2 ms | 2.8 ms |
+| no delegate, reload | 146.7 ms | 146.5 ms | 149.4 ms |
+
+The delegate path is back to its pre-change numbers. One reading is an outlier: no-delegate cold came out at
+237.0 ms against 146.7 ms before, while its own reload (149.4 ms) is unchanged - that is the first scenario
+measured after launch, so it is most likely first-run/launch interference rather than the change; it needs a
+repeat run before being called a regression, and is recorded here rather than ignored.
+
+Gates after the change: golden 14/14, layouts 31/32 with fitted-item parity 32/32, stability, proposal,
+delegate sizing, sizing updates, automatic size, preferred-context staging, and a strict armv7
+`-Werror=unguarded-availability` compile.
+
 ## Per-section estimate: hardware cost on the iPod touch 3 (round 198)
 
 Re-measured the PST route on the iPod touch 3 (iOS 5.1.1) at 5,000 self-sizing items with the per-section

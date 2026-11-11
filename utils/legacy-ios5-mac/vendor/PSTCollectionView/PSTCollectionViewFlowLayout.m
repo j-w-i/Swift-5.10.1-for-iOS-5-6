@@ -62,9 +62,13 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     CGSize _itemSize;
     CGSize _estimatedItemSize;
     NSMutableDictionary *_pstMeasuredItemSizes;    // NSIndexPath -> NSValue(CGSize): sizes the cells reported
-    // Per-section running mean of reported sizes (section -> @[sumW, sumH, count]). UIKit estimates a section
-    // from what it has measured in that section, not from a global average.
-    NSMutableDictionary *_pstSectionMeasured;
+    // Per-section running mean of reported sizes, in flat arrays indexed by section: UIKit estimates a section
+    // from what it has measured in that section. A dictionary plus an array per report showed up on the
+    // delegate path on iOS 5 hardware, where every item reports.
+    double *_pstSectionSumW;
+    double *_pstSectionSumH;
+    NSInteger *_pstSectionHits;
+    NSInteger _pstSectionCapacity;
     NSMutableDictionary *_pstStableMeasuredFrames; // NSIndexPath -> CGRect: confirmed proposal frame
     BOOL _pstPreservingStableMeasurements;        // internal size invalidation, not an app invalidation
     CGSize _pstMeasuredSizeSum;                    // sum and count of the cell-reported sizes: unmeasured
@@ -523,7 +527,9 @@ static char kPSTCachedItemRectsKey;
 
 - (void)pstResetMeasuredSizes {
     [_pstMeasuredItemSizes removeAllObjects];
-    [_pstSectionMeasured removeAllObjects];
+    for (NSInteger i = 0; i < _pstSectionCapacity; i++) {
+        _pstSectionSumW[i] = 0; _pstSectionSumH[i] = 0; _pstSectionHits[i] = 0;
+    }
     [_pstStableMeasuredFrames removeAllObjects];
     _pstMeasuredSizeSum = CGSizeZero; _pstMeasuredSizeCount = 0;
     [self pstClearProposalRuns];
@@ -706,26 +712,30 @@ static char kPSTCachedItemRectsKey;
     if (old) { _pstMeasuredSizeSum.width -= old->width; _pstMeasuredSizeSum.height -= old->height; }
     else _pstMeasuredSizeCount++;
     _pstMeasuredSizeSum.width += size.width; _pstMeasuredSizeSum.height += size.height;
-    if (!_pstSectionMeasured) _pstSectionMeasured = [NSMutableDictionary dictionary];
-    NSMutableArray *entry = [_pstSectionMeasured objectForKey:@(section)];
-    if (!entry) { entry = [NSMutableArray arrayWithObjects:@0.0, @0.0, @0, nil]; [_pstSectionMeasured setObject:entry forKey:@(section)]; }
-    // Indexed accessors, not subscripting: `entry[i]` is iOS 6+ and this runtime targets iOS 5.
-    double sumW = [[entry objectAtIndex:0] doubleValue], sumH = [[entry objectAtIndex:1] doubleValue];
-    NSInteger hits = [[entry objectAtIndex:2] integerValue];
+    if (section < 0) return;
+    if (section >= _pstSectionCapacity) {
+        NSInteger capacity = MAX((NSInteger)8, (section + 1) * 2);
+        _pstSectionSumW = realloc(_pstSectionSumW, (size_t)capacity * sizeof(double));
+        _pstSectionSumH = realloc(_pstSectionSumH, (size_t)capacity * sizeof(double));
+        _pstSectionHits = realloc(_pstSectionHits, (size_t)capacity * sizeof(NSInteger));
+        for (NSInteger i = _pstSectionCapacity; i < capacity; i++) {
+            _pstSectionSumW[i] = 0; _pstSectionSumH[i] = 0; _pstSectionHits[i] = 0;
+        }
+        _pstSectionCapacity = capacity;
+    }
+    double sumW = _pstSectionSumW[section], sumH = _pstSectionSumH[section];
+    NSInteger hits = _pstSectionHits[section];
     if (old) { sumW -= old->width; sumH -= old->height; } else hits += 1;
-    sumW += size.width; sumH += size.height;
-    [entry replaceObjectAtIndex:0 withObject:@(sumW)];
-    [entry replaceObjectAtIndex:1 withObject:@(sumH)];
-    [entry replaceObjectAtIndex:2 withObject:@(hits)];
+    _pstSectionSumW[section] = sumW + size.width;
+    _pstSectionSumH[section] = sumH + size.height;
+    _pstSectionHits[section] = hits;
 }
 
 /// Mean of the sizes reported inside one section, or the plain estimate when nothing has been measured there.
 - (CGSize)pstEstimateForSection:(NSInteger)section {
-    NSArray *entry = [_pstSectionMeasured objectForKey:@(section)];
-    NSInteger count = entry ? [[entry objectAtIndex:2] integerValue] : 0;
+    NSInteger count = (section >= 0 && section < _pstSectionCapacity) ? _pstSectionHits[section] : 0;
     if (count <= 0) return _pstProposalAtLayout0;
-    return CGSizeMake([[entry objectAtIndex:0] doubleValue] / (double)count,
-                      [[entry objectAtIndex:1] doubleValue] / (double)count);
+    return CGSizeMake(_pstSectionSumW[section] / (double)count, _pstSectionSumH[section] / (double)count);
 }
 
 - (BOOL)pstDelegateProvidesSizes {
