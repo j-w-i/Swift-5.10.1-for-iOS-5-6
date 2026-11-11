@@ -4659,6 +4659,37 @@ Wrote `RELEASE-COLLECTION-VIEW.md` as the release record - API surface, the orac
 behaviour, the paired hardware performance table, the gate list, and the honest limits (native's placeholder
 content, the stale Swift profile resource, the absent iPhone 6, and the lazy layout not being wired).
 
+## Toolchain overlay failure found and fixed: it was my own Cassowary aliasing (round 254)
+
+The overlays stage was failing because of a change made earlier in this session, not an environment problem.
+Running the stage under `bash -x` and replaying the traced UIKit compile showed the real errors:
+
+    LegacyAutoLayout-LegacyLayoutSolver.swift:170: error: type alias 'Variable' references itself
+    LegacyAutoLayout-LegacyLayoutSolver.swift:172: error: type alias 'Strength' references itself
+    LegacyAutoLayout-LegacyLayoutSolver.swift:929: error: cannot infer contextual base in reference to member 'equal'
+
+Cause: the earlier repair of commit 49e3e408 restored `import Cassowary` plus `private typealias
+Expression = Cassowary.Expression` and friends. That is correct when Cassowary is its own module (the SwiftPM
+target), but the UIKit overlay compiles **every Cassowary source into the same module**, so `Cassowary.Expression`
+resolved back to the alias being declared. Guarded the import and the aliases with `#if canImport(Cassowary)`:
+
+* `build-overlay-stage.sh` now **passes** and emits `UIKit510.o` (all seven overlays build);
+* `build-all.sh` then completes `overlays`, `assemble` and `sanitize` - three stages that had been failing or
+  unreachable all session;
+* the SwiftPM-facing behaviour is unchanged because `canImport(Cassowary)` is true there.
+
+One failure remains: `qualify-ios5` stops at
+
+    UIKit runtime does not contain collection support: PSTCollectionViewLayoutInvalidationContext
+
+The collection archive handed to the linker does contain both invalidation-context classes (`nm` finds 12
+`LayoutInvalidationContext` symbols in `libswiftLegacyCollectionView.a`), but the linked
+`probes/linked510/libswiftUIKit.dylib` - and therefore the assembled toolchain's copy - contains **none** of them.
+`link-overlay-stage.sh` does `-force_load` that archive on the legacy 5.x slice (line ~287), so the classes are
+being dropped after that point rather than never being offered. That is the next thing to instrument: capture the
+actual `ld` command line for libswiftUIKit (the stage log does not record it) and check whether the force-loaded
+path is the archive that was just rebuilt.
+
 ## iPhone 6 (iOS 10.3.3) native-route gate: PASS (round 253)
 
 The device was connected, so the last unrun verification is done. New gate
