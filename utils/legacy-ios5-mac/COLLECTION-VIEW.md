@@ -343,3 +343,30 @@ a single pass. Reproducing the exact order of 36,37,35,38,39 would need more pro
 This is a layout-geometry rule, so changing it affects every self-sizing result, and
 the existing automatic-size gate (which uses uniform preferred sizes, where mean and
 estimate coincide only when the estimate is 50x50) would need to keep passing.
+
+### Round 72: the running-mean proposal across scenarios and OS versions (still not implemented)
+
+`tests/selfsizing-unmeasured-proposal.m` (diagnostic; builds for native and, with
+`-DTEST_PST=1`, PST) prints the laid-out heights of a self-sizing list after the
+first layout. Sizes of runs are shown as `size (xN)`.
+
+| Scenario (estimate 40) | Native iOS 27 sim | Native iPhone 6 iOS 10.3.3 | PST |
+| --- | --- | --- | --- |
+| 30 items all 100 | 100 (x30) | 100 (x30) | 100 (x3) 40 (x27) |
+| same, estimate 200 | 100 (x30) | 100 (x30) | 100 (x2) 200 (x28) |
+| ramp 30+2i, view 120 | 30 32 34 36 **33 (x26)** | same | 30 32 34 36 **40 (x26)** |
+| ramp, view 400 | 30..50 step 2, then 40 (x19) | same | same |
+| alternating 20/80, view 160 | 20 80 20 80 **50 (x26)** | 20 80 20 80 20 **44 (x25)** | 20 80 20 80 **40 (x26)** |
+| single item, 3 items | exact | exact | exact |
+
+Findings: (1) both native versions size unmeasured items at the mean of the measured
+sizes, and for uniform content that means the whole list takes the measured size,
+which PST does not (PST leaves the estimate, so a uniform 100pt list is 1380pt
+tall in PST but 3000pt natively). (2) The measured set differs by OS: iOS 10 measured
+5 items in the alternating case where iOS 27 measured 4, so the mean differs (44 vs
+50). (3) PST matches native exactly only when the whole content is visible. So PST
+cannot be made to match both oracles on partially measured content; a choice of
+reference version would be needed, and the iOS 27 simulator is the stated oracle.
+Not implemented: the earlier trace showed unmeasured items keeping the mean from when
+they were first placed (items 4-33 stayed at 33 while item 34 took a later mean), so
+the mean is cached per item at some invalidation granularity I have not identified.
