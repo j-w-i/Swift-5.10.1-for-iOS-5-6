@@ -189,6 +189,7 @@
     snapshotRow.complete = self.complete;
     snapshotRow.fixedItemSize = self.fixedItemSize;
     snapshotRow.itemCount = self.itemCount;
+    snapshotRow.firstItemIndex = self.firstItemIndex;
     return snapshotRow;
 }
 

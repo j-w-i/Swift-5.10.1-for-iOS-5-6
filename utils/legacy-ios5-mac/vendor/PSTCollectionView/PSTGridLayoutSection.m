@@ -120,6 +120,7 @@
                     row = [self addRow];
                     row.fixedItemSize = self.fixedItemSize;
                     row.index = rowIndex;
+                    row.firstItemIndex = itemIndex;
                     self.indexOfImcompleteRow = rowIndex;
                     rowIndex++;
                     // convert an item from previous row to current, remove spacing for first item

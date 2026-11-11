@@ -21,6 +21,8 @@
 
 // @steipete addition for row-fastPath
 @property (nonatomic, assign) NSInteger itemCount;
+// Index, within the section, of this row's first item (set by the section while it lays rows out).
+@property (nonatomic, assign) NSInteger firstItemIndex;
 
 //- (PSTGridLayoutRow *)copyFromSection:(PSTGridLayoutSection *)section; // ???
 

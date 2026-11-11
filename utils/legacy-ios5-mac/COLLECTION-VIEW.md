@@ -800,3 +800,38 @@ at the first row past the rect (keeps the structure, makes scroll O(visible)); (
 closed-form fast path for fixed-size sections that does not build row objects (changes the
 structure that self-sizing, updates and the attribute query rely on, so it needs the
 14-scenario geometry gate and the self-sizing suites around it). Not started.
+
+### Round 90: attribute query is O(visible rows); scroll no longer grows with item count
+
+`layoutAttributesForElementsInRect:` now binary-searches the first row whose far edge reaches
+the rect and stops at the first row that starts beyond it (rows are in increasing order along
+the scroll axis), instead of testing every row of every section. It also stops using
+`indexOfObjectIdenticalTo:` to find the section (a linear scan per section per call) and the
+item (a linear scan per item for variable-size sections); rows now carry `firstItemIndex`,
+set by the section while it lays rows out.
+
+`tests/attribute-query-window.m` compares the query with a brute-force reference built from
+`layoutAttributesForItemAtIndexPath:` and the supplementary accessors, over 3,276 rects
+(vertical and horizontal, fixed and variable item sizes, with and without headers and
+footers, one to six sections, rect sizes from 1 to 700 points). It reports 0 mismatches on
+this code and on the previous commit (so the test is sound) and 0 on the iPod touch 3
+(iOS 5.1.1) as an app. The 14 geometry scenarios, self-sizing, automatic-size, display-event,
+cell-resize, hidden-layout and unmeasured-proposal gates pass.
+
+iPhone 6, plain cells, microseconds (previous round's PST in brackets):
+
+| Items | Scroll step, PST | Scroll step, native | Reload, PST | Reload, native |
+| ---: | ---: | ---: | ---: | ---: |
+| 200 | 223 (178) | 242 | 888 (614) | 854 |
+| 1,000 | 218 (228) | 220 | 810 (802) | 886 |
+| 5,000 | 221 (739) | 235 | 815 (1,387) | 894 |
+| 20,000 | 158 (1,488) | 216 | 805 (1,694) | 1,276 |
+
+Scroll is now flat in the item count and matches native at every size; reload is flat too and
+below native from 1,000 items up. (The 200-item row differs from last round by run-to-run
+noise: single-engine probes, not paired.)
+
+**Still O(items):** a layout rebuild. A resize at 5,000 items is 34.6 ms against native's 0.6
+ms and cold layout at 20,000 items is 97 ms against about 2 ms; `computeLayout` still visits
+every item and builds a row object per row. That is the closed-form fixed-size fast path
+described last round, which has not been started.

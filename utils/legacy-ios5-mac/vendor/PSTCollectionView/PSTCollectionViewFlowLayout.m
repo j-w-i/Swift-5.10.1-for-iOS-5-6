@@ -156,14 +156,16 @@ static char kPSTCachedItemRectsKey;
     if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     NSMutableArray *layoutAttributesArray = [NSMutableArray array];
+    NSUInteger pstSectionCursor = 0;
     for (PSTGridLayoutSection *section in _data.sections) {
+        NSUInteger pstSectionIndex = pstSectionCursor++;
         if (CGRectIntersectsRect(section.frame, rect)) {
 
             // if we have fixed size, calculate item frames only once.
             // this also uses the default PSTFlowLayoutCommonRowHorizontalAlignmentKey alignment
             // for the last row. (we want this effect!)
             NSMutableDictionary *rectCache = objc_getAssociatedObject(self, &kPSTCachedItemRectsKey);
-            NSUInteger sectionIndex = [_data.sections indexOfObjectIdenticalTo:section];
+            NSUInteger sectionIndex = pstSectionIndex;
 
             CGRect normalizedHeaderFrame = section.headerFrame;
             normalizedHeaderFrame.origin.x += section.frame.origin.x;
@@ -180,12 +182,31 @@ static char kPSTCachedItemRectsKey;
                 if (itemRects) [rectCache setObject:itemRects forKey:@(sectionIndex)];
             }
 
-            for (PSTGridLayoutRow *row in section.rows) {
+            // Rows are laid out in increasing order along the scroll axis, so only a window of
+            // them can intersect the rect. Binary search for the first row whose far edge
+            // reaches the rect and stop at the first row that starts beyond it, instead of
+            // testing every row of the section on every scroll step.
+            NSArray *pstRows = section.rows;
+            NSUInteger pstRowCount = pstRows.count;
+            BOOL pstHorizontal = _data.horizontal;
+            CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(rect) : CGRectGetMinY(rect);
+            CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(rect) : CGRectGetMaxY(rect);
+            CGFloat pstSectionOrigin = pstHorizontal ? section.frame.origin.x : section.frame.origin.y;
+            NSUInteger pstLow = 0, pstHigh = pstRowCount;
+            while (pstLow < pstHigh) {
+                NSUInteger mid = pstLow + (pstHigh - pstLow) / 2;
+                CGRect midFrame = [[pstRows objectAtIndex:mid] rowFrame];
+                CGFloat far = pstSectionOrigin + (pstHorizontal ? CGRectGetMaxX(midFrame) : CGRectGetMaxY(midFrame));
+                if (far < pstRectMin) pstLow = mid + 1; else pstHigh = mid;
+            }
+            for (NSUInteger pstRowIndex = pstLow; pstRowIndex < pstRowCount; pstRowIndex++) {
+                PSTGridLayoutRow *row = [pstRows objectAtIndex:pstRowIndex];
                 CGRect normalizedRowFrame = row.rowFrame;
 
                 normalizedRowFrame.origin.x += section.frame.origin.x;
                 normalizedRowFrame.origin.y += section.frame.origin.y;
 
+                if ((pstHorizontal ? CGRectGetMinX(normalizedRowFrame) : CGRectGetMinY(normalizedRowFrame)) > pstRectMax) break;
                 if (CGRectIntersectsRect(normalizedRowFrame, rect)) {
                     // TODO be more fine-grained for items
 
@@ -198,7 +219,7 @@ static char kPSTCachedItemRectsKey;
                             sectionItemIndex = (NSUInteger)(row.index * section.itemsByRowCount + itemIndex);
                         }else {
                             PSTGridLayoutItem *item = [row.items objectAtIndex:(NSUInteger)itemIndex];
-                            sectionItemIndex = [section.items indexOfObjectIdenticalTo:item];
+                            sectionItemIndex = (NSUInteger)(row.firstItemIndex + itemIndex);
                             itemFrame = item.itemFrame;
                         }
 
