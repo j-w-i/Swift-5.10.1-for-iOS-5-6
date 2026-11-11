@@ -44,6 +44,19 @@ static NSMutableArray *fitted_;   // [section,item] pairs reported during the cu
 @end
 static NSArray *r4(CGRect r){return @[@(r.origin.x),@(r.origin.y),@(r.size.width),@(r.size.height)];}
 static void settle(UICollectionView*cv){[cv layoutIfNeeded];CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);[cv layoutIfNeeded];}
+// Force both engines to a resolved layout: repeated passes until the content size stops changing. Native leaves
+// unmeasured sections as degenerate placeholders until it is asked again, so a single pass compares a layout with
+// a placeholder rather than two resolved layouts.
+static void settleFully(UICollectionView*cv){
+ CGSize last=CGSizeMake(-1,-1);
+ for(int i=0;i<8;i++){
+  [cv layoutIfNeeded];CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.02,false);
+  [cv setNeedsLayout];[cv layoutIfNeeded];
+  CGSize now=cv.contentSize;
+  if(CGSizeEqualToSize(now,last))break;
+  last=now;
+ }
+}
 static void snap(NSString*name,UICollectionView*cv,UICollectionViewFlowLayout*l,LS*s){
  if(!fitted_)fitted_=[NSMutableArray array];
  NSMutableArray*rects=[NSMutableArray array],*heads=[NSMutableArray array],*vis=[NSMutableArray array];
@@ -92,7 +105,7 @@ int main(int argc,char**argv){@autoreleasepool{[UIApplication sharedApplication]
  [cv registerClass:[LH class] forSupplementaryViewOfKind:UICollectionElementKindSectionHeader withReuseIdentifier:@"h"];
  [cv registerClass:[LH class] forSupplementaryViewOfKind:UICollectionElementKindSectionFooter withReuseIdentifier:@"h"];
  LS*s=[LS new];s.sections=S[sc].sec;s.items=S[sc].items;cv.dataSource=s;if(sc>=6)cv.delegate=s;
- [cv reloadData];settle(cv);snap(@"initial",cv,l,s);
+ [cv reloadData];settle(cv);snap(@"initial",cv,l,s);settleFully(cv);snap(@"initial-settled",cv,l,s);
  CGFloat step=S[sc].h?160:150;
- for(int i=1;i<=3;i++){cv.contentOffset=S[sc].h?CGPointMake(step*i,0):CGPointMake(0,step*i);settle(cv);snap([NSString stringWithFormat:@"step%d",i],cv,l,s);}
+ for(int i=1;i<=3;i++){cv.contentOffset=S[sc].h?CGPointMake(step*i,0):CGPointMake(0,step*i);settle(cv);snap([NSString stringWithFormat:@"step%d",i],cv,l,s);settleFully(cv);snap([NSString stringWithFormat:@"step%d-settled",i],cv,l,s);}
 }return 0;}
