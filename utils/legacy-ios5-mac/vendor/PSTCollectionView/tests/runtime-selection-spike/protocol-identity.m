@@ -28,6 +28,18 @@ int main(void){@autoreleasepool{
   check([source conformsToProtocol:native[i]],"fallback-declared source conforms to native protocol");
  }
 #ifdef ROUTE_SWIFT_PROTOCOLS
+ const char *privateNames[]={"PSTCollectionViewExt","PSTCollectionViewData","PSTCollectionViewItemKey",
+  "PSTGridLayoutInfo","PSTGridLayoutItem","PSTGridLayoutRow","PSTGridLayoutSection",
+  "PSUICollectionView_","PSUICollectionViewCell_","PSUICollectionReusableView_",
+  "PSUICollectionViewLayout_","PSUICollectionViewFlowLayout_","PSUICollectionViewLayoutAttributes_","PSUICollectionViewController_"};
+ for(unsigned i=0;i<sizeof(privateNames)/sizeof(privateNames[0]);i++){
+  char isolatedName[128];snprintf(isolatedName,sizeof isolatedName,"RouteEngine%s",privateNames[i]);
+  Class isolated=objc_getClass(isolatedName),legacy=objc_getClass(privateNames[i]);
+  printf("private isolated=%s legacy=%s\n",isolatedName,privateNames[i]);
+  const char *isolatedImage=isolated?class_getImageName(isolated):NULL,*legacyImage=legacy?class_getImageName(legacy):NULL;
+  check(isolatedImage&&strstr(isolatedImage,"RuntimeFallback.dylib")!=NULL,"isolated helper belongs to generated engine");
+  check(!legacy||(legacyImage&&strstr(legacyImage,"RuntimeFallback.dylib")==NULL),"legacy helper name not registered by generated engine");
+ }
  check(routeSwiftCheckProtocols(source)==0,"Swift casts fallback-declared ObjC source to all native protocols");
  id swiftSource=routeSwiftProtocolObject();
  check(routeSwiftCheckProtocols(swiftSource)==0,"Swift casts Swift source to all native protocols");

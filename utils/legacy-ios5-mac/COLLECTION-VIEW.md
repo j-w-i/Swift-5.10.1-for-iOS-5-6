@@ -1312,3 +1312,26 @@ stderr also reveals duplicate private PST helper/wrapper classes between `libswi
 separate generated fallback, in addition to public UIKit duplicates on iOS 6. Private names must be
 isolated and instance/API gates rerun before treating this arrangement as safe. The shipping route
 remains unchanged and nothing has been published.
+
+### Round 105: private engine classes isolated from the Swift overlay and instances reverified
+
+The isolated generator now assigns unique `RouteEngine` runtime names to fourteen private helper and
+wrapper classes, including the private Ext class declared in an implementation file. The compiler
+therefore emits distinct class symbols too, while source identifiers/import file names remain intact.
+All declaration counts are checked; no original vendor/runtime sources or packaged overlay were edited.
+
+The combined non-UI Swift/ObjC protocol test now passes **52 checks on both devices**: the previous 24
+protocol checks and 28 new image-provenance checks. Every isolated helper originates in the generated
+fallback library, and no original private helper name originates there. Captured stderr is empty on
+iOS 5; on iOS 6 it has exactly the eight expected public UIKit/fallback class warnings, with no private
+PST/PSUI/RouteEngine collision warnings. This directly verifies the private collision fix rather than
+inferring it from successful callbacks.
+
+The real Swift-cell app was then rerun using the **same previously verified Swift executable** with the
+isolated engine dylib under a separate bundle/identifier. Both iPods again pass 21 instance checks and
+report 25 exact willDisplay callbacks. Created/reused/query/display counts remain 10/15/5/25 on iOS 5
+and 5/20/4/25 on iOS 6. Both reach active state without a respring; SpringBoard PIDs remain 7512/19547.
+
+Remaining limits: public duplicate-class selection, production importer/public UIKit spelling, modern
+API parity through this generated route, and arbitrary dependency graphs. The existing shipping route
+is still unchanged and nothing was published.

@@ -182,3 +182,27 @@ classes between the existing Swift UIKit overlay and generated fallback library,
 both OS versions. These add to the public UIKit duplicates on iOS 6. Passing these
 protocol and cell probes is not a reason to ignore that ambiguity: the generated
 private classes need isolation and the instance/API gates need rerunning afterward.
+
+## Private-class isolation retest
+
+The generator now gives all fourteen private helpers and unused wrapper classes
+`RouteEngine`-prefixed runtime names. Their source identifiers/file names remain
+unchanged, but compiler-emitted class symbols and runtime names are distinct from the
+copy inside `libswiftUIKit`. The declaration-count guard requires each public/private
+class and protocol definition exactly once, including Ext's definition in an `.m` file.
+Original vendor sources and the existing Swift overlay are not changed.
+
+The combined non-UI Swift protocol probe now performs 52 checks on each iPod (24
+protocol checks plus 28 private class provenance checks). Every isolated helper belongs
+to `RuntimeFallback.dylib`, and no original private name belongs to that generated
+image. iOS 5 stderr is empty; iOS 6 stderr contains only the eight public UIKit/fallback
+duplicate warnings, with no PST/PSUI/RouteEngine private collision warnings.
+
+The real Swift cell instance gate was rerun with the identical previously built Swift
+executable and the isolated engine dylib in a separate `SwiftCellRouteIsolated.app`
+bundle/identifier. Both devices again pass 21 checks, including stored-state integrity,
+casts/protocols/labels/frames, reuse/layout overrides and exact display counts. The
+counts remain 10/15/5/25 on iOS 5 and 5/20/4/25 on iOS 6. Both processes reach active
+state, with unchanged SpringBoard PIDs. This removes the observed private-class
+ambiguity, not the unresolved public duplicates or the remaining modern API/importer
+and dependency-graph verification requirements.
