@@ -1,5 +1,33 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The settle seam makes visible frames worse, not better (round 208)
+
+Implemented the seam identified in round 207: the flow layout got `-pstSettleMaterialisationInRect:`, the data
+layer calls it immediately before `layoutAttributesForElementsInRect:`, and `updateItemsLayout` builds packed
+sections lazily with the per-section mean as the estimate.
+
+Result: **identical to round 207** - 0/32 steps exact, 61 of 210 visible cell frames differing, fitted-item
+parity 27/32. The settle call changed nothing at all, which rules out "materialisation happens after the
+attribute set is fetched" as the cause.
+
+That leaves a more important observation, and it is the honest conclusion of this line of work:
+
+* the **shipped baseline** (full `computeLayout`, no lazy section build) matches native on **every visible frame
+  in all 32 steps** (0 of 210 differing) and on fitted-item parity (32/32), failing only one content-size step;
+* **every** lazy-wired variant tried in rounds 187, 207 and 208 makes visible frames *worse* (61 differing) while
+  leaving content unchanged or worse.
+
+So for behaviour, the lazy layout is currently a regression, not an improvement. Its value is potential
+performance for very large data sets, which the device measurements do not yet show a need for: PST already
+measures 0.07-0.97 of the Apple route on hardware and 0.48-0.66 in the simulator.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
+Recommendation for the remaining rounds: stop pushing the lazy layout into the live path. The primitives
+(rounds 185-206) are committed and gated, so they remain available if a large-data-set performance case ever
+appears, but the behavioural gap is the estimate model - one content-size step - and that should be attacked
+without changing how sections are materialised.
+
 ## Wiring the lazy build into the layout pass: attempted, reverted (round 207)
 
 Connected `updateItemsLayout` to the lazy section build for all packed sections, using the per-section mean as
