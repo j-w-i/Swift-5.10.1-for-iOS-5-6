@@ -1,5 +1,16 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Packed cross-axis section reflow (round 160)
+
+Added a general packed-item reflow fallback when the fast scrolling-axis-only update rejects a cross-axis
+change. It uses retained item sizes to recompute this section's row membership, preserving the section's
+absolute origin, then propagates its extent delta through later sections. No data-source query is involved.
+It currently rebuilds the entire affected section (not a lazy valid-range suffix) and reallocates row arrays;
+therefore this is a correctness fallback, not an Apple-performance claim. Extended tests to 60 cross-axis
+updates that grow/shrink row membership across three sections on both axes, now comparing every item frame
+as well as row/section/footer/content geometry. All 240 cases match full rebuilds; strict iOS 5 availability
+syntax checks pass. This path is still not connected to preferred contexts/cell preparation.
+
 ## Strict runtime archive build (round 159)
 
 Ran the actual source runtime builder, including -Werror=unguarded-availability, rather than the looser

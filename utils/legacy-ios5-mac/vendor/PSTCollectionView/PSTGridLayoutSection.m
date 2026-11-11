@@ -304,6 +304,19 @@
     }
 }
 
+- (BOOL)reflowPackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta {
+    if (delta) *delta = 0;
+    if (!_packed || !_isValid || item < 0 || item >= _packedCount ||
+        !isfinite(size.width) || !isfinite(size.height) || size.width <= 0 || size.height <= 0) return NO;
+    CGRect before = _frame;
+    _packedSizes[item] = size;
+    [self invalidate];
+    [self computeLayout];
+    _frame.origin = before.origin;
+    if (delta) *delta = self.layoutInfo.horizontal ? _frame.size.width - before.size.width : _frame.size.height - before.size.height;
+    return YES;
+}
+
 - (BOOL)stagePackedItemAtIndex:(NSInteger)item size:(CGSize)size {
     if (!_packed || !_isValid || item < 0 || item >= _packedCount) return NO;
     const BOOL horizontal = self.layoutInfo.horizontal;

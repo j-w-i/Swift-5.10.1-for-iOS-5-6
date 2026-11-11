@@ -75,6 +75,8 @@
 - (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
 // Store only: exposes the new size, preserving row geometry until updatePackedItemAtIndex commits it.
 - (BOOL)stagePackedItemAtIndex:(NSInteger)item size:(CGSize)size;
+// General size change; recomputes this section's row membership from stored sizes, preserving absolute origin.
+- (BOOL)reflowPackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
 
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;

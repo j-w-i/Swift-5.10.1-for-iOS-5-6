@@ -47,17 +47,21 @@ int main(void){@autoreleasepool{
  CGSize cross=sizes[0];if(horizontal)cross.height++;else cross.width++;
  if([incremental updatePackedItemAtIndex:0 size:cross scrollDelta:NULL])return 6;
  }
- for(int horizontal=0;horizontal<2;horizontal++){
+ for(int reflow=0;reflow<2;reflow++)for(int horizontal=0;horizontal<2;horizontal++){
  CGSize sizes[3][31];for(int s=0;s<3;s++)for(int i=0;i<31;i++)sizes[s][i]=horizontal?CGSizeMake(30+(i+s)%5*4,50):CGSizeMake(50,30+(i+s)%5*4);
  PSTGridLayoutInfo*info=makeInfo(horizontal,sizes);
  for(int step=0;step<30;step++){
- int s=step%3,i=(step*7)%31;CGSize next=sizes[s][i];if(horizontal)next.width=25+step%7*9;else next.height=25+step%7*9;sizes[s][i]=next;
+ int s=step%3,i=(step*7)%31;CGSize next=sizes[s][i];if(horizontal)next.width=25+step%7*9;else next.height=25+step%7*9;
+ if(reflow){if(horizontal)next.height=20+step%5*25;else next.width=20+step%5*25;}
+ sizes[s][i]=next;
  if(![info updatePackedItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:s] size:next scrollDelta:NULL])return 7;
  PSTGridLayoutInfo*rebuilt=makeInfo(horizontal,sizes);
  if(!CGSizeEqualToSize(info.contentSize,rebuilt.contentSize))return 8;
  for(int k=0;k<3;k++){
  PSTGridLayoutSection*a=info.sections[k],*b=rebuilt.sections[k];if(!near(a.frame,b.frame)||!near(a.footerFrame,b.footerFrame))return 9;
+ if(a.rowCount!=b.rowCount)return 15;
  for(NSInteger r=0;r<a.rowCount;r++)if(!near([a rowFrameAtIndex:r],[b rowFrameAtIndex:r]))return 10;
+ for(NSInteger j=0;j<31;j++)if(!near([a packedItemFrameAtIndex:j],[b packedItemFrameAtIndex:j]))return 16;
  }
  checks++;
  }

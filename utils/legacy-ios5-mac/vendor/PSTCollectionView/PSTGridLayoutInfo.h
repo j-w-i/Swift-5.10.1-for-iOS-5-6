@@ -30,7 +30,7 @@
 
 // Frame for specific PSTGridLayoutItem.
 - (CGRect)frameForItemAtIndexPath:(NSIndexPath *)indexPath;
-// Incremental scrolling-axis update; propagates the section delta to later sections and content size.
+// Scrolling-axis update (or section reflow for cross-axis changes); propagates the delta to later sections and content size.
 - (BOOL)updatePackedItemAtIndexPath:(NSIndexPath *)indexPath size:(CGSize)size scrollDelta:(CGFloat *)delta;
 
 // Add new section. Invalidates layout.

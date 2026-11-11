@@ -69,7 +69,8 @@
     if (!indexPath || sectionIndex < 0 || sectionIndex >= (NSInteger)_sections.count) return NO;
     PSTGridLayoutSection *section = [_sections objectAtIndex:sectionIndex];
     CGFloat change = 0;
-    if (![section updatePackedItemAtIndex:indexPath.row size:size scrollDelta:&change]) return NO;
+    if (![section updatePackedItemAtIndex:indexPath.row size:size scrollDelta:&change] &&
+        ![section reflowPackedItemAtIndex:indexPath.row size:size scrollDelta:&change]) return NO;
     if (change != 0) {
         for (NSUInteger i = (NSUInteger)sectionIndex + 1; i < _sections.count; i++) {
             PSTGridLayoutSection *later = [_sections objectAtIndex:i];
