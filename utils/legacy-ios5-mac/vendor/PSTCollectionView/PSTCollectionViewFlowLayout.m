@@ -709,19 +709,23 @@ static char kPSTCachedItemRectsKey;
     if (!_pstSectionMeasured) _pstSectionMeasured = [NSMutableDictionary dictionary];
     NSMutableArray *entry = [_pstSectionMeasured objectForKey:@(section)];
     if (!entry) { entry = [NSMutableArray arrayWithObjects:@0.0, @0.0, @0, nil]; [_pstSectionMeasured setObject:entry forKey:@(section)]; }
-    if (old) { [entry replaceObjectAtIndex:0 withObject:@([entry[0] doubleValue] - old->width)];
-               [entry replaceObjectAtIndex:1 withObject:@([entry[1] doubleValue] - old->height)]; }
-    else [entry replaceObjectAtIndex:2 withObject:@([entry[2] integerValue] + 1)];
-    [entry replaceObjectAtIndex:0 withObject:@([entry[0] doubleValue] + size.width)];
-    [entry replaceObjectAtIndex:1 withObject:@([entry[1] doubleValue] + size.height)];
+    // Indexed accessors, not subscripting: `entry[i]` is iOS 6+ and this runtime targets iOS 5.
+    double sumW = [[entry objectAtIndex:0] doubleValue], sumH = [[entry objectAtIndex:1] doubleValue];
+    NSInteger hits = [[entry objectAtIndex:2] integerValue];
+    if (old) { sumW -= old->width; sumH -= old->height; } else hits += 1;
+    sumW += size.width; sumH += size.height;
+    [entry replaceObjectAtIndex:0 withObject:@(sumW)];
+    [entry replaceObjectAtIndex:1 withObject:@(sumH)];
+    [entry replaceObjectAtIndex:2 withObject:@(hits)];
 }
 
 /// Mean of the sizes reported inside one section, or the plain estimate when nothing has been measured there.
 - (CGSize)pstEstimateForSection:(NSInteger)section {
     NSArray *entry = [_pstSectionMeasured objectForKey:@(section)];
-    NSInteger count = entry ? [entry[2] integerValue] : 0;
+    NSInteger count = entry ? [[entry objectAtIndex:2] integerValue] : 0;
     if (count <= 0) return _pstProposalAtLayout0;
-    return CGSizeMake([entry[0] doubleValue] / (double)count, [entry[1] doubleValue] / (double)count);
+    return CGSizeMake([[entry objectAtIndex:0] doubleValue] / (double)count,
+                      [[entry objectAtIndex:1] doubleValue] / (double)count);
 }
 
 - (BOOL)pstDelegateProvidesSizes {
