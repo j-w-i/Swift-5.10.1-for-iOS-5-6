@@ -1207,3 +1207,33 @@ Objective-C class warning still says class selection is undefined, even with the
 The stand-in implements no collection engine on iOS 5. Full PST class-family binding, Swift subclasses,
 casts, protocols, metadata, deployment packaging and different library dependency graphs remain to be
 proved before any automatic-route mode is enabled. No UIKit/shared-cache/system-file patch was made.
+
+### Round 101: same binary passes hierarchy and typed Swift metadata checks on both iPods
+
+Extended the isolated runtime-selection spike, not the production engine. Seven class stand-ins model
+collection view/reusable view/cell/layout/flow layout/attributes/controller. `hierarchy` passes 21
+checks on each device: all direct/runtime class pointers agree; all seven choose the fallback on
+5.1.1 and native UIKit on 6.1.3; cell/reusable and flow/layout inheritance agree; app-defined cell,
+flow and controller subclasses inherit from the canonical runtime classes. No GUI process is created.
+
+The typed Swift probe also passes on both devices using the **same armv7 iOS-5-targeted binary**:
+`Swift typed metadata result=0`. It defines Swift cell and flow subclasses of test-only imported
+classes whose `objc_runtime_name` is UIKit's name. Runtime metatype casts, a negative unrelated-type
+cast, Swift and ObjC protocol conformance and ObjC superclass checks all pass. The types are looked up
+at runtime before casting so the checks are not compile-time-folded subtype tests. Build scripts and
+sources live in `tests/runtime-selection-spike`; the Swift script stages its own runtime dependency
+closure rather than changing anything in `/usr/lib` on either device.
+
+One manual packaging run failed before main because the concurrency runtime dylib was omitted; the
+checked-in script follows transitive dependencies and the final build ran successfully on both iPods.
+Linker warnings about existing compatibility archives' iOS-7 minimum tags and newer autolink candidates
+remain recorded in the test README; passing this metadata probe is not general runtime verification.
+
+**What this establishes:** an isolated UIKit-first linkage experiment can retain these typed Swift
+subclasses/casts while selecting a fallback on iOS 5 and native classes on iOS 6. The earlier blanket
+claim that runtime selection necessarily loses Swift typing was too strong.
+
+**What is still unproved:** the full PST implementation under native class symbols, actual subclass
+instances/ivar layout and overrides, the production importer/public UIKit spellings, cell reuse and
+modern API parity through this new route, and arbitrary dependency graphs. Duplicate-class warnings
+still occur on iOS 6. The shipping compile-time route has not been changed or published.

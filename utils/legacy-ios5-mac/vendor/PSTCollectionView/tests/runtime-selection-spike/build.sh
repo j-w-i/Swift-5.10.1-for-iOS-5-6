@@ -24,4 +24,8 @@ with open(sys.argv[1]+'/RouteBinding.app/Info.plist','wb') as f:
 PY
 for file in "$OUT/SpikeEngine.dylib" "$OUT/binding-uikit-first" "$OUT/binding-engine-first" "$OUT/RouteBinding.app/SpikeEngine.dylib" "$OUT/RouteBinding.app/RouteBinding"; do ldid -S "$file"; done
 otool -L "$OUT/binding-uikit-first" > "$OUT/dependencies.txt"
+"$CC" "${FLAGS[@]}" -dynamiclib -install_name @executable_path/HierarchyFallback.dylib "$HERE/hierarchy-stand-in.m" -framework UIKit -framework Foundation -o "$OUT/HierarchyFallback.dylib"
+"$CC" "${FLAGS[@]}" -L "$CRT" -Wl,-flat_namespace "$HERE/hierarchy.m" -framework UIKit -framework Foundation "$OUT/HierarchyFallback.dylib" -o "$OUT/hierarchy"
+ldid -S "$OUT/HierarchyFallback.dylib"
+ldid -S "$OUT/hierarchy"
 echo "Built isolated experiment: $OUT"
