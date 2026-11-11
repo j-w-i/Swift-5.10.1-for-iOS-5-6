@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Growth accounting for variable sections: attempted, not finished (round 205)
+
+Next step after round 204: a freshly materialised row replaces part of the estimate, so the section extent has to
+move by "actual minus estimated" and that delta has to propagate. Implemented the section-level accounting
+(`packedEstimatedExtentForLaidOutRows:`, `_packedTotalRows`, `_packedRemainderEstimate`, growth returned instead
+of a hard-coded zero) and the info-level propagation (the growing section's own frame, then later sections and
+the content extent).
+
+The uniform and variable lazy gates still passed, but the new invariant - a lazily built variable layout,
+materialised on demand, must land exactly on the rebuild's frames - **failed**: a horizontal section came out
+360 wide against the rebuild's 179, i.e. the growth was reported as zero and the estimated width was never
+replaced. So one of the inputs to the accounting is wrong (total-row count or remainder estimate at the point
+`materialise...` runs) and I could not pin it down within this round's budget.
+
+Reverted rather than leave half-finished propagation in the tree; committed state re-verified immediately
+(golden PASS, lazy-variable PASS, layouts 31/32 with fitted-item parity 32/32).
+
+For the next attempt: the failing invariant is the right test to drive it - build the three-section lazy layout,
+materialise every section, and require frame equality with a rebuild. The number to print first is the growth the
+materialiser reports per section, since a zero there explains the 360-vs-179 directly.
+
 ## Lazy layout extended to variable sections (round 204)
 
 First step of the plan's addendum: `computeLayoutMaterialisingRowsThrough:` now takes an `estimate` and works for
