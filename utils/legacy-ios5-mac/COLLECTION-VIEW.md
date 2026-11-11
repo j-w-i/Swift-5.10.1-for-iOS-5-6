@@ -274,8 +274,13 @@ and scroll back. Native UIKit calls the two setters once per `prepareForReuse` a
 not at all when a cell is created. PST used to call them again after every cell
 creation (8 setter pairs against native's 2 in the scroll phase). PST now sets them
 at creation only when the value changes; the per-reuse ratio matches native.
-Not fixed: PST prepares 4 reused cells where native prepares 2, which suggests
-native creates arriving cells before it retires departing ones. Observable through
-`prepareForReuse` counts. Profile of a reload loop (simulator, 200 items): about
+Not fixed: PST prepares 4 reused cells where native prepares 2. `tests/reuse-order.m`
+(diagnostic) shows why: native does retire first (`end` before `cellForItem`) but
+does not hand a view it retired in the same pass to an arriving cell, so it creates
+new cells (`new#3`, `new#4`) where PST reuses `#2`, `#1`. On the next pass native
+reuses one queued cell and creates another instead of reusing the second, which a
+plain LIFO queue does not explain. A "reusable only after the pass" model fits the
+first pass but not the second, so no code change was made. Observable by apps that
+count cell creations or `prepareForReuse` calls. Profile of a reload loop (simulator, 200 items): about
 64% of main-thread time in `pstAddVisibleViewForAttributes:key:`, of which
 `addControlledSubview:` (UIKit `insertSubview:atIndex:`) is about 39%.
