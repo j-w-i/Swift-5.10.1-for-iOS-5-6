@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Current parity correction: self-sizing before display (round 142)
+
+The earlier passing display-event tests used fixed-size cells. They did not establish self-sizing lifecycle
+parity. The new `tests/run-selfsizing-display-lifecycle-test.sh SIM [--report|--gate]` tests each cell instance
+across initial layout, scroll and reload, both when its preferred size equals its estimate and when it changes.
+On iOS 27, no tested cell reaches `willDisplayCell` before its fitting callback. Current PST does:
+
+| Preferred size | Native displays / before fit | PST displays / before fit |
+| --- | ---: | ---: |
+| Equal to estimate | 9 / 0 | 9 / 9 |
+| Changes height from 40 to 60 | 8 / 0 | 10 / 10 |
+
+This is externally observable behaviour, including excess display callbacks, not merely a private ordering
+difference. The report mode records the known mismatch; `--gate` fails until it is corrected. No allowance
+for a number of failures is built into the gate. The Apple hook route has not yet run this new probe.
+
+The iOS 8.1 reference supports the same ordering: cell creation asks for preferred attributes, invokes the
+layout's invalidation predicate/context, and invalidates before applying attributes and sending display.
+Tracing further shows the collection view queues invalidated item paths, marks visible cells for update and
+schedules layout. This does not prove that iOS 27 uses an identical internal algorithm, or that a hook is
+incapable of an efficient solution. Earlier categorical statements to that effect were stronger than the
+evidence. Incremental invalidation, reuse of unaffected layout data and fit-before-display are confirmed
+reference behaviours to implement and test; the precise work bounds and remaining layout mathematics still
+need analysis. No runtime behaviour was changed in this round.
+
 `import UIKit` exposes collection views under their ordinary UIKit names in
 legacy iOS 5 device builds. No PST import, package dependency, bridging header,
 collection-specific include path or project linker setting is required.
