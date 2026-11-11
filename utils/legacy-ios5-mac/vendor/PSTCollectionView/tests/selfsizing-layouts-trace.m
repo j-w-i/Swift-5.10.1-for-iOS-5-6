@@ -17,9 +17,11 @@
 #define UICollectionReusableView PSTCollectionReusableView
 #endif
 static BOOL horizontal_,perSection_;
+static NSMutableArray *fitted_;   // [section,item] pairs reported during the current step
 @interface LC:UICollectionViewCell @end
 @implementation LC
 - (UICollectionViewLayoutAttributes*)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes*)a{
+ [fitted_ addObject:@[@(a.indexPath.section),@(a.indexPath.item)]];
  UICollectionViewLayoutAttributes*r=[a copy];CGFloat d=30+((a.indexPath.item*7+a.indexPath.section*3)%5)*8;
  r.size=horizontal_?CGSizeMake(d,a.size.height):CGSizeMake(a.size.width,d);return r;}
 @end
@@ -43,6 +45,7 @@ static BOOL horizontal_,perSection_;
 static NSArray *r4(CGRect r){return @[@(r.origin.x),@(r.origin.y),@(r.size.width),@(r.size.height)];}
 static void settle(UICollectionView*cv){[cv layoutIfNeeded];CFRunLoopRunInMode(kCFRunLoopDefaultMode,0.05,false);[cv layoutIfNeeded];}
 static void snap(NSString*name,UICollectionView*cv,UICollectionViewFlowLayout*l,LS*s){
+ if(!fitted_)fitted_=[NSMutableArray array];
  NSMutableArray*rects=[NSMutableArray array],*heads=[NSMutableArray array],*vis=[NSMutableArray array];
  for(NSInteger sec=0;sec<s.sections;sec++){
   for(NSInteger i=0;i<s.items;i++)[rects addObject:r4([l layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:i inSection:sec]].frame)];
@@ -54,7 +57,7 @@ static void snap(NSString*name,UICollectionView*cv,UICollectionViewFlowLayout*l,
  for(NSString*kind in @[UICollectionElementKindSectionHeader,UICollectionElementKindSectionFooter])for(NSIndexPath*p in [[cv indexPathsForVisibleSupplementaryElementsOfKind:kind] sortedArrayUsingSelector:@selector(compare:)]){
   UICollectionReusableView*v=[l.collectionView.subviews filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id o,id b){return [o isKindOfClass:[UICollectionReusableView class]]&&![o isKindOfClass:[UICollectionViewCell class]];}]].firstObject;(void)v;
   UICollectionViewLayoutAttributes*sa=[l layoutAttributesForSupplementaryViewOfKind:kind atIndexPath:p];[suppFrames addObject:@[kind,@(p.section),r4(sa.frame)]];}
- NSDictionary*rec=@{@"step":name,@"rects":rects,@"supp":heads,@"content":r4((CGRect){.size=cv.contentSize}),@"visible":vis,@"cellFrames":cellFrames,@"visibleSupp":suppFrames};
+ NSDictionary*rec=@{@"step":name,@"fitted":[fitted_ copy],@"rects":rects,@"supp":heads,@"content":r4((CGRect){.size=cv.contentSize}),@"visible":vis,@"cellFrames":cellFrames,@"visibleSupp":suppFrames};
  puts([[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:rec options:0 error:NULL] encoding:NSUTF8StringEncoding].UTF8String);}
 int main(int argc,char**argv){@autoreleasepool{[UIApplication sharedApplication];setvbuf(stdout,NULL,_IONBF,0);
  int sc=argc>1?atoi(argv[1]):0;

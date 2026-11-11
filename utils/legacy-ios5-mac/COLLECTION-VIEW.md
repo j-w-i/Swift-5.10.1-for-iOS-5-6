@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Which cells each engine measures (round 167)
+
+Added a fitting log to the layouts trace (`fitted` per step: the (section,item) pairs that received
+`preferredLayoutAttributesFittingAttributes:`), so measurement timing can be compared directly instead of
+inferred from geometry.
+
+Result at HEAD for the three-section scenario: native and PST fit the **same items and the same count** at
+every step (6, 14, 18), differing only in order - e.g. native `(0,5),(0,6),(0,7),(0,7),(0,6),(0,5)` against
+PST `(0,5),(0,6),(0,7),(0,5),(0,6),(0,7)`. Since the traced scenario has cells reporting 30/38/46/54/62 by
+index, any difference in *which* items are measured would shift the mean and therefore content size; there is
+none, which is consistent with content size matching exactly (1854) at HEAD.
+
+That explains the round-166 result precisely: moving the fit to preparation does not change the mean model at
+all, it changes **which cells are fitted** - PST then fits cells it creates and later discards, while native's
+fit count stays at the displayed set. So the correct fix is not a new estimate formula; it is to make the
+visible-set computation settle before cells are created, i.e. re-derive the visible attributes after an
+invalidation raised during the pass (bounded restarts), so no cell is prepared only to be discarded.
+
+Instrumentation only; no runtime behaviour changed, and the gate is unchanged at 31/32 with 0 of 210 visible
+cell frames differing.
+
 ## Third attempt: duplicate fitting removed, remaining defect isolated to content size (round 166)
 
 Round 164 could not tell whether the content-size error came from the cache or from double fitting. Two
