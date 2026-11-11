@@ -1,4 +1,13 @@
 #import <UIKit/UIKit.h>
+#ifdef TEST_PST
+#import "PSTCollectionView.h"
+#define UICollectionView PSTCollectionView
+#define UICollectionViewCell PSTCollectionViewCell
+#define UICollectionViewFlowLayout PSTCollectionViewFlowLayout
+#define UICollectionViewDataSource PSTCollectionViewDataSource
+#define UICollectionViewLayoutAttributes PSTCollectionViewLayoutAttributes
+#define UICollectionViewScrollPositionTop PSTCollectionViewScrollPositionTop
+#endif
 @interface C : UICollectionViewCell @property CGFloat h; @end
 @implementation C
 - (UICollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes *)a { UICollectionViewLayoutAttributes *r=[a copy]; r.size=CGSizeMake(a.size.width,self.h); return r; }

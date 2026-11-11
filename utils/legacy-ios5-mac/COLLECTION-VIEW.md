@@ -303,4 +303,20 @@ the iPhone 6 result for `run-self-sizing-updates` is a native bug, not a PST
 failure; (2) PST passes that fixture on the same phone, so on iOS 10 hardware PST
 is stricter than native here; (3) no oracle exists for self-sizing scroll on iOS 6/7
 or 8/9 hardware, so Apple-route behaviour there remains unverified. PST's content
-height, offset and cell at the same scenario were not compared on the phone.
+height, offset and cell at the same scenario were not compared on the phone (see below).
+
+The same file also builds against PST (`-DTEST_PST=1`). Results for the same scenario:
+
+| Engine | Cell 39 | Offset | Content height |
+| --- | --- | ---: | ---: |
+| Native, iOS 27 simulator | visible | 1585 | 1705 |
+| PST, iOS 27 simulator | visible | 1650 | 1770 |
+| PST, iPhone 6 (iOS 10.3.3) | visible | 1650 | 1770 |
+| Native, iPhone 6 (iOS 10.3.3) | nil | 920 | 2083 |
+
+PST gives identical numbers on simulator and phone, and survives the reload that
+crashes native iOS 10. But it differs from the iOS 27 oracle by 65 points in both
+offset and content height, so this scenario is **not** a PST/native match. The sum
+of all 40 heights is 2760, so every engine is reporting a partly measured layout; the
+difference is which items each engine has measured when the scroll resolves. That
+set depends on engine-internal measurement order and was not investigated.
