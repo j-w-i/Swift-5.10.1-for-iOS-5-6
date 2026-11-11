@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Outlier resolved; reload variance recorded (round 200)
+
+Repeated the round-199 measurement twice on the same device and same binary:
+
+| Configuration | run 1 | run 2 | round 175 baseline |
+| --- | ---: | ---: | ---: |
+| no delegate, cold | 148.2 ms | 149.1 ms | 147.7 ms |
+| no delegate, scroll | 17.2 ms | 17.1 ms | 16.9 ms |
+| no delegate, reload | 189.3 ms | 189.0 ms | 146.7 ms |
+| delegate, cold | 285.6 ms | 286.3 ms | 287.5 ms |
+| delegate, scroll | 2.9 ms | 2.8 ms | 3.0 ms |
+| delegate, reload | 334.6 ms | 333.3 ms | 335.0 ms |
+
+* The 237 ms cold reading from round 199 was **first-run interference** - two clean repeats give 148.2 / 149.1 ms,
+  consistent with the baseline. Not a regression. (Round 199's own reload reading of 149.4 ms was the same
+  artefact in reverse: whichever scenario runs first in a launch pays launch cost.)
+* The delegate path is confirmed fixed and stable (285.6-286.3 cold, 333.3-334.6 reload against a 287.5 / 335.0
+  baseline), which was the point of the C-array change.
+* The no-delegate **reload** is consistently ~189 ms in both repeats of this session against 146.7 ms in round
+  175 - reproducible within a launch, so it is either a real change or a device/session effect (the device has
+  been running probes all session and may be throttling). Recorded as unresolved rather than claimed either way;
+  settling it needs the baseline binary re-run in the same session, which is what a paired run is for.
+
+Behaviour is deterministic across runs: the measured `contentHeight` values are identical (273341 and 289970).
+
 ## Per-section sums in C arrays: delegate-path cost removed (round 199)
 
 Round 198 measured the per-section estimate costing 5-10% on the delegate path (cold 287.5 -> 301.6 ms,
