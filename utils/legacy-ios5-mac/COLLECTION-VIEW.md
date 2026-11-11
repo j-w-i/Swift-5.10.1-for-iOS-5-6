@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Reuse path ruled out by instrumentation (round 192)
+
+Instrumented `_pstReuseStoredSizes` itself: when the attribute-only invalidation decides to reuse stored sizes,
+when it is set, and whether any prepareLayout consumes it. In the layouts scenario:
+
+* `set YES` count: **0** - the reuse path is never entered;
+* the decision is blocked every time by `earliest=1`, i.e. a pending preferred-size report (exactly the guard
+  added in round 179), which is the correct behaviour;
+* prepareLayout runs repeatedly with `reuse=0`.
+
+So round 191's hypothesis was wrong as well: the stale content does **not** come from the stored-size reuse
+path.
+
+What remains ruled out for this defect, all by direct measurement rather than reasoning: fitting order,
+fit count, visible frames, the stored-size reuse flag, layout reuse, and the fit/record pipeline itself (round
+191 showed reports accumulating and being observed by rebuilds). The content size is nevertheless exactly the
+pure estimate.
+
+The next probe is therefore the only unexamined point in that chain: log `_pstMeasuredSizeCount` and the
+`contentSize` computed, at the **end** of `updateItemsLayout`, together with the sizes actually written into the
+packed buffers. That distinguishes "builds with measurements but exports estimate" from "the exported size is
+overwritten afterwards" and is a handful of lines.
+
+Reverted; baseline verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity 32/32).
+
 ## Layouts scenario instrumented: reports accumulate, but the final content comes from elsewhere (round 191)
 
 Re-ran the round-190 tracing in the layouts scenario, where the content defect actually appears (stderr lands in
