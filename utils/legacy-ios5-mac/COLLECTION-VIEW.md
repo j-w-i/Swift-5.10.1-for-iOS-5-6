@@ -1975,3 +1975,47 @@ Limits: 8 of 10 fixtures exact, not 10; the model is fitted to native behaviour 
 and fixed-width two- and three-column grids, with unit-size estimates, and is not validated for
 multiple sections, horizontal flow, variable widths or sections with headers. The Apple route here is
 stock iOS 6.1.3 plus the backport hooks. The iPhone 6 was not run.
+
+### Self-sizing across sections, headers, insets and horizontal scroll: tested, and four defects fixed
+
+The stepped fixtures were all single-section vertical layouts without headers, which is exactly the
+coverage the earlier notes listed as unvalidated. A new differential test
+(`tests/selfsizing-layouts-trace.m`, `run-selfsizing-layouts-test.sh`) runs six shapes against iOS 27
+UIKit and compares what is on screen at four scroll positions: real cell frames, header frames, content
+size and the visible set. The shapes: three sections with headers; insets plus line and item spacing; two
+sections with narrow items; the same two horizontally; and four sections with small headers.
+
+First run: **0 of 24 steps matched**, and the same on the commits before packed storage, so none of it
+was a packing regression. Four independent defects:
+
+1. **Learned sizes leaked across sections.** PST applied the running mean to every later section as soon as
+   one section had measured items, so unvisited sections were laid out with the learned size. UIKit keeps
+   the original estimate for a section nothing has changed in yet. Proposal breakpoints now apply only
+   inside the section they were learned in. This alone moved 578 wrong rectangles to the cross-axis cases.
+2. **Non-scrolling-axis content size was wrong.** UIKit reports exactly the viewport's width (vertical
+   scroll) or height (horizontal) whatever the items and insets add up to: narrow items, items wider than
+   the view, and inset sections all leave it unchanged. PST reported the item or inset-padded extent
+   (175, 187, 224, 300 where UIKit says 200). Fixed for every layout, not only self-sizing; the 14-scenario
+   geometry golden still passes.
+3. **A lone item in a horizontal column was never centered.** The leading-edge alignment offset was applied
+   to x in both scroll directions, so horizontal columns ignored it. It now runs along the row in both
+   directions, in the object row code and the packed code.
+4. **Vertical content height is whole points, horizontal width is not.** A rounding of both axes was
+   correct for one and wrong for the other (observed against UIKit; cause not established).
+
+**Result:** 23 of 24 steps exact on screen, **0 of 148 visible cell frames differ**, headers and visible
+sets all match. The single remaining step is the first step of the horizontal narrow-item shape, where
+UIKit reports a content width of 707.09 while its cells are still being fitted and PST reports 773.09 (a
+66-point difference that disappears on the next step). The gate allows that one step and nothing else.
+The stepped single-section fixtures are unchanged at 8 of 10, all other gates pass, and hardware cost is
+unchanged (5,000 items, no delegate, cold: iPod touch 3 142 -> 144 ms, iPod touch 5 62 -> 65 ms).
+
+**Not matched, and reported rather than hidden:** attribute queries for items that are not on screen
+(`layoutAttributesForItemAtIndexPath:` for an item that has never been displayed). UIKit answers those
+from a layout it computes lazily and often returns the estimate, whereas PST returns its settled
+geometry. 14-42 such rectangles per step differ. This does not affect anything drawn, but code that
+queries layout attributes for off-screen items will see different numbers than on iOS 27.
+
+Limits: unit-size estimates and four to five sections of 9-16 items; no footers with content, no
+supplementary views other than headers, no decoration views, no section insets that differ per section,
+no delegate-supplied spacing, and no right-to-left. iPhone 6 not run.

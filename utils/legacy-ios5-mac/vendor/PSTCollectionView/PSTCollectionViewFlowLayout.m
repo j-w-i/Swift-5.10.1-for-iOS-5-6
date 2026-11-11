@@ -67,6 +67,7 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     CGSize _pstMeasuredSizeSum;                    // sum and count of the cell-reported sizes: unmeasured
     NSUInteger _pstMeasuredSizeCount;              // running-mean proposals; stepped UIKit cache still differs
     CGSize _pstProposalAtLayout;                   // the mean frozen for the current layout pass
+    CGSize _pstProposalAtLayout0;                  // the estimate itself, for sections nothing has been learned in
     CGSize _headerReferenceSize;
     CGSize _footerReferenceSize;
     UIEdgeInsets _sectionInset;
@@ -361,10 +362,13 @@ static char kPSTCachedItemRectsKey;
 - (CGSize)collectionViewContentSize {
     if (!_data || _needsPrepareLayout) [self prepareLayout];
 
+    // Observed against UIKit: a self-sizing layout that scrolls vertically reports a whole-point content height;
+    // one that scrolls horizontally keeps the fractional width.
     CGSize result = _data.contentSize;
     BOOL anyPacked = NO;
     for (PSTGridLayoutSection *s in _data.sections) if (s.packed) { anyPacked = YES; break; }
-    return anyPacked ? CGSizeMake(round(result.width), round(result.height)) : result;
+    if (anyPacked && !_data.horizontal) result.height = round(result.height);
+    return result;
 }
 
 - (void)setSectionInset:(UIEdgeInsets)sectionInset {
@@ -466,7 +470,10 @@ static char kPSTCachedItemRectsKey;
         if (PSTProposalRunBefore(runs[mid], section, item) || (runs[mid].section == section && runs[mid].item == item)) lo = mid + 1;
         else hi = mid;
     }
-    return lo ? runs[lo - 1].size : _pstProposalAtLayout;
+    // A learned size applies only inside the section it was learned in; a section none of whose items have
+    // changed yet keeps the original estimate, as UIKit does (it lays sections out lazily).
+    if (lo && runs[lo - 1].section == section) return runs[lo - 1].size;
+    return _pstProposalAtLayout0;
 }
 
 /// Called once per preferred-size invalidation batch: applies the current mean from one row before the
@@ -665,6 +672,7 @@ static char kPSTCachedItemRectsKey;
     // Freeze the mean of reported sizes for this rebuild (see pstSizeForSelfSizing...).
     if (_pstMeasuredSizeCount) _pstProposalAtLayout = CGSizeMake(_pstMeasuredSizeSum.width / (CGFloat)_pstMeasuredSizeCount, _pstMeasuredSizeSum.height / (CGFloat)_pstMeasuredSizeCount);
     else _pstProposalAtLayout = CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)) ? CGSizeMake(50, 50) : _estimatedItemSize;
+    _pstProposalAtLayout0 = CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)) ? CGSizeMake(50, 50) : _estimatedItemSize;
     [self getSizingInfos];
     [self updateItemsLayout];
 }
@@ -794,10 +802,12 @@ static char kPSTCachedItemRectsKey;
     // The non-scrolling axis still spans the viewport when an incomplete column
     // occupies less space. This matters for self-sizing columns, whose measured
     // union can be much shorter than the available height.
-    if (_data.horizontal && _data.sections.count)
-        contentSize.height = MAX(contentSize.height, _data.dimension);
-    else if (_data.selfSizing && _data.sections.count)
-        contentSize.width = MAX(contentSize.width, _data.dimension);
+    // UIKit sizes the non-scrolling axis to the viewport, whatever the items or insets add up to: narrower items,
+    // wider items and inset sections all leave it unchanged.
+    if (_data.sections.count) {
+        if (_data.horizontal) contentSize.height = _data.dimension;
+        else contentSize.width = _data.dimension;
+    }
     _data.contentSize = contentSize;
 }
 

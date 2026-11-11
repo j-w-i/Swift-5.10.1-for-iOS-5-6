@@ -146,12 +146,15 @@
         // push everything to the right if right-aligning and divide in half for centered
         // currently there is no public API supporting this behavior
         CGPoint itemOffset = CGPointZero;
+        // The alignment runs along the row: left to right in a vertically scrolling layout, top to bottom in
+        // a column of a horizontally scrolling one. (It used to be applied to x in both, so a lone item in a
+        // horizontal column was never centered.)
         if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentRight) {
-            itemOffset.x += leftOverSpace;
+            if (isHorizontal) itemOffset.y += leftOverSpace; else itemOffset.x += leftOverSpace;
         }else if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentCentered ||
                 (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify && usedItemCount == 1)) {
             // Special case one item row to split leftover space in half
-            if (soleSelfSizingItem && isHorizontal) itemOffset.y += leftOverSpace / 2;
+            if (isHorizontal) itemOffset.y += leftOverSpace / 2;
             else itemOffset.x += leftOverSpace / 2;
         }
 

@@ -266,10 +266,10 @@
         }
         CGPoint itemOffset = CGPointZero;
         if (alignment == PSTFlowLayoutHorizontalAlignmentRight) {
-            itemOffset.x += leftOverSpace;
+            if (horizontal) itemOffset.y += leftOverSpace; else itemOffset.x += leftOverSpace;
         } else if (alignment == PSTFlowLayoutHorizontalAlignmentCentered ||
                    (alignment == PSTFlowLayoutHorizontalAlignmentJustify && usedItemCount == 1)) {
-            if (soleSelfSizingItem && horizontal) itemOffset.y += leftOverSpace / 2;
+            if (horizontal) itemOffset.y += leftOverSpace / 2;
             else itemOffset.x += leftOverSpace / 2;
         }
         const CGFloat interSpacing = usedItemCount <= 1 ? 0 : leftOverSpace / (CGFloat)(usedItemCount - 1);
