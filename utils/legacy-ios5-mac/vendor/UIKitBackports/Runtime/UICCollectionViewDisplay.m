@@ -200,6 +200,29 @@ static CGSize UICDelegateSizeForItem(id self, SEL _cmd, UICollectionView *collec
     return [layout itemSize];
 }
 
+// Apple's flow layout only asks for item sizes when the collection view has a delegate that answers
+// sizeForItem, but iOS 8 self-sizes with no delegate at all. For that case the layout is shown an internal
+// delegate, and only while it prepares itself: UICDelegateGetter returns it just inside UICPrepareLayout,
+// so application code, scroll-view callbacks and anything outside the layout never see it. It implements
+// exactly one selector, so respondsToSelector: is NO for every other flow-layout delegate method.
+@interface UICInternalSizeDelegate : NSObject
+@end
+@implementation UICInternalSizeDelegate
+- (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewFlowLayout *)layout
+  sizeForItemAtIndexPath:(NSIndexPath *)indexPath {
+    return UICLayoutIsSelfSizing(layout) ? UICSizeForItem(layout, indexPath) : [layout itemSize];
+}
+@end
+static UICInternalSizeDelegate *UICInternalDelegate;
+static __unsafe_unretained UICollectionView *UICPreparingView;   // main thread only
+static NSUInteger UICPreparingDepth;
+static IMP UICOriginalDelegateGetter;
+static id UICDelegateGetter(UICollectionView *self, SEL _cmd) {
+    id real = ((id (*)(id, SEL))UICOriginalDelegateGetter)(self, _cmd);
+    if (real || !UICPreparingDepth || UICPreparingView != self) return real;
+    return UICInternalDelegate;
+}
+
 /// Makes the layout's delegate answer sizeForItem. An app-provided answer seeds
 /// estimated layouts; measured cell sizes then win. Without estimates the app
 /// answer is unchanged. Returns YES when a hook/wrapper was newly installed.
@@ -267,11 +290,26 @@ static void UICEstimatedItemSizeSetter(id self, SEL _cmd, CGSize size) {
 }
 
 static void UICPrepareLayout(id self, SEL _cmd) {
+    UICollectionView *collectionView = nil;
+    BOOL internal = NO;
     if (UICLayoutIsSelfSizing(self)) {
-        UICollectionView *collectionView = [(UICollectionViewLayout *)self collectionView];
-        if (collectionView) UICInstallSizeHook(collectionView);
+        collectionView = [(UICollectionViewLayout *)self collectionView];
+        if (collectionView) {
+            UICInstallSizeHook(collectionView);
+            // No application delegate: let the layout see the internal one for this pass only.
+            internal = ((id (*)(id, SEL))UICOriginalDelegateGetter)(collectionView, sel_registerName("delegate")) == nil;
+        }
     }
-    ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd);
+    if (!internal) { ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd); return; }
+    UICollectionView *previousView = UICPreparingView;
+    UICPreparingView = collectionView; UICPreparingDepth++;
+    @try {
+        SEL flags = sel_registerName("_updateDelegateFlags");
+        if ([self respondsToSelector:flags]) ((void (*)(id, SEL))objc_msgSend)(self, flags);
+        ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd);
+    } @finally {
+        UICPreparingDepth--; UICPreparingView = previousView;
+    }
 }
 
 /// iOS 8 default: measure the cell's contentView (or the view itself) with Auto Layout and return a copy of the
@@ -340,6 +378,17 @@ static void UICInstallSelfSizing(Class collectionView) {
     char getter[32], setter[32];
     snprintf(getter, sizeof getter, "%s@:", @encode(CGSize));
     snprintf(setter, sizeof setter, "v@:%s", @encode(CGSize));
+    if (!UICInternalDelegate) UICInternalDelegate = [UICInternalSizeDelegate new];
+    if (!UICOriginalDelegateGetter) {
+        SEL delegateSel = sel_registerName("delegate");
+        Method inherited = class_getInstanceMethod(collectionView, delegateSel);
+        if (inherited) {
+            UICOriginalDelegateGetter = method_getImplementation(inherited);
+            // Override on UICollectionView itself; never touch UIScrollView's implementation.
+            if (!class_addMethod(collectionView, delegateSel, (IMP)UICDelegateGetter, method_getTypeEncoding(inherited)))
+                UICOriginalDelegateGetter = method_setImplementation(inherited, (IMP)UICDelegateGetter);
+        }
+    }
     class_addMethod(flow, sel_registerName("estimatedItemSize"), (IMP)UICEstimatedItemSizeGetter, getter);
     class_addMethod(flow, sel_registerName("setEstimatedItemSize:"), (IMP)UICEstimatedItemSizeSetter, setter);
     class_addMethod(reusable, sel_registerName("preferredLayoutAttributesFittingAttributes:"), (IMP)UICPreferredAttributes, "@@:@");

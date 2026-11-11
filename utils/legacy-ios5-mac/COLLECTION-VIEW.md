@@ -1633,3 +1633,39 @@ Consequences, stated plainly:
 
 The earlier statement that PST "measures every item up front" was already corrected: the cost that
 grows is the O(items) layout rebuild, not item measurement.
+
+### Fixed: Apple-route `estimatedItemSize` with no delegate (iOS 6/7), and the first valid ratios
+
+`UICInstallSizeHook` returned early without a delegate, so Apple's flow layout never asked for item sizes
+and `estimatedItemSize` was ignored (see the correction above). The layout is now shown an internal
+`UICInternalSizeDelegate`, only while it prepares itself. `UICollectionView -delegate` is overridden on
+that class (never on `UIScrollView`) and returns the internal object only when all of these hold: the
+real delegate is nil, a `prepareLayout` for that same view is on the stack, and the layout is
+self-sizing. Application code, scroll-view callbacks and anything outside the layout never see it, and
+it implements one selector so every other flow-layout delegate query is answered NO.
+
+New test `Tests/nil_delegate_selfsizing.m` (persistent app) leaves the delegate nil. The **before** build
+(original runtime) fails 3 of 10 on the iPod touch 5, content height 2,000 against the 12,000 expected;
+the **after** build passes 10 of 10 (12,000; delegate getter stays nil; a delegate assigned later
+receives scroll callbacks and sizing survives it; removing it again also works; a layout without an
+estimate is unchanged). The 21-check modern-API gate still passes on both the iPod touch 3 and iPod
+touch 5, with SpringBoard PIDs unchanged.
+
+**First valid same-device ratios without a delegate**, iPod touch 5, content heights now equal
+(10,880 / 54,400 / 272,014 on both). Single run each, not interleaved; PST/native:
+
+| Items | Cold | Scroll | Reload |
+| ---: | ---: | ---: | ---: |
+| 200 | 1.36 | 0.83 | 1.02 |
+| 1,000 | 1.51 | 1.01 | 1.21 |
+| 5,000 | **1.50** | 0.81 | **1.28** |
+
+With a size delegate, as before: cold 0.99-1.26, scroll 0.70-0.72, reload 0.95-1.14. So PST is
+**about 1.5x slower than the Apple route on cold layout and 1.1-1.3x on reload at 1,000+ items**, and
+faster or equal on scroll. This replaces the earlier invalid 11x-15x figures. Those were a fixed grid
+against real self-sizing, not a PST defect. The remaining cold gap is O(items) layout rebuild cost, the
+same shape as the delegate case, and is a real but modest target.
+
+Limits: the internal delegate depends on UIKit 6/7 asking the delegate during `prepareLayout`; it was
+verified on iOS 6.1.3 only, not iOS 7 or on the iPhone 6. Ratios are single runs on one device and the
+cell is a trivial subclass.
