@@ -1,5 +1,45 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Consolidated status at round 183 (verification report)
+
+27 gates across three areas, all green at HEAD, run in one sweep:
+
+**Collection differential (23).** golden 14/14 scenarios; flow row centering 16; self-sizing stability;
+proposal; display scroll order; display supplementary events; hidden items; cell resize; attribute snapshot;
+bounds; preferred-attribute predicate (15 cases); invalidation context (defaults, dedupe, kinds, adjustments);
+attribute cache; context execution; flow context flags in the strict named-items mode (four flag combinations,
+both coalescing orders); packed incremental updates 240; packed windowed layout 24 + uniform detection;
+preferred-context staging (flags, paths 0-19, staged size 60, content 1200/800); automatic size;
+batch insert 9/9; prefetch lifecycle; self-sizing updates; delegate sizing. Layouts also reports
+31/32 steps exact on screen, 0 of 210 visible cell frames differing, and **fitted-item sets identical in 32 of
+32 steps**.
+
+**Backports (4).** Auto Layout parity (11 suites + 80 golden frames vs the rebuild-per-pass engine); fitting
+priorities; UIStackView parity; scene/trait fallthrough (classes unchanged on iOS 13+).
+
+**Hardware.** iPod touch 3 (iOS 5.1.1): PST cold 147.7 ms / scroll 16.9 ms / reload 146.7 ms at 5,000
+self-sizing items, and 287.5 / 3.0 / 335.0 with a size delegate - unchanged from before the context API landed.
+iPod touch 5 (iOS 6.1.3): paired PST/native ratios 0.07-0.97 across nine scenarios, and the Apple-route device
+gate PASS with 20 checks (prefetching, display callbacks, iOS 9 accessors, self-sizing, animated updates,
+transforms). iPod touch 5 was left hung by two resident probes mid-session; both killed, SpringBoard
+respringed, device verified clean.
+
+**Still outstanding, and why the objective is not met.**
+
+1. `willDisplayCell` still fires before `preferredLayoutAttributesFittingAttributes:` on the PST route
+   (lifecycle gate: 9/9 and 10/10 cells against native 0/0). Five attempts (163-174) proved fitting during
+   preparation fixes exactly this, and that it cannot be switched on without over-fitting (9/20/27 reports
+   against native's 6/14/18).
+2. The valid-range layout that resolves (1) is one third done: windowed row materialisation and the uniform
+   precondition exist and are tested, but the flow layout still rebuilds whole sections, and on-demand window
+   extension in the attribute-query path is not implemented.
+3. Swift declaration lowering cannot be exercised here (no installed `swift_ios5` toolchain); its gate
+   (`check-collection-api.sh`) was extended to audit the new context classes but cannot run.
+4. The iPhone 6 run (iOS 10.3.3) has not been done in this session; the device is not attached.
+
+No release has been published. Everything committed is verified by the gates above; the reverted experiments
+are recorded in this file rather than left in the tree.
+
 ## Lazy-layout precondition added and tested (round 182)
 
 Added `-packedSizesAreUniform` to the packed section: true only when every item size matches (and the first is
