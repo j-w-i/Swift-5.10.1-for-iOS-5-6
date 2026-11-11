@@ -4711,6 +4711,37 @@ being dropped after that point rather than never being offered. That is the next
 actual `ld` command line for libswiftUIKit (the stage log does not record it) and check whether the force-loaded
 path is the archive that was just rebuilt.
 
+## Toolchain rebuilt and qualified; Swift declaration lowering verified (round 256)
+
+The chain finally completes. After the Cassowary fix (round 254), the missing piece was the **stale `multiarch`
+stage**: `assemble-510-toolchain.sh` takes the per-slice dylibs from `out/multiarch-runtime/iphoneos` when that
+directory exists, and that copy predated this session's collection work (0 `LayoutInvalidationContext` symbols).
+The legacy link itself was correct - a manual run with `IOS_DEPLOYMENT_TARGET=5.0` produced
+`probes/linked510-legacy/libswiftUIKit.dylib` **with** the classes (4 symbols) - so rebuilding `multiarch`
+(`EXTRA_ARCHS="armv7s arm64"`) was the missing step.
+
+`build-all.sh` then completed **overlays -> multiarch -> assemble -> sanitize -> qualify-ios5**, and the
+qualification **passed** (`.stamps/qualify-ios5` present, evidence in `out/ios5-qualification`).
+
+Verification of the objective's declaration rule against the newly assembled toolchain
+(`out/swift-5.10.1-ios5.xctoolchain`):
+
+| Check | Result |
+| --- | --- |
+| Swift-visible legacy header equals the current generator output | **in sync** - 649 lines, 0 `pst` references, modern API present |
+| Swift client using `willDisplay`, prefetching, `estimatedItemSize` at `armv7-apple-ios5.0` with `-enable-legacy-ios5-runtime` | **0 errors** |
+| same client without the legacy flag | **fails** (the frontend demands the flag) |
+| same client at `armv7-apple-ios8.0` | 0 errors (native SDK declaration path unaffected) |
+| iOS 8-only API not backported (`UIContentUnavailableConfiguration`, iOS 17) | not in scope - no broad availability relaxation |
+
+So the declaration lowering is now verified end to end: below iOS 8 the compiler uses the backported declarations,
+at or above it uses the SDK's, and the legacy flag is mandatory for the iOS 5 target.
+
+Publishing the qualified profile is the remaining release action:
+`LEGACY_BUILD_ROOT=/Users/jwalr/Developer/legacy-build-fix7 bash qualify-ios5.sh --environment-root <env>`,
+which installs the assembled toolchain into that environment and publishes `ios5-profile.json`. That modifies a
+live kit environment, so it is left as an explicit step rather than run unattended.
+
 ## iPhone 6 (iOS 10.3.3) native-route gate: PASS (round 253)
 
 The device was connected, so the last unrun verification is done. New gate
