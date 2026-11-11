@@ -1237,3 +1237,33 @@ claim that runtime selection necessarily loses Swift typing was too strong.
 instances/ivar layout and overrides, the production importer/public UIKit spellings, cell reuse and
 modern API parity through this new route, and arbitrary dependency graphs. Duplicate-class warnings
 still occur on iOS 6. The shipping compile-time route has not been changed or published.
+
+### Round 102: real PST/native engine selection with one persistent app, and visual inspection
+
+The isolated build now uses the actual PST implementation. A generator copies the sources to a new
+build directory, adds UIKit `objc_runtime_name` attributes to the eight public classes, and exports
+native spellings for the header/footer/automatic-size globals. It changes no original runtime sources.
+The build-only runner and persistent app are under `tests/runtime-selection-spike`.
+
+The full implementation passed the class-identity/hierarchy probe on both physical devices. More
+importantly, the **same real app bundle** passed 15 checks on iOS 5.1.1 and iOS 6.1.3: fallback selected
+on 5/native UIKit on 6; canonical class pointer; visible cells; actual app cell subclass ivars and label
+content; reusable-view casts; 320x50 cell bounds; 10,000-point content size; scroll away/back; reuse and
+layout subclass overrides; willDisplay delivery. Counts were created/reused/layoutQueries/willDisplay
+10/15/5/25 on iOS 5 and 5/20/4/25 on iOS 6. Both processes reached active state and remained responsive;
+the user confirmed button and Home operation on both devices. SpringBoard did not require a respring.
+
+The user then asked for screen inspection. Both displays were captured without launching another GUI
+process, using the legacy `UIGetScreenImage` API (the ordinary screenshotr service was unavailable
+because no developer disk image was mounted). Visual inspection showed a real **fixture styling**
+difference: native iOS 6's collection background showed black around the white 280x40 UILabel inside
+each 320x50 cell. The fixture now explicitly uses a white collection background and clear labels; no
+engine defaults were changed. Both recaptured screens show clean white lists, and the app logs the
+same collection frame (320x240), cell/content size (320x50), and label frame (8,0,280,40). The iPod touch
+5 still runs the old test bundle in legacy 320x480 compatibility mode; its capture has letterboxing
+and reduction, which should not be mistaken for collection-row frame differences.
+
+This is stronger than the stand-in test but not shipping integration. Swift instance layouts and
+overrides over the full engine, native/PST protocol identity, modern API gates through this route,
+the production importer, deployment packaging and duplicate-class warnings still need work. The
+existing compile-time route remains unchanged; no UIKit/shared-cache files were patched or published.

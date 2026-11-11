@@ -85,3 +85,46 @@ and failed before main; the build script now stages the transitive dependency cl
 The linker still warns about some existing compatibility archive objects carrying an
 iOS 7 minimum and newer StringProcessing/RegexParser autolink candidates. The tested
 metadata paths execute on iOS 5, but that is not a blanket runtime compatibility claim.
+
+## Full PST implementation experiment
+
+`build-full-engine.sh SDK CLANG CRT_DIRECTORY NEW_OUTPUT_DIRECTORY` generates a private
+copy of the PST sources and adds `objc_runtime_name` attributes to eight public class
+declarations. It exports native spellings of the header/footer/automatic-size globals.
+Original vendor sources are not modified. Internal source names remain PST names.
+`PST_TOOLCHAIN_RUNTIME` stays enabled; its constructor sees the now-statically-defined
+UICollectionView and does not create/reparent its old wrapper classes.
+
+The generated `RuntimeFallback.dylib` contains the real implementation, not stand-ins.
+`engine-identity fallback|native` uses the same hierarchy checks, identifying provider
+images rather than a marker method. These passed on iOS 5.1.1 and iOS 6.1.3.
+
+`FullEngineRoute.app` is persistent. The exact same app/dylib bundle passed 15 checks
+on both devices: fallback/native provider, canonical identity, visible cells, stored
+subclass canary/UILabel ivars, reusable-view casts, 320x50 cell frames, 10,000-point
+content height for 200 items, four scroll destinations, prepareForReuse override,
+flow-layout override, and willDisplay. Initial run counts:
+
+| OS | Cells constructed | Reuse calls | Layout queries | willDisplay |
+|---|---:|---:|---:|---:|
+| 5.1.1 | 10 | 15 | 5 | 25 |
+| 6.1.3 | 5 | 20 | 4 | 25 |
+
+On the native route only, the app installs the existing Apple collection hooks; it
+must not wrap the fallback's already implemented self-sizing machinery on iOS 5.
+The user confirmed normal button/Home operation on both iPods. No respring was needed.
+
+Visual inspection found the initial native display had black spaces around each
+label. The fixture left collection background colour unspecified; native iOS 6 shows
+black through the 280x40 white labels in 320x50 cells, whereas the fallback appeared
+white. Explicit white collection backgrounds and clear labels fix the fixture without
+changing either engine's defaults. Recaptured screens show no black row gaps; logged
+collection/cell/content/label frames match between devices. The iPod touch 5 still
+presents this old bundle in legacy 320x480 compatibility mode (scale 2 versus scale 1
+on iPod touch 3); the global legacy screen-capture helper also returns a 320x480 image.
+That presentation is not proof of a collection geometry discrepancy.
+
+Still unverified: actual Swift subclass instances over the full engine, UIKit protocol
+identity (PST protocol names are not transformed), the production importer, modern API
+parity through this new route, animated mutations, arbitrary dependency graphs, and a
+production-safe solution to the duplicate-class warnings. Shipping routing is unchanged.
