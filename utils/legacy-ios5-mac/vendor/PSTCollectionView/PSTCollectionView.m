@@ -128,6 +128,7 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // Scratch collections reused by updateVisibleCellsNow: one pass used to
     // allocate two NSSets, an NSArray and an NSMutableDictionary.
     NSMutableSet *_pstVisibleItemKeysScratch;
+    NSMutableArray *_pstVisibleItemKeyListScratch;
     NSMutableArray *_pstVisibleItemKeysToRemoveScratch;
     NSMutableArray *_pstFloatingViewsScratch;
     // Identity of the last completed visible-cell pass.  When the data cache
@@ -1647,8 +1648,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
 // update currently visible cells, fetches new cells if needed
 // TODO: use now parameter.
-- (void)pstAddVisibleViewForAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
-        PSTCollectionViewItemKey *itemKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
+- (void)pstAddVisibleViewForAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes key:(PSTCollectionViewItemKey *)itemKey {
 
         // check if cell is in visible dict; add it if not.
         PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:itemKey];
@@ -1717,8 +1717,14 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
 
     // Collect the new visible key set first: UIKit retires views leaving the
     // rect (didEndDisplaying) before it displays arriving ones.
+    // Each key is built once here and reused by the add loop below.
+    if (!_pstVisibleItemKeyListScratch) _pstVisibleItemKeyListScratch = [NSMutableArray arrayWithCapacity:layoutAttributesArray.count];
+    else [_pstVisibleItemKeyListScratch removeAllObjects];
+    NSMutableArray *pstKeys = _pstVisibleItemKeyListScratch;
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
-        [_pstVisibleItemKeysScratch addObject:[PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes]];
+        PSTCollectionViewItemKey *pstKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
+        [pstKeys addObject:pstKey];
+        [_pstVisibleItemKeysScratch addObject:pstKey];
     }
 
     // Detect what items should be removed and queued back.  The previous code
@@ -1777,16 +1783,20 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     // decoration views, whatever order the layout listed them in.
     // One pass: non-cell attributes are deferred to a scratch array, allocated
     // lazily, so a cells-only pass pays nothing extra.
-    NSMutableArray *pstDeferred = nil;
+    NSMutableArray *pstDeferred = nil, *pstDeferredKeys = nil;
+    NSUInteger pstKeyIndex = 0;
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
+        PSTCollectionViewItemKey *pstKey = [pstKeys objectAtIndex:pstKeyIndex++];
         if (layoutAttributes.representedElementCategory != PSTCollectionViewItemTypeCell) {
-            if (!pstDeferred) pstDeferred = [NSMutableArray array];
-            [pstDeferred addObject:layoutAttributes];
+            if (!pstDeferred) { pstDeferred = [NSMutableArray array]; pstDeferredKeys = [NSMutableArray array]; }
+            [pstDeferred addObject:layoutAttributes]; [pstDeferredKeys addObject:pstKey];
             continue;
         }
-        [self pstAddVisibleViewForAttributes:layoutAttributes];
+        [self pstAddVisibleViewForAttributes:layoutAttributes key:pstKey];
     }
-    for (PSTCollectionViewLayoutAttributes *layoutAttributes in pstDeferred) [self pstAddVisibleViewForAttributes:layoutAttributes];
+    for (NSUInteger i = 0; i < pstDeferred.count; i++)
+        [self pstAddVisibleViewForAttributes:[pstDeferred objectAtIndex:i] key:[pstDeferredKeys objectAtIndex:i]];
+    [pstKeys removeAllObjects];
 
     _pstHasFloatingViews = [self pstVisibleViewsHaveFloatingViews];
     _pstLastVisibleLayoutAttributesGeneration = [_collectionViewData layoutAttributesGeneration];

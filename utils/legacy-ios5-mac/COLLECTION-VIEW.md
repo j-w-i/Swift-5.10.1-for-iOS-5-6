@@ -256,3 +256,12 @@ the cause is **not identified** (the key-set pre-pass and the sort are the
 suspects). Behaviour fidelity was judged worth that cost for now; this is a
 regression to revisit, not a win. Also note: replacing a binary at the same path
 on the phone made iOS kill the new binary (cached signature); use a fresh path.
+
+Follow-up (same round): the suspect was the second `collectionItemKeyForLayoutAttributes:`
+per attribute (once in the key pre-pass, once when adding). Building each key once
+and reusing it from a scratch array gave, over six more alternating pairs against
+the same `7992ce3a` baseline (median new/old, lower is faster):
+cold 0.988, idle 0.955, scroll 0.984 (6/6), reload 1.013 (0/6), batch 1.018,
+item-size 1.005, bounds 1.001, multi-section cold 1.001, multi-section scroll 0.868 (6/6).
+Reload remains about 1% slower in every pair; batch is noisy (range 0.967-1.058).
+This is CPU time only, not frame delivery, and does not reach native parity.
