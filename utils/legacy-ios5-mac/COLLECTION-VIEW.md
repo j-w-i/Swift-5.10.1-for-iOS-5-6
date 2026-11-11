@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Lazy section build for uniform packed sections (round 185)
+
+Added `-computeLayoutMaterialisingRowsThrough:`: for a uniform packed section it lays out only the first rows
+and derives the remainder of the extent from the uniform row size, producing the **same section frame, header
+and footer** as a full build while leaving the unmaterialised rows without geometry (to be extended on demand).
+
+This is the piece that makes preparation-time fitting viable: the reason every earlier attempt over-fitted
+(9/20/27 reports against native's 6/14/18) is that PST materialised every row, so the visible set it laid out
+from was not the settled one. With a real window, a cell is only ever created for a row that is actually
+materialised.
+
+One arithmetic bug was found and fixed by the new test: the remainder must add `rest * rowExtent +
+(rest - 1) * gap`, not `rest * (rowExtent + gap)` - the full builder never puts an interstice after the last
+row, and the last materialised row has already added the gap that follows it.
+
+Gate `run-packed-lazy-section-test.sh`: 414 cases (both axes, 1-3 columns, 1..40 items, **every** window size
+from 0 to the last row) compare section frame, header frame, footer frame, and every materialised row and item
+frame against a full rebuild. Passing. Golden, windowed, packed-update and layouts gates unaffected; armv7
+iOS 5 compiles with `-Werror=unguarded-availability`.
+
+Still not wired into `updateItemsLayout`, and on-demand extension in the attribute-query path is not written;
+until those land the live path is unchanged and the lifecycle gate still fails.
+
 ## Simulator PST/native re-measured on the heavy-cell benchmark (round 184)
 
 The objective quotes "0.79x to 1.49x native in the simulator". That figure comes from

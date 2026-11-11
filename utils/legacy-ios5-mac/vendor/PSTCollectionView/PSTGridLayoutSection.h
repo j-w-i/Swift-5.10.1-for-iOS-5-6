@@ -92,6 +92,8 @@
 
 // Compute layout. Creates rows.
 - (void)computeLayout;
+// Uniform packed sections only: materialise the first rows and derive the rest of the extent exactly.
+- (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow;
 
 - (PSTGridLayoutItem *)addItem;
 

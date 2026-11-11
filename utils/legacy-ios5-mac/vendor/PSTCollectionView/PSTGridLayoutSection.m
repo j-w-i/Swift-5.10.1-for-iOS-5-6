@@ -393,6 +393,60 @@
     return YES;
 }
 
+/// Lazy variant for uniform packed sections: materialises only rows up to `lastRow` and derives the rest of the
+/// extent from the uniform row size (exact when every item matches, see -packedSizesAreUniform). Unmaterialised
+/// rows have no geometry until extended; the section frame is identical to a full computeLayout.
+- (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow {
+    NSAssert(_packed && [self packedSizesAreUniform], @"lazy layout needs a uniform packed section");
+    if (_isValid) return;
+    NSAssert(self.rows.count == 0, @"No rows shall be at this point.");
+
+    const BOOL horizontal = self.layoutInfo.horizontal;
+    CGSize sectionSize = CGSizeZero;
+    const CGFloat headerFooterDimension = self.layoutInfo.dimension;
+    CGFloat dimension = headerFooterDimension;
+    if (horizontal) {
+        dimension -= self.sectionMargins.top + self.sectionMargins.bottom;
+        self.headerFrame = CGRectMake(sectionSize.width, 0, self.headerDimension, headerFooterDimension);
+        sectionSize.width += self.headerDimension + self.sectionMargins.left;
+    } else {
+        dimension -= self.sectionMargins.left + self.sectionMargins.right;
+        self.headerFrame = CGRectMake(0, sectionSize.height, headerFooterDimension, self.headerDimension);
+        sectionSize.height += self.headerDimension + self.sectionMargins.top;
+    }
+    const CGFloat spacing = horizontal ? self.verticalInterstice : self.horizontalInterstice;
+    [self pstBreakPackedRowsWithDimension:dimension spacing:spacing];
+    const NSInteger rows = self.indexOfImcompleteRow + 1;
+    const NSInteger limit = MIN(MAX(lastRow + 1, (NSInteger)0), rows);
+    if (limit > 0) {
+        [self pstLayOutPackedRowsFrom:0 to:limit dimension:dimension spacing:spacing sectionSize:&sectionSize];
+        // Remainder of the rows share the last materialised row's scrolling extent, which is exact for
+        // uniform items: same arithmetic as pstLayOutPackedRowsFrom, continued without geometry.
+        const NSInteger rest = rows - limit;
+        if (rest > 0) {
+            const CGSize rowSize = _packedRowSize[limit - 1];
+            const CGFloat rowExtent = horizontal ? rowSize.width : rowSize.height;
+            const CGFloat gap = horizontal ? self.horizontalInterstice : self.verticalInterstice;
+            // Each remaining row adds its extent, and a gap only between rows (never after the last one); the
+            // last materialised row already added the gap that follows it.
+            const CGFloat grew = (CGFloat)rest * rowExtent + (rest > 0 ? (CGFloat)(rest - 1) * gap : 0);
+            if (horizontal) { sectionSize.width += grew; sectionSize.height = MAX(rowSize.height, sectionSize.height); }
+            else { sectionSize.height += grew; sectionSize.width = MAX(rowSize.width, sectionSize.width); }
+        }
+    }
+    if (horizontal) {
+        sectionSize.width += self.sectionMargins.right;
+        self.footerFrame = CGRectMake(sectionSize.width, 0, self.footerDimension, headerFooterDimension);
+        sectionSize.width += self.footerDimension;
+    } else {
+        sectionSize.height += self.sectionMargins.bottom;
+        self.footerFrame = CGRectMake(0, sectionSize.height, headerFooterDimension, self.footerDimension);
+        sectionSize.height += self.footerDimension;
+    }
+    _frame = CGRectMake(0, 0, sectionSize.width, sectionSize.height);
+    _isValid = YES;
+}
+
 - (void)computeLayout {
     if (!_isValid) {
         NSAssert(self.rows.count == 0, @"No rows shall be at this point.");
