@@ -304,16 +304,22 @@
     }
 }
 
-- (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta {
-    if (delta) *delta = 0;
+- (BOOL)stagePackedItemAtIndex:(NSInteger)item size:(CGSize)size {
     if (!_packed || !_isValid || item < 0 || item >= _packedCount) return NO;
     const BOOL horizontal = self.layoutInfo.horizontal;
     CGSize old = _packedSizes[item];
     if ((horizontal ? old.height != size.height : old.width != size.width) ||
         !isfinite(size.width) || !isfinite(size.height) || size.width <= 0 || size.height <= 0) return NO;
+    _packedSizes[item] = size;
+    return YES;
+}
+
+- (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta {
+    if (delta) *delta = 0;
+    if (![self stagePackedItemAtIndex:item size:size]) return NO;
+    const BOOL horizontal = self.layoutInfo.horizontal;
     NSInteger row = [self packedRowOfItem:item];
     NSInteger first = _packedRowFirst[row], end = _packedRowFirst[row + 1];
-    _packedSizes[item] = size;
     CGFloat extent = 0;
     for (NSInteger k = first; k < end; k++) extent = MAX(extent, horizontal ? _packedSizes[k].width : _packedSizes[k].height);
     CGRect unionFrame = CGRectNull;

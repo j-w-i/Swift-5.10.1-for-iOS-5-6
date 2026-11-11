@@ -73,6 +73,8 @@
 // Updates a packed item's scrolling-axis size without changing row membership. Returns NO for a
 // cross-axis change (caller must use reflow). On success delta is the section's scrolling-axis change.
 - (BOOL)updatePackedItemAtIndex:(NSInteger)item size:(CGSize)size scrollDelta:(CGFloat *)delta;
+// Store only: exposes the new size, preserving row geometry until updatePackedItemAtIndex commits it.
+- (BOOL)stagePackedItemAtIndex:(NSInteger)item size:(CGSize)size;
 
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;

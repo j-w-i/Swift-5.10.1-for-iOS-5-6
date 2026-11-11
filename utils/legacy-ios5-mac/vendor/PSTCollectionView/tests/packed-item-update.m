@@ -24,6 +24,17 @@ int main(void){@autoreleasepool{
  for(int step=0;step<20;step++){
  NSInteger item=(step*7)%31;CGSize next=sizes[item];if(horizontal)next.width=20+step%6*11;else next.height=20+step%6*11;sizes[item]=next;
  CGFloat delta=0;CGRect old=incremental.frame;
+ NSMutableArray*rowFrames=[NSMutableArray array],*itemFrames=[NSMutableArray array];
+ for(NSInteger r=0;r<incremental.rowCount;r++)[rowFrames addObject:[NSValue valueWithCGRect:[incremental rowFrameAtIndex:r]]];
+ for(NSInteger k=0;k<31;k++)[itemFrames addObject:[NSValue valueWithCGRect:[incremental packedItemFrameAtIndex:k]]];
+ CGRect oldFooter=incremental.footerFrame;
+ if(![incremental stagePackedItemAtIndex:item size:next])return 11;
+ if(!near(old,incremental.frame)||!near(oldFooter,incremental.footerFrame))return 12;
+ for(NSInteger r=0;r<incremental.rowCount;r++)if(!near([rowFrames[r] CGRectValue],[incremental rowFrameAtIndex:r]))return 13;
+ for(NSInteger k=0;k<31;k++){
+ CGRect expected=[itemFrames[k] CGRectValue];if(k==item)expected.size=next;
+ if(!near(expected,[incremental packedItemFrameAtIndex:k]))return 14;
+ }
  if(![incremental updatePackedItemAtIndex:item size:next scrollDelta:&delta])return 1;
  PSTGridLayoutInfo*reference=[PSTGridLayoutInfo new];reference.horizontal=horizontal;reference.selfSizing=YES;reference.dimension=info.dimension;
  PSTGridLayoutSection*rebuilt=make(reference,sizes,31);

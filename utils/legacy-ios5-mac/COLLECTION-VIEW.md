@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Packed size staging versus row recomputation (round 157)
+
+Split packed size storage from row recomputation. `stagePackedItemAtIndex:size:` updates only the size,
+preserving its origin, all other item frames, row frames, footer and section extent. The existing incremental
+update calls the staging operation then recomputes the row. Tests now assert that entire before/after
+boundary for 120 single-section updates, then compare the committed result with rebuilds; all 180 total
+updates still pass. This matches the reference's separation of item-size recording and later row validation
+structurally, but it is not yet flow-context integration or proof of native lazy-layout parity.
+
 ## Preferred-context staging probe (round 156)
 
 New strict differential probe prepares 20 estimated 200x40 items, clears pending preparation adjustments
