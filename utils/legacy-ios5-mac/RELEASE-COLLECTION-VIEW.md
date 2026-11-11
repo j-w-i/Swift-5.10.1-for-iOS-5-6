@@ -41,7 +41,9 @@ gate; strict `armv7-apple-ios5.0` compile with `-Werror=unguarded-availability`.
    difference, and it is native's placeholder being different from a real layout.
 2. The iOS 5 Swift profile resource is **stale** relative to this backport and needs republishing; that requires a
    full armv7 toolchain build (the staged `probes/linked510` for armv7 does not exist on the build machine).
-3. The iPhone 6 (iOS 10.3.3) has never been attached, so the native-route no-regression run on it is unrun.
+3. The iPhone 6 (iOS 10.3.3) native-route gate **passes** (round 253): after installing the backport runtime,
+   every modern collection-view entry point still points at Apple's own implementation and Apple's layout still
+   self-sizes. Run it with `Tests/run-native-route-ios10-device.sh <ssh-port>`.
 4. Lazy valid-range layout is implemented and gated but not in the live path (three wiring attempts made visible
    frames worse); it is kept for a future large-data case.
 
@@ -59,6 +61,7 @@ Run from `utils/legacy-ios5-mac` unless stated.
 | Strict iOS 5 compile | `clang -target armv7-apple-ios5.0 -marm -Werror=unguarded-availability -Werror=unguarded-availability-new -fsyntax-only <file>` |
 | Apple route on real iOS 6 | `bash vendor/UIKitBackports/Tests/run-apple-route-ios6-device.sh 2227` (device must be awake) |
 | PST route on real iOS 5 | build `tests/selfsizing-scaling.m` with `-DTEST_PST=1 -DDEVICE_APP=1`, install on the iPod touch 3 (iproxy 2225) |
+| Native route on real iOS 10 | `bash vendor/UIKitBackports/Tests/run-native-route-ios10-device.sh 2226` (iPhone 6, SSH password via `DEVICE_PASSWORD`) |
 | PST vs native, paired | `tests/paired-device-bench` (bench.m twice with per-engine macros, main.m with `-DINSTALL_BACKPORT_HOOKS`), iPod touch 5, device awake |
 
 Device identifiers: iPod touch 5 = `39a2bacad9a5524e7a6a46ae031f1bea6249d2ab` (iproxy 2227), iPod touch 3 =
@@ -71,5 +74,5 @@ device is locked, which looks like a crash but is not (see COLLECTION-VIEW.md, r
    (`check-legacy-swift-resource.py` reports the drift by name). Republishing needs a full armv7 toolchain
    build: `link-overlay-stage.sh` wants `probes/linked510` for armv7 and a Swift 5.1.5 `build/runtime-ios5`, and
    neither exists on the build machine (only an arm64 stage does).
-2. **iPhone 6 (iOS 10.3.3).** Never attached in this session - only the two iPods are present - so the native-route
-   no-regression run is unrun.
+2. ~~**iPhone 6 (iOS 10.3.3).** Never attached~~ - **verified in round 253**: native-route gate PASS with the hook
+   runtime installed (native implementations untouched, native self-sizing intact).
