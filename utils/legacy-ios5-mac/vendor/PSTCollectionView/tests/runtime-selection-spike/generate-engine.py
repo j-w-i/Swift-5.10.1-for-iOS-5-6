@@ -7,7 +7,9 @@ out.mkdir()
 classes=['PSTCollectionView','PSTCollectionReusableView','PSTCollectionViewCell',
  'PSTCollectionViewLayout','PSTCollectionViewFlowLayout','PSTCollectionViewLayoutAttributes',
  'PSTCollectionViewController','PSTCollectionViewUpdateItem']
-seen={name:0 for name in classes}
+protocols=['PSTCollectionViewDataSource','PSTCollectionViewDelegate',
+ 'PSTCollectionViewDelegateFlowLayout','PSTCollectionViewDataSourcePrefetching']
+seen={name:0 for name in classes+protocols}
 constants=['PSTCollectionElementKindSectionHeader','PSTCollectionElementKindSectionFooter',
  'PSTCollectionViewFlowLayoutAutomaticSize']
 for file in sorted(src.iterdir()):
@@ -19,8 +21,13 @@ for file in sorted(src.iterdir()):
    runtime=name.replace('PST','UI',1)
    text,n=re.subn(pattern,'__attribute__((objc_runtime_name("'+runtime+'")))\n@interface '+name,text)
    seen[name]+=n
+  for name in protocols:
+   pattern=r'@protocol\s+'+re.escape(name)+r'(?=\s*<)'
+   runtime=name.replace('PST','UI',1)
+   text,n=re.subn(pattern,'__attribute__((objc_runtime_name("'+runtime+'")))\n@protocol '+name,text)
+   seen[name]+=n
  # Export native global spellings too; matching SDK declarations are harmless.
  for name in constants:text=re.sub(r'\b'+name+r'\b',name.replace('PST','UI',1),text)
  (out/file.name).write_text(text)
-if any(n!=1 for n in seen.values()):raise SystemExit('Unexpected class declaration counts: '+repr(seen))
+if any(n!=1 for n in seen.values()):raise SystemExit('Unexpected class/protocol declaration counts: '+repr(seen))
 print('Generated isolated UIKit-runtime-name PST headers:',seen)

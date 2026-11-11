@@ -1290,3 +1290,25 @@ UIKit importer path. These custom protocols are not UIKit delegate/prefetch prot
 Instance destruction, broader subclasses, modern self-sizing/prefetch/supplementary APIs through this
 new route, arbitrary dependency graphs and duplicate-class warnings remain unverified. Shipping route
 selection is unchanged.
+
+### Round 104: native protocol identity and Swift casts verified in the isolated route
+
+A non-UI test reproduced a protocol bug in the generated engine: its classes had native names but
+its data-source/delegate/flow-delegate/prefetch protocols retained PST runtime names. The negative
+probe failed all 14 checks on iOS 5 and 12 of 14 on iOS 6 (the native controller conformed to its SDK
+protocols). Working callback selectors had hidden a real identity/conformance mismatch.
+
+The isolated generator now gives those four protocols native `objc_runtime_name` attributes too;
+no vendor runtime header was changed. The Objective-C identity/conformance probe passes 14 checks on
+each iPod, and the existing 21 class-hierarchy checks still pass. A combined non-UI Swift/ObjC probe
+then passes **24 checks on each device with the same binary**: canonical protocol pointers/names,
+ObjC source conformance, Swift casts of an ObjC source to all four native-named protocols, Swift
+source casts and conformance to both SDK and generated declarations, and selected controller
+conformance. Test sources and build-only runner are under `tests/runtime-selection-spike`.
+
+The Swift declarations are still test aliases, not the production public importer path; this test
+does not create a collection or prove real Swift delegate/prefetch dispatch. Captured command-line
+stderr also reveals duplicate private PST helper/wrapper classes between `libswiftUIKit` and the
+separate generated fallback, in addition to public UIKit duplicates on iOS 6. Private names must be
+isolated and instance/API gates rerun before treating this arrangement as safe. The shipping route
+remains unchanged and nothing has been published.

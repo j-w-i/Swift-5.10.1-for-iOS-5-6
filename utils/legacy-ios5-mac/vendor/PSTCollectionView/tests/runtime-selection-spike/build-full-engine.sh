@@ -26,6 +26,8 @@ text=text.replace(old,'strstr(class_getImageName(classes[i]),"RuntimeFallback.dy
 PY
 "$CC" "${FLAGS[@]}" -L "$CRT" -Wl,-flat_namespace "$OUT/engine-identity.m" \
  -framework UIKit -framework Foundation "$OUT/RuntimeFallback.dylib" -o "$OUT/engine-identity"
+"$CC" "${FLAGS[@]}" -I "$OUT/generated" -L "$CRT" -Wl,-flat_namespace "$HERE/protocol-identity.m" \
+ -framework UIKit -framework Foundation "$OUT/RuntimeFallback.dylib" -o "$OUT/protocol-identity"
 APP="$OUT/FullEngineRoute.app"; mkdir "$APP"; cp "$OUT/RuntimeFallback.dylib" "$APP/RuntimeFallback.dylib"
 "$CC" "${FLAGS[@]}" -L "$CRT" -Wl,-flat_namespace "$HERE/full-engine-ui.m" "$RUNTIME/UICCollectionViewDisplay.m" \
  -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics \
@@ -37,7 +39,7 @@ with open(pathlib.Path(sys.argv[1])/'Info.plist','wb') as f:
   CFBundleName='FullEngineRoute',CFBundlePackageType='APPL',CFBundleVersion='1',MinimumOSVersion='5.0',
   UIDeviceFamily=[1],CFBundleDevelopmentRegion='en'),f)
 PY
-for file in "$OUT/RuntimeFallback.dylib" "$OUT/engine-identity" "$APP/RuntimeFallback.dylib" "$APP/FullEngineRoute"; do ldid -S "$file"; done
+for file in "$OUT/RuntimeFallback.dylib" "$OUT/engine-identity" "$OUT/protocol-identity" "$APP/RuntimeFallback.dylib" "$APP/FullEngineRoute"; do ldid -S "$file"; done
 otool -L "$APP/FullEngineRoute" > "$OUT/dependencies.txt"
 tar -czf "$OUT/full-engine-route.tgz" -C "$OUT" FullEngineRoute.app
 echo "Built isolated full-engine experiment: $OUT"

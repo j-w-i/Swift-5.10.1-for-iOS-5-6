@@ -124,11 +124,10 @@ presents this old bundle in legacy 320x480 compatibility mode (scale 2 versus sc
 on iPod touch 3); the global legacy screen-capture helper also returns a 320x480 image.
 That presentation is not proof of a collection geometry discrepancy.
 
-The Swift instance test below adds real cell-instance coverage. Still unverified: UIKit
-protocol identity (PST protocol names are not transformed), the production importer,
-modern API parity through this new route, animated mutations, arbitrary dependency
-graphs, and a production-safe solution to duplicate-class warnings. Shipping routing
-is unchanged.
+The tests below add real Swift cell-instance and protocol-identity coverage. Still
+unverified: the production importer, modern API parity through this new route, animated
+mutations, arbitrary dependency graphs and a production-safe solution to duplicate-class
+warnings. Shipping routing is unchanged.
 
 ## Real Swift cell instances
 
@@ -155,3 +154,31 @@ with 25 callbacks on both routes. Do not link a second hook-runtime copy into an
 already using the overlay. A large Swift numeric-literal comparison also needed an
 explicit UInt64 constant to compile with this legacy toolchain; runtime state checks
 remain 64-bit.
+
+## Canonical UIKit protocol identities
+
+Initially the generated classes had native runtime names but PST protocols did not.
+The non-UI `protocol-identity` negative failed 14/14 checks on iOS 5 and 12/14 on iOS 6:
+callback selectors worked, but runtime names, protocol pointer identity and native
+conformance did not agree. Native controller conformance accounts for the two passes
+on iOS 6. This is a meaningful API defect, not merely a diagnostic warning.
+
+The generator now adds native `objc_runtime_name` attributes to the data-source,
+delegate, flow-layout-delegate and prefetch protocols too. `protocol-identity` is built
+by `build-full-engine.sh`; it passes 14 checks on each device. The 21 class-hierarchy
+checks still pass on each device after this change.
+
+`build-swift-protocols.sh` takes the same eight arguments as `build-swift.sh` and builds
+a non-UI combined probe. The same binary passes 24 checks on both devices: canonical
+native/fallback protocol identity, Objective-C conformance, Swift casts of an ObjC
+source, Swift casts of a Swift source, conformance of that Swift source to both SDK
+and fallback declarations, and selected controller conformance. It allocates only
+NSObject-based source objects, not a collection or UIApplication. The Swift declarations
+remain test-only aliases with native runtime names; public importer integration and
+actual delegate/prefetch dispatch through these Swift protocol aliases remain separate.
+
+Capturing command-line stderr also exposes duplicates of private PST helper/wrapper
+classes between the existing Swift UIKit overlay and generated fallback library, on
+both OS versions. These add to the public UIKit duplicates on iOS 6. Passing these
+protocol and cell probes is not a reason to ignore that ambiguity: the generated
+private classes need isolation and the instance/API gates need rerunning afterward.
