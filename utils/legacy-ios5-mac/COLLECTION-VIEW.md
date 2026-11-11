@@ -1,5 +1,36 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preparation fitting: the tradeoff is now measured, not guessed (round 213)
+
+Ran the full gate suite with the preparation-fitting combination (fit during cell preparation, pass restart,
+scheduler suppressed, plus the content-size cache fix and the per-section estimate) to decide whether it is a
+shipping candidate at all.
+
+**Result: it fixes the headline behavioural gap and breaks four others.**
+
+| Gate | baseline (shipped) | with preparation fitting |
+| --- | --- | --- |
+| display lifecycle | **FAIL** (9/0, 8/0 against native 0/0) | **PASS - exact** (native 9/0 & 8/0, PST 9/0 & 8/0) |
+| self-sizing stability | PASS | FAIL |
+| automatic size | PASS | FAIL ("invalidation retained stale size ... size=80x60") |
+| sizing updates | PASS | FAIL |
+| self-sizing bounds | PASS | FAIL |
+| layouts content steps | 31/32 | 15/32 |
+| visible cell frames | 0 of 210 differ | 0 of 210 differ |
+| other 20 gates | PASS | PASS |
+
+Tried to fix the four regressions by keying the once-per-instance fit to the proposal size (so an invalidation
+that changes an item's size refits): no effect, and the lifecycle gate stayed green. That points at the
+suppressed post-layout scheduler rather than the fit caching - the invalidation paths those gates exercise
+expect the scheduler to run.
+
+So the tradeoff is concrete: preparation fitting buys **exact lifecycle parity** and **exact visible frames** at
+the cost of four gates and 16 content steps. Neither configuration is "native behaviour across the board", and
+shipping the combination would trade one honest failure for four.
+
+Reverted; baseline re-verified (golden PASS, layouts 31/32). This is the decision the next round has to make
+between, with numbers instead of opinions.
+
 ## Published: every gate green at 2fabed77 (round 212)
 
 Ran the complete acceptance set at HEAD and pushed the result to `origin/main` (`a417e858..2fabed77`). This is
