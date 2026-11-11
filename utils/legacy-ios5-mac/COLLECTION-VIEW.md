@@ -2126,3 +2126,26 @@ gate passes on both iPods and the nil-delegate gate passes 10 of 10.
 Limit: this is evidence from five fixture families (1, 2 and 3 columns, vertical scroll). Horizontal
 ordering is implemented by symmetry and is covered only by the layouts test, which compares frames, not
 fit order.
+
+### Correction: Apple-route fit sequences do not match step for step, and why confirmation order cannot
+
+The previous section said the Apple route's fit sequences "match step for step on all four configurations".
+**That was wrong.** It rested on comparing the number of fitting calls per step, not the sequences. Compared
+properly on the iPod touch 5 against iOS 27, over the 24 steps that fit anything: the **first pass** matches in
+20, and the **whole sequence** matches in only 7. The geometry claim stands (0 of 1,440 rectangles differ by
+more than half a point); the sequence claim does not.
+
+What differs is the confirmation pass at the end of a step, for example device `[15,16,17,15,16,17]` against
+iOS 27 `[15,16,17,16,15,17]`. The cause was found by reproducing iOS 27's order: it confirms cells in
+`NSDictionary` enumeration order of their index paths. Replaying dictionaries of index paths on the iOS 27
+simulator gives exactly UIKit's observed orders (`6,1,4,7,2,5,0,8,3` for items 0-8; `16,15,17` for 15-17).
+That order is produced by `NSIndexPath`'s hash, which differs between releases: on iOS 27
+`hash(item i) = 22 + i * 2^21`, on iOS 6.1.3 `hash(item i) = i + 2`, and the dictionaries enumerate differently
+(`16,17,15` for 15-17). The order is therefore a property of the Foundation hash function, not of the
+layout, and cannot be reproduced on iOS 6 by iterating the same collection. It could be reproduced by
+computing iOS 27's hash and bucket order explicitly, which would couple the runtime to one release's
+Foundation internals; not done.
+
+Consequence: any app that logs or depends on the order in which `preferredLayoutAttributesFitting` is called
+during the confirmation pass will see a different order on iOS 6-9 and on PST than on iOS 27. The geometry
+produced is the same.
