@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The stored-size reuse path is not what loses the report (round 189)
+
+Round 188 narrowed the remaining defect to "sizes reported during preparation never reach the rebuild that
+computes the section extent", and guessed the round-179 attribute-only invalidation path (which reuses stored
+sizes) was swallowing them. Tested that directly: preparation-time fitting re-applied with the reuse path
+disabled outright.
+
+Result: **content stayed exactly the same** - 1770 against native's 1854/1835/1846 at every step - while the
+lifecycle and fit counts stayed correct (6/13/18 against 6/14/18). So the guess was wrong, and the reuse path is
+not the cause. Reverted; baseline re-verified (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item parity
+32/32).
+
+What is now established about the last defect:
+
+* it is not fitting order (lifecycle exact), not fit count (6/13/18 vs 6/14/18), not visible frames (exact),
+  not the stored-size reuse path (disabling it changes nothing), and not layout reuse (named contexts force a
+  rebuild since round 162);
+* the content size is exactly the *pure estimate* - three sections of `14*40 + 30` - which means every item
+  size seen by the rebuild is still the estimate, so the recorded preferred sizes are absent by the time the
+  section was built.
+
+Next diagnostic should instrument the rebuild itself (how many measured sizes the layout holds when
+`getSizingInfos` runs, and whether the preferred-size context factory is reached for each fit) rather than
+guessing another path. That is a measurement task, not a code change.
+
 ## Preparation-time fitting with the lazy layout: lifecycle solved, content estimate still stale (round 188)
 
 With the lazy layout live, the fit count problem from rounds 163-174 is gone. Fitting inside cell preparation
