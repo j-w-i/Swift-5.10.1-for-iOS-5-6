@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Invalidation context data objects (round 145)
+
+Added independent PST base and flow invalidation-context objects. Differential output against iOS 27 agrees
+for initially nil item/supplementary/decoration path collections, duplicate elimination across repeated calls,
+separate supplementary/decoration kinds, zero/default and assigned content adjustments, and flow flags
+(default YES, individually mutable). The new source also passes armv7 iOS 5 syntax checking. This is the
+context's storage contract only; layout execution, Swift lowering and native-route missing class installation
+are not connected yet. No existing layout path uses these objects, and the lifecycle gate still fails.
+
 ## Preferred-attributes predicate API (round 144)
 
 Added `shouldInvalidateLayoutForPreferredLayoutAttributes:withOriginalAttributes:` to PST's base layout

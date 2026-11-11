@@ -19,6 +19,24 @@ typedef NS_ENUM(NSUInteger, PSTCollectionViewItemType) {
 // Defining a custom layout is an advanced operation intended for applications with complex needs.
 @class PSTCollectionViewLayoutAttributes, PSTCollectionView;
 
+@interface PSTCollectionViewLayoutInvalidationContext : NSObject
+@property (nonatomic, readonly) BOOL invalidateEverything;
+@property (nonatomic, readonly) BOOL invalidateDataSourceCounts;
+@property (nonatomic, readonly) NSArray *invalidatedItemIndexPaths;
+@property (nonatomic, readonly) NSDictionary *invalidatedSupplementaryIndexPaths;
+@property (nonatomic, readonly) NSDictionary *invalidatedDecorationIndexPaths;
+@property (nonatomic) CGPoint contentOffsetAdjustment;
+@property (nonatomic) CGSize contentSizeAdjustment;
+- (void)invalidateItemsAtIndexPaths:(NSArray *)indexPaths;
+- (void)invalidateSupplementaryElementsOfKind:(NSString *)kind atIndexPaths:(NSArray *)indexPaths;
+- (void)invalidateDecorationElementsOfKind:(NSString *)kind atIndexPaths:(NSArray *)indexPaths;
+@end
+
+@interface PSTCollectionViewFlowLayoutInvalidationContext : PSTCollectionViewLayoutInvalidationContext
+@property (nonatomic) BOOL invalidateFlowLayoutAttributes;
+@property (nonatomic) BOOL invalidateFlowLayoutDelegateMetrics;
+@end
+
 @interface PSTCollectionViewLayoutAttributes : NSObject <NSCopying>
 
 @property (nonatomic) CGRect frame;
