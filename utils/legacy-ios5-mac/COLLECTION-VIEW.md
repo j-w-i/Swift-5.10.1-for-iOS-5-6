@@ -1,5 +1,31 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## A drift checker for the Swift-visible legacy resource (round 234)
+
+Added `utils/legacy-ios5-mac/check-legacy-swift-resource.py`: it regenerates the collection headers with
+`generate-collection-headers.py`, compares them with the toolchain's installed
+`usr/lib/swift_ios5/legacy-collection/Headers/UIKitLegacyCollection.h`, and reports the drift by name. Exit codes:
+0 in sync, 1 drift, 2 not installed. That turns "the profile is stale" from a claim into a check anyone can run,
+and it is the precondition for the evidence-gated republish.
+
+Running it now names exactly what the published profile is missing (installed 591 lines, generated 657):
+
+* the iOS 9 display callbacks and the iOS 10 prefetch protocol and its two methods;
+* the iOS 8 `UICollectionViewLayoutInvalidationContext` and `UICollectionViewFlowLayoutInvalidationContext`
+  interfaces in full;
+* `estimatedItemSize`, `preferredLayoutAttributesFittingAttributes:`, the iOS 9 visible-supplementary accessors,
+  and `prefetchDataSource`/`prefetchingEnabled`.
+
+It also shows something worth fixing before the next publish: the generated header currently includes the
+backport's **internal** surface - `pstUsesSelfSizing`, `pstResetMeasuredSizes`, `pstRecordPreferredSize:...`,
+`pstHasStableMeasuredSizeForItemAtIndexPath:...`, `pstForgetStableMeasurementForItemAtIndexPath:`,
+`pstInvalidateForPreferredSizeChanges` and a `UICollectionViewFlowLayout (SelfSizing)` category. Those are
+implementation details of this backport, not UIKit API, and they should not be part of the Swift-visible resource;
+the generator should filter them when it emits the legacy header.
+
+So the remaining Swift-side work is two contained changes, both in the generator: filter the `pst` internals, then
+republish the profile with the evidence `publish-ios5-profile.py` requires.
+
 ## Correction: iOS-8 gating is by design; the stale resource is missing the modern surface (round 233)
 
 Round 232 called two things gaps. One of them was wrong and is corrected here.
