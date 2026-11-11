@@ -666,3 +666,26 @@ a size change) walks every item and creates a row object per row even for fixed-
 items; a closed-form fast path for fixed item size could remove most of it, but it changes
 the structure the attribute query, self-sizing and update code rely on, so it needs the
 14-scenario geometry gate and the self-sizing suites around it. Not started.
+
+### Round 85: hidden layout attributes create no view (matches native)
+
+`PSTCollectionView` now treats an attribute with `hidden = YES` as not visible: it
+creates no view for it, and a view the item already had is retired (leaving its key out
+of the visible set does both). Before this, PST created the view and hid it, which put an
+extra, hidden cell in `visibleCells`.
+
+`tests/run-layout-hidden-test.sh` (layout hides every even item, scroll away and back,
+then stop hiding; plus a toggle probe logging `willDisplay` and `didEndDisplaying`)
+compares native and PST byte for byte on the iOS 27 simulator and passes. The same toggle
+sequence on the iPod touch 3 (iOS 5.1.1) matches the native output exactly. Display
+events, self-sizing, cell-resize, automatic-size and the 14 geometry scenarios still pass;
+iOS 5 compile has no errors.
+
+iPhone 6, six alternating pairs against the previous build, new/old PST median: every
+workload is within 1.5 percent and none moves consistently (cold 1.004, scroll 1.008,
+reload 1.015, item-size 1.007, batch 1.002, idle 0.970), so the added branch has no
+measurable cost.
+
+Resolved: the "native does not create a visible cell for a hidden layout item" difference
+listed in rounds 79 and 84. Still open: `hitTest:` inside a visible cell returns the cell
+natively but its inner view in PST.

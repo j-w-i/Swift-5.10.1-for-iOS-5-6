@@ -1729,7 +1729,9 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
         PSTCollectionViewItemKey *pstKey = [PSTCollectionViewItemKey collectionItemKeyForLayoutAttributes:layoutAttributes];
         [pstKeys addObject:pstKey];
-        [_pstVisibleItemKeysScratch addObject:pstKey];
+        // UIKit creates no view for an item whose attributes are hidden, and retires one it
+        // already had; leaving the key out of the visible set does both.
+        if (!layoutAttributes.isHidden) [_pstVisibleItemKeysScratch addObject:pstKey];
     }
 
     // Detect what items should be removed and queued back.  The previous code
@@ -1791,6 +1793,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     NSUInteger pstKeyIndex = 0;
     for (PSTCollectionViewLayoutAttributes *layoutAttributes in layoutAttributesArray) {
         PSTCollectionViewItemKey *pstKey = [pstKeys objectAtIndex:pstKeyIndex++];
+        if (layoutAttributes.isHidden) continue;
         if (layoutAttributes.representedElementCategory != PSTCollectionViewItemTypeCell) {
             if (!pstDeferred) { pstDeferred = [NSMutableArray array]; pstDeferredKeys = [NSMutableArray array]; }
             [pstDeferred addObject:layoutAttributes]; [pstDeferredKeys addObject:pstKey];
