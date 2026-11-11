@@ -44,6 +44,9 @@ NSString *const PSTFlowLayoutRowVerticalAlignmentKey = @"UIFlowLayoutRowVertical
     CGSize _estimatedItemSize;
     NSMutableDictionary *_pstMeasuredItemSizes;    // NSIndexPath -> NSValue(CGSize): sizes the cells reported
     NSMutableSet *_pstStableMeasuredIndexPaths;    // index paths whose reported size equals the laid out size
+    CGSize _pstMeasuredSizeSum;                    // sum and count of the cell-reported sizes: unmeasured
+    NSUInteger _pstMeasuredSizeCount;              // items are proposed at their mean, as UIKit does
+    CGSize _pstProposalAtLayout;                   // the mean frozen for the current layout pass
     CGSize _headerReferenceSize;
     CGSize _footerReferenceSize;
     UIEdgeInsets _sectionInset;
@@ -373,6 +376,7 @@ static char kPSTCachedItemRectsKey;
 - (void)pstResetMeasuredSizes {
     [_pstMeasuredItemSizes removeAllObjects];
     [_pstStableMeasuredIndexPaths removeAllObjects];
+    _pstMeasuredSizeSum = CGSizeZero; _pstMeasuredSizeCount = 0;
 }
 
 /// The layout's current size for an item: what its cell last reported, else the estimate.
@@ -392,6 +396,10 @@ static char kPSTCachedItemRectsKey;
     // on both axes, independently of itemSize; retain the sentinel in the public getter.
     if (CGSizeEqualToSize(_estimatedItemSize, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)))
         return CGSizeMake(50, 50);
+    // Once cells have reported sizes UIKit proposes their mean for the items not yet
+    // measured; the estimate only seeds the very first layout. The mean is frozen
+    // per layout rebuild (see -prepareLayout) so one pass is internally consistent.
+    if (_pstMeasuredSizeCount) return _pstProposalAtLayout;
     return _estimatedItemSize;
 }
 
@@ -403,13 +411,30 @@ static char kPSTCachedItemRectsKey;
     if (!_pstStableMeasuredIndexPaths) _pstStableMeasuredIndexPaths = [NSMutableSet set];
     CGSize current = [self pstSizeForSelfSizingItemAtIndexPath:indexPath];
     if (CGSizeEqualToSize(size, current)) {
+        BOOL wasMeasured3 = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
+        CGSize old3 = wasMeasured3 ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
         [_pstStableMeasuredIndexPaths addObject:indexPath];
         [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
+        // A delegate seed is stored as a measurement but is not a cell report.
+        if (![self pstDelegateProvidesSizes]) [self pstAccumulateMeasuredSize:size replacing:wasMeasured3 ? &old3 : NULL];
         return NO;
     }
+    BOOL wasMeasured = [_pstMeasuredItemSizes objectForKey:indexPath] != nil;
+    CGSize old = wasMeasured ? [[_pstMeasuredItemSizes objectForKey:indexPath] CGSizeValue] : CGSizeZero;
     [_pstMeasuredItemSizes setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
     [_pstStableMeasuredIndexPaths removeObject:indexPath];
+    [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];
     return YES;
+}
+
+- (void)pstAccumulateMeasuredSize:(CGSize)size replacing:(const CGSize *)old {
+    if (old) { _pstMeasuredSizeSum.width -= old->width; _pstMeasuredSizeSum.height -= old->height; }
+    else _pstMeasuredSizeCount++;
+    _pstMeasuredSizeSum.width += size.width; _pstMeasuredSizeSum.height += size.height;
+}
+
+- (BOOL)pstDelegateProvidesSizes {
+    return [self.collectionView.delegate respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)];
 }
 
 - (BOOL)pstHasStableMeasuredSizeForItemAtIndexPath:(NSIndexPath *)indexPath {
@@ -490,6 +515,8 @@ static char kPSTCachedItemRectsKey;
 #pragma mark - Private
 
 - (void)fetchItemsInfo {
+    // Freeze the mean of reported sizes for this rebuild (see pstSizeForSelfSizing...).
+    if (_pstMeasuredSizeCount) _pstProposalAtLayout = CGSizeMake(_pstMeasuredSizeSum.width / (CGFloat)_pstMeasuredSizeCount, _pstMeasuredSizeSum.height / (CGFloat)_pstMeasuredSizeCount);
     [self getSizingInfos];
     [self updateItemsLayout];
 }

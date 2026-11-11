@@ -398,3 +398,22 @@ Reproducing this needs PST to apply measurements one at a time in native's order
 earlier trace arrived out of order), and to know which items the layout "touches" on
 each update. I have a model that fits every number above but no test that would catch
 a wrong guess about the untouched items, so nothing was changed in PST.
+
+### Round 74: PST now proposes the mean of measured sizes (partial match)
+
+`PSTCollectionViewFlowLayout` now proposes, for self-sizing items not yet measured,
+the mean of the cell-reported sizes (frozen for each layout rebuild) once any size has
+been reported; the estimate only seeds the first layout. Delegate-supplied seeds are
+not counted as reports. `tests/run-selfsizing-proposal-test.sh` gates the first-layout
+probe against native on the iOS 27 simulator (7 scenarios, byte-identical), and the
+same 7 results were identical on the iPod touch 3 (iOS 5.1.1).
+
+Stepped scrolling still differs from native. In the 60-item ramp, content height after
+each scroll step, native / PST: 2434 / 2556, 2742 / 2837, 3022 / 3127, 3201 / 3398
+(3.5%-6.2% taller in PST). Native updates its mean as each cell reports and leaves
+untouched items on the mean current when they were last placed; PST freezes one mean
+per rebuild and applies it to every unmeasured item. `selfsizing-proposal-steps.m`
+shows the detail. This is closer to native than the fixed estimate was (PST's earlier
+gap was up to the whole estimate-versus-mean difference), but it is not a match.
+Existing gates still pass: automatic-size (the 2 known subpixel differences remain),
+self-sizing mutation, delegate precedence, 14 geometry scenarios.
