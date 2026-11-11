@@ -1,5 +1,26 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preparation-time fitting with the lazy layout: lifecycle solved, content estimate still stale (round 188)
+
+With the lazy layout live, the fit count problem from rounds 163-174 is gone. Fitting inside cell preparation
+(once per instance, pass restarted when the fit invalidates, scheduler disabled) now gives:
+
+* display lifecycle **exact**: 9 displays / 0 before fit and 8 / 0, against native 9/0 and 8/0;
+* visible cell frames exact: 0 of 210 differ;
+* fitted-item counts essentially identical: **6/13/18 against native's 6/14/18** (previously 9/20/27).
+
+So the over-fitting diagnosis was right and the lazy layout fixes it: PST now creates cells only for rows it
+has materialised.
+
+Remaining error is content size, which stays at the pure estimate 1770 against native's 1854/1835/1846 - i.e.
+the sizes reported during preparation are not reaching the rebuild that computes the section extent. Fit counts
+matching while content does not points at the rebuild path rather than the fitting path (a likely culprit is
+the attribute-only invalidation path from round 179 reusing stored sizes instead of the newly recorded report).
+
+Reverted to keep the gate suite green; the lazy layout wiring from earlier in this round is committed and
+verified. This is the narrowest the problem has ever been: lifecycle and fit counts now agree with native, and
+one cache/rebuild decision separates PST from parity.
+
 ## Lazy (valid-range) layout wired and green (round 188)
 
 The wiring attempt from round 187 is now working. The cause of that failure was **not** the attribute paths: it
