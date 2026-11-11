@@ -177,8 +177,8 @@ static char kPSTCachedItemRectsKey;
             }
 
             NSArray *itemRects = [rectCache objectForKey:@(sectionIndex)];
-            if (!itemRects && section.fixedItemSize && section.rows.count) {
-                itemRects = [[(section.rows) objectAtIndex:0] itemRects];
+            if (!itemRects && section.fixedItemSize && [section rowCount]) {
+                itemRects = [[section rowAtIndex:0] itemRects];
                 if (itemRects) [rectCache setObject:itemRects forKey:@(sectionIndex)];
             }
 
@@ -186,8 +186,7 @@ static char kPSTCachedItemRectsKey;
             // them can intersect the rect. Binary search for the first row whose far edge
             // reaches the rect and stop at the first row that starts beyond it, instead of
             // testing every row of the section on every scroll step.
-            NSArray *pstRows = section.rows;
-            NSUInteger pstRowCount = pstRows.count;
+            NSUInteger pstRowCount = (NSUInteger)[section rowCount];
             BOOL pstHorizontal = _data.horizontal;
             CGFloat pstRectMin = pstHorizontal ? CGRectGetMinX(rect) : CGRectGetMinY(rect);
             CGFloat pstRectMax = pstHorizontal ? CGRectGetMaxX(rect) : CGRectGetMaxY(rect);
@@ -195,13 +194,13 @@ static char kPSTCachedItemRectsKey;
             NSUInteger pstLow = 0, pstHigh = pstRowCount;
             while (pstLow < pstHigh) {
                 NSUInteger mid = pstLow + (pstHigh - pstLow) / 2;
-                CGRect midFrame = [[pstRows objectAtIndex:mid] rowFrame];
+                CGRect midFrame = [section rowFrameAtIndex:(NSInteger)mid];
                 CGFloat far = pstSectionOrigin + (pstHorizontal ? CGRectGetMaxX(midFrame) : CGRectGetMaxY(midFrame));
                 if (far < pstRectMin) pstLow = mid + 1; else pstHigh = mid;
             }
             for (NSUInteger pstRowIndex = pstLow; pstRowIndex < pstRowCount; pstRowIndex++) {
-                PSTGridLayoutRow *row = [pstRows objectAtIndex:pstRowIndex];
-                CGRect normalizedRowFrame = row.rowFrame;
+                PSTGridLayoutRow *row = [section rowAtIndex:(NSInteger)pstRowIndex];
+                CGRect normalizedRowFrame = [section rowFrameAtIndex:(NSInteger)pstRowIndex];
 
                 normalizedRowFrame.origin.x += section.frame.origin.x;
                 normalizedRowFrame.origin.y += section.frame.origin.y;
@@ -216,7 +215,9 @@ static char kPSTCachedItemRectsKey;
                         CGRect itemFrame;
                         if (row.fixedItemSize) {
                             itemFrame = [[itemRects objectAtIndex:(NSUInteger)itemIndex] CGRectValue];
-                            sectionItemIndex = (NSUInteger)(row.index * section.itemsByRowCount + itemIndex);
+                            // The row's position, not row.index: a compact fixed-size section shares one row object
+                            // between all of its complete rows.
+                            sectionItemIndex = (NSUInteger)((NSInteger)pstRowIndex * section.itemsByRowCount + itemIndex);
                         }else {
                             PSTGridLayoutItem *item = [row.items objectAtIndex:(NSUInteger)itemIndex];
                             sectionItemIndex = (NSUInteger)(row.firstItemIndex + itemIndex);
@@ -255,8 +256,10 @@ static char kPSTCachedItemRectsKey;
     PSTGridLayoutRow *row = nil;
     CGRect itemFrame = CGRectZero;
 
-    if (section.fixedItemSize && section.itemsByRowCount > 0 && indexPath.row / section.itemsByRowCount < (NSInteger)section.rows.count) {
-        row = [section.rows objectAtIndex:(NSUInteger)(indexPath.row / section.itemsByRowCount)];
+    NSInteger pstRowNumber = 0;
+    if (section.fixedItemSize && section.itemsByRowCount > 0 && indexPath.row / section.itemsByRowCount < [section rowCount]) {
+        pstRowNumber = indexPath.row / section.itemsByRowCount;
+        row = [section rowAtIndex:pstRowNumber];
         NSUInteger itemIndex = (NSUInteger)(indexPath.row % section.itemsByRowCount);
         NSArray *itemRects = [row itemRects];
         itemFrame = [[itemRects objectAtIndex:itemIndex] CGRectValue];
@@ -269,7 +272,7 @@ static char kPSTCachedItemRectsKey;
     PSTCollectionViewLayoutAttributes *layoutAttributes = [[self.class layoutAttributesClass] layoutAttributesForCellWithIndexPath:indexPath];
 
     // calculate item rect
-    CGRect normalizedRowFrame = row.rowFrame;
+    CGRect normalizedRowFrame = (section.fixedItemSize && [section rowCount] > pstRowNumber && row == [section rowAtIndex:pstRowNumber]) ? [section rowFrameAtIndex:pstRowNumber] : row.rowFrame;
     normalizedRowFrame.origin.x += section.frame.origin.x;
     normalizedRowFrame.origin.y += section.frame.origin.y;
     layoutAttributes.frame = CGRectMake(normalizedRowFrame.origin.x + itemFrame.origin.x, normalizedRowFrame.origin.y + itemFrame.origin.y, itemFrame.size.width, itemFrame.size.height);

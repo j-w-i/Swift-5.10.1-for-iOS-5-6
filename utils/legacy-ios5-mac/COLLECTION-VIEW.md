@@ -867,3 +867,41 @@ a resize at 5,000 items is 15.7 ms against native's 0.6 ms. The profile now show
 section still allocates and frees one row object per row. Removing that needs rows that are not
 objects (or a lazily built row array for fixed-size sections), which changes the structure the
 attribute query, updates and self-sizing rely on and has not been started.
+
+### Round 92: fixed-size sections keep two row objects, not one per row (rebuild is now flat)
+
+A fixed-size section no longer allocates a row object per row. It lays out a template row (which
+stands for every complete row) and the last row (which may be incomplete), and keeps one origin
+per row in a `CGFloat` array. The section exposes `rowCount`, `rowAtIndex:` and `rowFrameAtIndex:`;
+the attribute query, `layoutAttributesForItemAtIndexPath:` and the item-rect cache use them.
+Variable-size sections are untouched, and sizes the compact path cannot handle (no items, a
+non-positive item size) fall back to the general loop. Row origins use the same additions as
+before, so the geometry is bit-identical.
+
+**A bug the new test caught before this was committed:** the attribute query computed a cell's
+index from `row.index`, and the compact path shares one row object between all complete rows, so
+about 40% of the 3,276 query checks failed (1,224). The query now uses the row's position. The
+geometry golden had also failed in the same run, and passed again after the fix.
+
+Verification: `tests/fixed-layout-dump.m` output is **byte-identical to the previous commit** for
+both the 648-configuration sweep (17,496 lines) and a larger sweep up to 700 items per section
+(344,520 lines); the iPod touch 3 (iOS 5.1.1) agrees with the simulator on the 648-configuration
+dump within 0.00046 points (single-precision printing). The 3,276-rect query test, the 14 geometry
+scenarios, self-sizing, automatic-size, display-event, cell-resize and hidden-layout gates pass.
+The iOS 5 compile has no errors.
+
+iPhone 6, plain cells, microseconds (previous round in brackets):
+
+| Items | Resize, PST | Resize, native | Cold layout, PST | Cold layout, native |
+| ---: | ---: | ---: | ---: | ---: |
+| 200 | 355 (991) | 624 | 9,261 (9,823) | 11,962 |
+| 1,000 | 481 (3,383) | 569 | 3,117 (5,126) | 3,179 |
+| 5,000 | 1,208 (15,694) | 615 | 2,147 (12,520) | 1,815 |
+| 20,000 | | | 4,513 (46,020) | 1,941 |
+
+Scroll (about 215-235 us) and reload (about 810-830 us) are flat. A resize at 5,000 items is now
+1.2 ms against native's 0.6 ms (it was 34.6 ms two rounds ago); cold layout at 20,000 items is
+4.5 ms against 1.9 ms. The remaining growth is the per-item work that is left (the section still
+runs one pass over the items to count a row, and cell and view bookkeeping), roughly 0.2 us per
+item. Not yet remeasured: variable-size and self-sizing sections, which still build a row object
+per row and an item object per item.

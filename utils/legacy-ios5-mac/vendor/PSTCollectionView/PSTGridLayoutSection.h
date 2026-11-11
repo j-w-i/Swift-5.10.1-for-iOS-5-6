@@ -45,6 +45,13 @@
 
 //- (PSTGridLayoutSection *)copyFromLayoutInfo:(PSTGridLayoutInfo *)layoutInfo;
 
+// Row access that works for both layouts. A fixed-size section keeps only two row objects (the first,
+// which stands for every complete row, and the last) plus an array of row origins, instead of one row
+// object per row; variable-size sections still hold every row in `rows`.
+- (NSInteger)rowCount;
+- (PSTGridLayoutRow *)rowAtIndex:(NSInteger)index;
+- (CGRect)rowFrameAtIndex:(NSInteger)index; // relative to the section, like PSTGridLayoutRow.rowFrame
+
 // Faster variant of invalidate/compute
 - (void)recomputeFromIndex:(NSInteger)index;
 

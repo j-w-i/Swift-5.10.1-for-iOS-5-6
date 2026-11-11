@@ -14,6 +14,11 @@
     NSMutableArray *_items;
     NSMutableArray *_rows;
     BOOL _isValid;
+    // Compact fixed-size rows (see rowCount): row i starts at _fixedRowOrigins[i] along the scroll axis.
+    CGFloat *_fixedRowOrigins;
+    NSInteger _fixedRowCount;
+    PSTGridLayoutRow *_fixedTemplateRow;
+    PSTGridLayoutRow *_fixedLastRow;
 }
 @property (nonatomic, strong) NSArray *items;
 @property (nonatomic, strong) NSArray *rows;
@@ -49,9 +54,92 @@
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Public
 
+- (void)dealloc {
+    free(_fixedRowOrigins);
+}
+
 - (void)invalidate {
     _isValid = NO;
     self.rows = [NSMutableArray array];
+    free(_fixedRowOrigins); _fixedRowOrigins = NULL;
+    _fixedRowCount = 0; _fixedTemplateRow = nil; _fixedLastRow = nil;
+}
+
+- (NSInteger)rowCount {
+    return _fixedRowOrigins ? _fixedRowCount : (NSInteger)self.rows.count;
+}
+
+- (PSTGridLayoutRow *)rowAtIndex:(NSInteger)index {
+    if (!_fixedRowOrigins) return [self.rows objectAtIndex:(NSUInteger)index];
+    return index == _fixedRowCount - 1 ? _fixedLastRow : _fixedTemplateRow;
+}
+
+- (CGRect)rowFrameAtIndex:(NSInteger)index {
+    if (!_fixedRowOrigins) return [[self.rows objectAtIndex:(NSUInteger)index] rowFrame];
+    CGSize size = [self rowAtIndex:index].rowSize;
+    return self.layoutInfo.horizontal ? CGRectMake(_fixedRowOrigins[index], self.sectionMargins.top, size.width, size.height)
+                                      : CGRectMake(self.sectionMargins.left, _fixedRowOrigins[index], size.width, size.height);
+}
+
+// Lays out a fixed-size section without a row object per row. Every complete row is identical, so one
+// template row is laid out and the last row (which may be incomplete) on its own. Row origins are
+// accumulated with the same additions the per-row loop used, so the geometry is bit-identical.
+// Returns NO, doing nothing, for sizes the general loop must handle (empty or zero-size items).
+- (BOOL)pstComputeFixedRowsWithDimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize {
+    BOOL horizontal = self.layoutInfo.horizontal;
+    NSInteger count = self.itemsCount;
+    CGFloat itemDimension = horizontal ? self.itemSize.height : self.itemSize.width;
+    if (count <= 0 || !(itemDimension > 0) || !(spacing >= 0) || !isfinite(dimension)) return NO;
+
+    // How many items the first row holds: the same running subtraction the per-row loop performed.
+    NSInteger perRow = 1;
+    CGFloat dimensionLeft = dimension - itemDimension;
+    while (perRow < count) {
+        CGFloat next = itemDimension + spacing;
+        if (dimensionLeft < next) break;
+        dimensionLeft -= next;
+        perRow++;
+    }
+    NSInteger rowCount = (count + perRow - 1) / perRow;
+
+    PSTGridLayoutRow *templateRow = [self addRow];
+    templateRow.fixedItemSize = YES; templateRow.index = 0; templateRow.firstItemIndex = 0;
+    templateRow.itemCount = rowCount == 1 ? count : perRow;
+    PSTGridLayoutRow *lastRow = templateRow;
+    if (rowCount > 1) {
+        lastRow = [self addRow];
+        lastRow.fixedItemSize = YES; lastRow.index = rowCount - 1; lastRow.firstItemIndex = (rowCount - 1) * perRow;
+        lastRow.itemCount = count - (rowCount - 1) * perRow;
+    }
+    self.itemsByRowCount = (NSInteger)fmax(perRow, self.itemsByRowCount);
+
+    // A row aligns as the incomplete one only when it is the section's last (see layoutRowAndGenerateRectArray:).
+    self.indexOfImcompleteRow = rowCount > 1 ? 1 : 0;
+    [templateRow layoutRow];
+    if (rowCount > 1) {
+        self.indexOfImcompleteRow = rowCount - 1;
+        [lastRow layoutRow];
+    }
+
+    free(_fixedRowOrigins);
+    _fixedRowOrigins = malloc((size_t)rowCount * sizeof(CGFloat));
+    for (NSInteger i = 0; i < rowCount; i++) {
+        PSTGridLayoutRow *row = i == rowCount - 1 ? lastRow : templateRow;
+        BOOL finishCycle = i == rowCount - 1;
+        if (horizontal) {
+            _fixedRowOrigins[i] = sectionSize->width;
+            sectionSize->height = MAX(row.rowSize.height, sectionSize->height);
+            sectionSize->width += row.rowSize.width + (finishCycle ? 0 : self.horizontalInterstice);
+        } else {
+            _fixedRowOrigins[i] = sectionSize->height;
+            sectionSize->height += row.rowSize.height + (finishCycle ? 0 : self.verticalInterstice);
+            sectionSize->width = MAX(row.rowSize.width, sectionSize->width);
+        }
+    }
+    _fixedRowCount = rowCount; _fixedTemplateRow = templateRow; _fixedLastRow = lastRow;
+    templateRow.rowFrame = [self rowFrameAtIndex:0];
+    lastRow.rowFrame = [self rowFrameAtIndex:rowCount - 1];
+    return YES;
 }
 
 - (void)computeLayout {
@@ -83,71 +171,73 @@
 
         CGFloat spacing = self.layoutInfo.horizontal ? self.verticalInterstice : self.horizontalInterstice;
 
-        do {
-            BOOL finishCycle = itemIndex >= self.itemsCount;
-            // TODO: fast path could even remove row creation and just calculate on the fly
-            PSTGridLayoutItem *item = nil;
-            if (!finishCycle) item = self.fixedItemSize ? nil : [self.items objectAtIndex:(NSUInteger)itemIndex];
+        if (![self pstComputeFixedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize]) {
+            do {
+                BOOL finishCycle = itemIndex >= self.itemsCount;
+                // TODO: fast path could even remove row creation and just calculate on the fly
+                PSTGridLayoutItem *item = nil;
+                if (!finishCycle) item = self.fixedItemSize ? nil : [self.items objectAtIndex:(NSUInteger)itemIndex];
 
-            CGSize itemSize = self.fixedItemSize ? self.itemSize : item.itemFrame.size;
-            CGFloat itemDimension = self.layoutInfo.horizontal ? itemSize.height : itemSize.width;
-            // first item of each row does not add spacing
-            if (itemsByRowCount > 0) itemDimension += spacing;
-            if (dimensionLeft < itemDimension || finishCycle) {
-                // finish current row
-                if (row) {
-                    // compensate last row
-                    self.itemsByRowCount = fmax(itemsByRowCount, self.itemsByRowCount);
-                    row.itemCount = itemsByRowCount;
+                CGSize itemSize = self.fixedItemSize ? self.itemSize : item.itemFrame.size;
+                CGFloat itemDimension = self.layoutInfo.horizontal ? itemSize.height : itemSize.width;
+                // first item of each row does not add spacing
+                if (itemsByRowCount > 0) itemDimension += spacing;
+                if (dimensionLeft < itemDimension || finishCycle) {
+                    // finish current row
+                    if (row) {
+                        // compensate last row
+                        self.itemsByRowCount = fmax(itemsByRowCount, self.itemsByRowCount);
+                        row.itemCount = itemsByRowCount;
 
-                    // if current row is done but there are still items left, increase the incomplete row counter
-                    if (!finishCycle) self.indexOfImcompleteRow = rowIndex;
+                        // if current row is done but there are still items left, increase the incomplete row counter
+                        if (!finishCycle) self.indexOfImcompleteRow = rowIndex;
 
-                    // In a fixed-size section every complete row (not the final, possibly incomplete
-                    // one) lays out identically, so lay the first one out and let the rest adopt it.
-                    BOOL isFinalRow = finishCycle;
-                    if (self.fixedItemSize && !isFinalRow && templateRow && itemsByRowCount == templateCount && row != templateRow) {
-                        [row adoptLayoutFromRow:templateRow];
-                    } else {
-                        [row layoutRow];
-                        if (self.fixedItemSize && !isFinalRow && !templateRow) { templateRow = row; templateCount = itemsByRowCount; }
+                        // In a fixed-size section every complete row (not the final, possibly incomplete
+                        // one) lays out identically, so lay the first one out and let the rest adopt it.
+                        BOOL isFinalRow = finishCycle;
+                        if (self.fixedItemSize && !isFinalRow && templateRow && itemsByRowCount == templateCount && row != templateRow) {
+                            [row adoptLayoutFromRow:templateRow];
+                        } else {
+                            [row layoutRow];
+                            if (self.fixedItemSize && !isFinalRow && !templateRow) { templateRow = row; templateCount = itemsByRowCount; }
+                        }
+
+                        if (self.layoutInfo.horizontal) {
+                            row.rowFrame = CGRectMake(sectionSize.width, self.sectionMargins.top, row.rowSize.width, row.rowSize.height);
+                            sectionSize.height = MAX(row.rowSize.height, sectionSize.height);
+                            sectionSize.width += row.rowSize.width + (finishCycle ? 0 : self.horizontalInterstice);
+                        }else {
+                            row.rowFrame = CGRectMake(self.sectionMargins.left, sectionSize.height, row.rowSize.width, row.rowSize.height);
+                            sectionSize.height += row.rowSize.height + (finishCycle ? 0 : self.verticalInterstice);
+                            sectionSize.width = MAX(row.rowSize.width, sectionSize.width);
+                        }
                     }
-
-                    if (self.layoutInfo.horizontal) {
-                        row.rowFrame = CGRectMake(sectionSize.width, self.sectionMargins.top, row.rowSize.width, row.rowSize.height);
-                        sectionSize.height = MAX(row.rowSize.height, sectionSize.height);
-                        sectionSize.width += row.rowSize.width + (finishCycle ? 0 : self.horizontalInterstice);
-                    }else {
-                        row.rowFrame = CGRectMake(self.sectionMargins.left, sectionSize.height, row.rowSize.width, row.rowSize.height);
-                        sectionSize.height += row.rowSize.height + (finishCycle ? 0 : self.verticalInterstice);
-                        sectionSize.width = MAX(row.rowSize.width, sectionSize.width);
+                    // add new rows until the section is fully laid out
+                    if (!finishCycle) {
+                        // create new row
+                        row.complete = YES; // finish up current row
+                        row = [self addRow];
+                        row.fixedItemSize = self.fixedItemSize;
+                        row.index = rowIndex;
+                        row.firstItemIndex = itemIndex;
+                        self.indexOfImcompleteRow = rowIndex;
+                        rowIndex++;
+                        // convert an item from previous row to current, remove spacing for first item
+                        if (itemsByRowCount > 0) itemDimension -= spacing;
+                        dimensionLeft = dimension - itemDimension;
+                        itemsByRowCount = 0;
                     }
+                }else {
+                    dimensionLeft -= itemDimension;
                 }
-                // add new rows until the section is fully laid out
-                if (!finishCycle) {
-                    // create new row
-                    row.complete = YES; // finish up current row
-                    row = [self addRow];
-                    row.fixedItemSize = self.fixedItemSize;
-                    row.index = rowIndex;
-                    row.firstItemIndex = itemIndex;
-                    self.indexOfImcompleteRow = rowIndex;
-                    rowIndex++;
-                    // convert an item from previous row to current, remove spacing for first item
-                    if (itemsByRowCount > 0) itemDimension -= spacing;
-                    dimensionLeft = dimension - itemDimension;
-                    itemsByRowCount = 0;
-                }
-            }else {
-                dimensionLeft -= itemDimension;
-            }
 
-            // add item on slow path
-            if (item) [row addItem:item];
+                // add item on slow path
+                if (item) [row addItem:item];
 
-            itemIndex++;
-            itemsByRowCount++;
-        } while (itemIndex <= self.itemsCount); // cycle once more to finish last row
+                itemIndex++;
+                itemsByRowCount++;
+            } while (itemIndex <= self.itemsCount); // cycle once more to finish last row
+        }
 
         if (self.layoutInfo.horizontal) {
             sectionSize.width += self.sectionMargins.right;
