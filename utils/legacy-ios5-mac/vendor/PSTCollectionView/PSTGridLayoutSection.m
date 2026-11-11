@@ -29,6 +29,7 @@
     NSInteger *_packedRowFirst;   // first item of each row; _packedRowFirst[_packedRowCount] == _packedCount
     CGFloat *_packedRowOrigin;    // origin of each row along the scroll axis
     NSInteger _packedLaidOutRows; // rows whose geometry is materialised (valid-range extension)
+    CGSize _packedPrefixExtent;   // running extent after those rows, before any derived remainder
     CGSize *_packedRowSize;       // size of each row
 }
 @property (nonatomic, strong) NSArray *items;
@@ -197,6 +198,7 @@
 - (void)pstComputePackedRowsWithDimension:(CGFloat)dimension spacing:(CGFloat)spacing sectionSize:(CGSize *)sectionSize {
     [self pstBreakPackedRowsWithDimension:dimension spacing:spacing];
     [self pstLayOutPackedRowsFrom:0 to:self.indexOfImcompleteRow + 1 dimension:dimension spacing:spacing sectionSize:sectionSize];
+    _packedPrefixExtent = *sectionSize;
 }
 
 /// Pass 1 of the packed layout: breaks the items into rows and fills `_packedRowFirst`. No row geometry is
@@ -323,6 +325,28 @@
 
 /// Materialises row geometry up to and including `targetRow`, continuing from whatever is already laid out.
 /// `sectionSize` must carry the running extent from the same starting point (see the valid-range plan).
+- (NSInteger)materialisedRowCount { return _packed ? _packedLaidOutRows : 0; }
+
+/// Materialises further rows of a lazily built uniform section, continuing from the recorded prefix extent.
+/// Returns the section's scrolling-axis growth, which the caller must propagate to later sections.
+- (BOOL)materialisePackedRowsThroughRow:(NSInteger)row dimension:(CGFloat)dimension spacing:(CGFloat)spacing
+                          scrollGrowth:(CGFloat *)growth {
+    if (growth) *growth = 0;
+    if (!_packed || !_isValid) return NO;
+    const NSInteger rows = self.indexOfImcompleteRow + 1;
+    const NSInteger target = MIN(row + 1, rows);
+    if (target <= _packedLaidOutRows) return YES;
+    CGSize extent = _packedPrefixExtent;
+    [self pstLayOutPackedRowsFrom:_packedLaidOutRows to:target dimension:dimension spacing:spacing sectionSize:&extent];
+    _packedPrefixExtent = extent;
+    _packedLaidOutRows = target;
+    // A lazily built uniform section already reports the extent of every row (see
+    // computeLayoutMaterialisingRowsThrough:), so materialising geometry never grows the section: the
+    // caller's frame, later sections and the content extent stay as built.
+    if (growth) *growth = 0;
+    return YES;
+}
+
 - (BOOL)packedSizesAreUniform {
     if (!_packed || _packedCount <= 0) return NO;
     const CGSize first = _packedSizes[0];
@@ -418,8 +442,11 @@
     [self pstBreakPackedRowsWithDimension:dimension spacing:spacing];
     const NSInteger rows = self.indexOfImcompleteRow + 1;
     const NSInteger limit = MIN(MAX(lastRow + 1, (NSInteger)0), rows);
+    _packedPrefixExtent = sectionSize;   // extent after the header and leading margin, before any rows
     if (limit > 0) {
         [self pstLayOutPackedRowsFrom:0 to:limit dimension:dimension spacing:spacing sectionSize:&sectionSize];
+        _packedPrefixExtent = sectionSize;
+        _packedLaidOutRows = limit;
         // Remainder of the rows share the last materialised row's scrolling extent, which is exact for
         // uniform items: same arithmetic as pstLayOutPackedRowsFrom, continued without geometry.
         const NSInteger rest = rows - limit;

@@ -93,6 +93,10 @@
 // Compute layout. Creates rows.
 - (void)computeLayout;
 // Uniform packed sections only: materialise the first rows and derive the rest of the extent exactly.
+- (NSInteger)materialisedRowCount;
+// Materialise further rows on demand; *scrollGrowth is the section extent change to propagate.
+- (BOOL)materialisePackedRowsThroughRow:(NSInteger)row dimension:(CGFloat)dimension spacing:(CGFloat)spacing
+                          scrollGrowth:(CGFloat *)growth;
 - (void)computeLayoutMaterialisingRowsThrough:(NSInteger)lastRow;
 
 - (PSTGridLayoutItem *)addItem;

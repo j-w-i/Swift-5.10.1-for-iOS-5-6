@@ -86,6 +86,28 @@
     return YES;
 }
 
+/// On-demand: ensure a section's packed rows are materialised through `row`, propagating any growth to later
+/// sections and to the content extent. Mirrors what a partially laid-out (valid-range) collection view needs.
+- (BOOL)materialisePackedRowsInSection:(NSInteger)sectionIndex throughRow:(NSInteger)row dimension:(CGFloat)dimension
+                               spacing:(CGFloat)spacing {
+    if (sectionIndex < 0 || sectionIndex >= (NSInteger)_sections.count) return NO;
+    PSTGridLayoutSection *section = [_sections objectAtIndex:(NSUInteger)sectionIndex];
+    CGFloat grew = 0;
+    if (![section materialisePackedRowsThroughRow:row dimension:dimension spacing:spacing scrollGrowth:&grew]) return NO;
+    if (grew != 0) {
+        for (NSUInteger i = (NSUInteger)sectionIndex + 1; i < _sections.count; i++) {
+            PSTGridLayoutSection *later = [_sections objectAtIndex:i];
+            CGRect frame = later.frame;
+            if (self.horizontal) frame.origin.x += grew; else frame.origin.y += grew;
+            later.frame = frame;
+        }
+        CGSize content = self.contentSize;
+        if (self.horizontal) content.width += grew; else content.height += grew;
+        self.contentSize = content;
+    }
+    return YES;
+}
+
 - (id)addSection {
     PSTGridLayoutSection *section = [PSTGridLayoutSection new];
     section.rowAlignmentOptions = self.rowAlignmentOptions;

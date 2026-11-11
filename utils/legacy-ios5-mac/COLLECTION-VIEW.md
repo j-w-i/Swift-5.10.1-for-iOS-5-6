@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## On-demand row materialisation (round 186)
+
+Added the other half of the lazy layout: a section records how many rows it has materialised and the running
+extent after them, and `-materialisePackedRowsThroughRow:...` lays out further rows on demand. The layout-info
+layer exposes this as `-materialisePackedRowsInSection:throughRow:dimension:spacing:`, which propagates any
+growth to later sections and the content extent - the same propagation path used for item-size changes.
+
+Two design errors were caught by the new gate before any wiring:
+
+1. The lazy build laid out rows but never recorded the count, so the first on-demand extension laid row 0 a
+   second time and moved it a row down (20 -> 50).
+2. Materialising further rows initially reported the rows' extent as growth, which double-counts: a lazily
+   built uniform section already reports the extent of *every* row through the uniform estimate, so
+   materialising geometry must not change the section frame, later sections or the content extent. The
+   contract is now explicit - growth is zero by construction for uniform sections - and the test asserts both
+   directions.
+
+Gate `run-packed-lazy-extension-test.sh`: 48 cases (both axes, 1..40 items, three sections, windows 0..3)
+materialise on demand to the last row in every section and compare against a fully built twin: all row frames,
+all item frames, all three section frames and the content extent. Passing, together with the lazy-section gate
+(414 cases), windowed layout, packed updates, golden and layouts; armv7 iOS 5 strict compile clean.
+
+Still not wired into `updateItemsLayout` / attribute queries. Both primitives now exist and are tested, so the
+next step is the wiring itself plus moving fitting into preparation.
 ## Lazy section build for uniform packed sections (round 185)
 
 Added `-computeLayoutMaterialisingRowsThrough:`: for a uniform packed section it lays out only the first rows

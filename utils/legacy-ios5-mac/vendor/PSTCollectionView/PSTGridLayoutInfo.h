@@ -32,6 +32,8 @@
 - (CGRect)frameForItemAtIndexPath:(NSIndexPath *)indexPath;
 // Scrolling-axis update (or section reflow for cross-axis changes); propagates the delta to later sections and content size.
 - (BOOL)updatePackedItemAtIndexPath:(NSIndexPath *)indexPath size:(CGSize)size scrollDelta:(CGFloat *)delta;
+// On-demand row materialisation for lazily built uniform sections; propagates growth to later sections.
+- (BOOL)materialisePackedRowsInSection:(NSInteger)sectionIndex throughRow:(NSInteger)row dimension:(CGFloat)dimension spacing:(CGFloat)spacing;
 
 // Add new section. Invalidates layout.
 - (PSTGridLayoutSection *)addSection;
