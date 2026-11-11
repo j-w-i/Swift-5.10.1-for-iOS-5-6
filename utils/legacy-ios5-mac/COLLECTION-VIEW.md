@@ -370,3 +370,31 @@ reference version would be needed, and the iOS 27 simulator is the stated oracle
 Not implemented: the earlier trace showed unmeasured items keeping the mean from when
 they were first placed (items 4-33 stayed at 33 while item 34 took a later mean), so
 the mean is cached per item at some invalidation granularity I have not identified.
+
+### Round 73: native proposal is updated per measurement (model fits, not implemented)
+
+`tests/selfsizing-proposal-steps.m` scrolls a 60-item ramp (preferred 30+2i, estimate
+40, view 120) in steps and prints each run of unmeasured items (iOS 27 simulator,
+native only). Measured items are marked `*`.
+
+| After | Unmeasured tail | Measured so far | Mean of measured |
+| --- | ---: | ---: | ---: |
+| first layout (0-3) | 33.00 | 4 | 33.00 |
+| scroll to 300 (+8-11) | 41.00 | 8 | 41.00 |
+| scroll to 600 (+15-17) | 46.73 | 11 | 46.73 |
+| scroll to 900 (+20-22) | 52.14 | 14 | 52.14 |
+| scroll to 1200 (+25,26) | 55.75 | 16 | 55.75 |
+
+The tail always equals the mean of every size measured so far, to two decimals. The
+single unmeasured items between measured blocks hold an earlier mean: item 7 = 39.43
+is the mean of the first 7 measurements, and items 14, 19 and 24 (45.00, 50.46, 54.00)
+are the means of exactly the first 10, 13 and 15 measurements. Items 4-6 kept the
+very first mean (33.00). So the proposal is refreshed as each cell reports its size,
+and an unmeasured item keeps whichever mean was current when the layout last touched
+it. Content height follows (1980 at first layout; PST's fixed estimate gives 2400).
+
+Reproducing this needs PST to apply measurements one at a time in native's order
+(items 8-11 arrived as 8,9,10 then 11, but the mid-block items 36,37,35,38,39 in the
+earlier trace arrived out of order), and to know which items the layout "touches" on
+each update. I have a model that fits every number above but no test that would catch
+a wrong guess about the untouched items, so nothing was changed in PST.
