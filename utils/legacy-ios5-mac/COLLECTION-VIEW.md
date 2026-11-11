@@ -702,3 +702,35 @@ PST can copy. PST's selection and highlighting use `indexPathForItemAtPoint:` ra
 than the hit-test result, so this does not change which item a touch selects. Left
 unmatched on purpose: reproducing a rule that depends on recycling history would mean
 imitating an internal quirk; revisit only if an app is shown to depend on it.
+
+### Round 87: default cell has one subview, like UIKit
+
+`tests/cell-structure.m` compares the cell's subviews as a background view and a selected
+background view are set, resized and cleared. Native UIKit's new cell has `backgroundView`
+nil and exactly one subview (the content view); setting a background puts it first, and
+setting a selected background puts it between the two. PST used to add an empty default
+background view to every cell, so each cell had two subviews and one more view to resize
+and attach. It no longer does. `backgroundView` is nil by default, as natively, and the
+resize fast path now handles the content view plus whichever backgrounds exist. The probe's
+output differs from native only in one place: native's output for the default and
+set-background rows omits the content view in its listing because the probe lists subviews
+before `layoutIfNeeded` populates the native cell lazily; PST lists it immediately. After
+the background views are set the structure matches (background, selected background,
+content, all frames equal and resizing together) and a resize moves all three.
+
+**Compatibility change:** code that read `cell.backgroundView` on a fresh PST cell and
+expected a view will now get nil, exactly as on UIKit; assigning one still works. The
+hit-test, selection, display-event, self-sizing, cell-resize and geometry gates all pass;
+the iPod touch 3 (iOS 5.1.1) output of the structure probe is identical to the simulator
+build of PST.
+
+iPhone 6, six alternating pairs against the previous build, new/old PST median:
+**cold 0.777, multi-section cold 0.780, bounds 0.844, item-size 0.902, multi-section scroll
+0.935, scroll 0.962** (all 6/6 pairs faster), batch 0.985, idle 0.970, reload 1.001.
+
+Paired PST/native over three launches (below 1 is faster than native): cold 0.82, idle 0.77,
+scroll 1.03, reload 0.95, batch 0.66, item-size 1.03, bounds 0.79, multi-section cold 0.84,
+multi-section scroll 0.81. On this benchmark and device no workload is more than about
+3 percent slower than native and most are faster. That is CPU time for synchronous
+layout and view updates on one iPhone 6; it is not frame delivery, not iOS 6 hardware, and
+the benchmark's cells are plain views, so it does not show parity for heavy cell content.

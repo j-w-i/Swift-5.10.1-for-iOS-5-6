@@ -144,10 +144,9 @@
 
 - (id)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        _backgroundView = [[UIView alloc] initWithFrame:self.bounds];
-        _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        [self addSubview:_backgroundView];
-
+        // Like UIKit, a new cell has no backgroundView (it is nil until the app sets one) and a
+        // single subview, the contentView. A default background view was one more view to
+        // resize on every size change.
         _contentView = [[UIView alloc] initWithFrame:self.bounds];
         _contentView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
         [self addSubview:_contentView];
@@ -165,9 +164,6 @@
             [self addSubview:_contentView];
         }
 
-        _backgroundView = [[UIView alloc] initWithFrame:self.bounds];
-        _backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        [self insertSubview:_backgroundView belowSubview:_contentView];
     }
     return self;
 }
@@ -181,20 +177,19 @@
 /// subview an app added to the cell, or a changed mask, falls back to ordinary autoresizing.
 - (void)pstSetBoundsSize:(CGSize)size {
     const UIViewAutoresizing kDefaultMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    NSUInteger expected = 2 + (_selectedBackgroundView ? 1 : 0);
+    NSUInteger expected = 1 + (_backgroundView ? 1 : 0) + (_selectedBackgroundView ? 1 : 0);
     BOOL stock = self.autoresizesSubviews && self.subviews.count == expected &&
-        _backgroundView.superview == self && _contentView.superview == self &&
-        _backgroundView.autoresizingMask == kDefaultMask && _contentView.autoresizingMask == kDefaultMask &&
-        (!_selectedBackgroundView || (_selectedBackgroundView.superview == self && _selectedBackgroundView.autoresizingMask == kDefaultMask)) &&
-        CGRectEqualToRect(_backgroundView.frame, self.bounds) && CGRectEqualToRect(_contentView.frame, self.bounds) &&
-        (!_selectedBackgroundView || CGRectEqualToRect(_selectedBackgroundView.frame, self.bounds));
+        _contentView.superview == self && _contentView.autoresizingMask == kDefaultMask &&
+        CGRectEqualToRect(_contentView.frame, self.bounds) &&
+        (!_backgroundView || (_backgroundView.superview == self && _backgroundView.autoresizingMask == kDefaultMask && CGRectEqualToRect(_backgroundView.frame, self.bounds))) &&
+        (!_selectedBackgroundView || (_selectedBackgroundView.superview == self && _selectedBackgroundView.autoresizingMask == kDefaultMask && CGRectEqualToRect(_selectedBackgroundView.frame, self.bounds)));
     CGRect bounds = (CGRect){.origin = self.bounds.origin, .size = size};
     if (!stock) { self.bounds = bounds; return; }
     self.autoresizesSubviews = NO;
     self.bounds = bounds;
     self.autoresizesSubviews = YES;
     CGRect inner = (CGRect){.origin = bounds.origin, .size = size};
-    _backgroundView.frame = inner;
+    if (_backgroundView) _backgroundView.frame = inner;
     _contentView.frame = inner;
     if (_selectedBackgroundView) _selectedBackgroundView.frame = inner;
 }
