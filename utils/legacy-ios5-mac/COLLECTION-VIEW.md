@@ -1335,3 +1335,27 @@ and 5/20/4/25 on iOS 6. Both reach active state without a respring; SpringBoard 
 Remaining limits: public duplicate-class selection, production importer/public UIKit spelling, modern
 API parity through this generated route, and arbitrary dependency graphs. The existing shipping route
 is still unchanged and nothing was published.
+
+### Round 106: modern API feature gate passes through both selected engines
+
+Added a build-only persistent device gate using the original Apple-route assertions, adapted by a
+generator rather than altering the historical source. The exact same iOS-5-targeted app/dylib bundle
+passes **21 checks** on both physical iPods, selecting real PST on 5.1.1 and native UIKit on 6.1.3.
+Coverage: provider/canonical identity; cell and header willDisplay; visible supplementary view/path
+queries; stationary/forward/nonrepeating prefetch (0/7/no extra paths); uniform preferred fitting to
+height 80 and content height 16020; affine rotation a=.878/b=.479; animated insert/delete completions
+and resulting item counts/content heights. Both animation callbacks report called with finished=YES.
+
+The first adaptation exposed a harness problem rather than establishing a runtime failure: it deferred
+Run onto the main queue but retained nested CFRunLoop waits for animation completion. Both engines
+failed those checks. The final generated driver returns to the event loop, sequences delete from the
+insert callback via dispatch_async, tracks callback-called separately from finished, and has an
+8-second timeout. Both then pass without timeout. It has a real root controller/window, returns
+normally from launch, retains assign delegates/data sources through failure paths, removes fixtures
+before showing results, and remains alive rather than exiting/removing a foreground app bundle.
+
+No shipping runtime fix was needed for these assertions. This gate is feature coverage, not evidence
+that the whole modern API surface matches iOS 27. Variable/stepped self-sizing, fitting priorities,
+prefetch cancellation, exact animated event order and modern APIs with the Swift overlay together
+remain unverified through this generated route. Public duplicate classes and the production importer
+also remain unresolved. Neither system UIKit nor the existing shipping selection was changed.

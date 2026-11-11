@@ -206,3 +206,31 @@ counts remain 10/15/5/25 on iOS 5 and 5/20/4/25 on iOS 6. Both processes reach a
 state, with unchanged SpringBoard PIDs. This removes the observed private-class
 ambiguity, not the unresolved public duplicates or the remaining modern API/importer
 and dependency-graph verification requirements.
+
+## Modern API device gate through selected engines
+
+`build-modern-api.sh SDK CLANG CRT_DIRECTORY NEW_OUTPUT_DIRECTORY` builds the generated
+full engine and persistent `ModernRouteAPIs.app`. The driver generator reuses the
+assertions in the Apple-route iOS 6 device test, but supplies a root controller,
+normally returning launch callback, deferred execution, retained assign-delegate/data
+source fixtures, asynchronous animation sequencing and an 8-second callback timeout.
+It installs Apple hooks only on the native engine and links no Swift overlay.
+
+The same app/dylib bundle passes 21 checks on iOS 5.1.1 (PST) and 6.1.3 (UIKit): engine
+provenance/canonical identity, supplementary display/query APIs, prefetch (0 stationary,
+7 ahead after scrolling, no repeat), uniform preferred height 80/content height 16020,
+affine rotation round-trip, animated insert/delete callbacks and updated counts.
+Both callbacks report called with `finished=YES`, with no timeout or recovery respring.
+
+The first deferred fixture still pumped nested CFRunLoop waits inside its main-queue
+block. Both routes incorrectly failed completion checks there. The final fixture
+returns to the event loop and chains the second update asynchronously from the first
+completion; both then pass. It distinguishes callback-called from finished-state and
+keeps data sources alive even if a timeout occurs. The original historical Apple test
+source/runner is not modified by this generator; its older lifecycle should not be
+used as a template for new device launches.
+
+This is feature coverage, not complete iOS 27 differential parity. Variable self-sizing,
+stepped-scroll geometry, fitting priorities, prefetch cancellation, exact animated event
+order, and modern APIs with the Swift overlay together still need verification. The
+public duplicate-class and production importer limitations remain.
