@@ -635,3 +635,34 @@ automatic-size, display events); iOS 5 compile has no errors.
 
 The profile now has `applyLayoutAttributes:` (mostly `UIView setFrame:`) at about 44% for
 a size change and `PSTGridLayoutSection computeLayout` at about 21%.
+
+### Round 84: current same-device ratios (iPhone 6, iOS 10.3.3, arm64)
+
+Paired PST/native median over three launches of the current build (`3b2eae09`);
+above 1 is slower than native. Compare round 76's baseline in parentheses.
+
+| Workload | Now | Round 76 |
+| --- | ---: | ---: |
+| Cold, 200 items | 1.06 | 1.08 |
+| Idle x8 | 0.75 | 0.76 |
+| Scroll x10 | 1.08 | 1.34 |
+| Reload | 0.96 | 1.75 |
+| Batch insert/delete | 0.67 | 0.73 |
+| Item-size change | 1.15 | 1.88 |
+| Bounds change | 0.95 | 0.99 |
+| Multi-section cold | 1.07 | 1.10 |
+| Multi-section scroll x6 | 0.87 | 0.99 |
+
+Still slower than native: item-size change (1.15), scroll (1.08), cold layout (1.06 and
+1.07). The other six workloads are at or below native. This is a command-line UIKit
+synchronous CPU microbenchmark on one phone; it is not frame delivery, not an iOS 6
+measurement and not a claim of parity.
+
+Scroll profile (simulator, current code): `updateVisibleCellsNow` 41%, of which adding
+views 23%, `layoutAttributesForElementsInRect:` 12%, `validateLayoutInRect:` 15%; UIKit's
+own `setContentOffset` 14%, `setBounds` 5%, `setHidden` 4%. Nothing PST-specific stands out.
+Candidate for the remaining layout cost: `PSTGridLayoutSection computeLayout` (about 21% on
+a size change) walks every item and creates a row object per row even for fixed-size
+items; a closed-form fast path for fixed item size could remove most of it, but it changes
+the structure the attribute query, self-sizing and update code rely on, so it needs the
+14-scenario geometry gate and the self-sizing suites around it. Not started.
