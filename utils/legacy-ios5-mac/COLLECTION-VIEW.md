@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Preferred-size context staging implemented (round 162)
+
+The flow layout's preferred-attributes factory now performs the staged update native was observed to do:
+record the reported size for the item (so this item's attributes show it immediately), stage it into
+packed storage without moving any row, name every item from that one to the end of its section as
+invalidated, and publish the section-estimate content size (`ceil(count/perRow) * (tallestFirstRow +
+interstice) - interstice + margins + header + footer`) through `collectionViewContentSize` until the next
+`prepareLayout`. Context flags stay both NO, adjustments stay zero. Named invalidation now forces a rebuild
+from retained sizes rather than keeping geometry, so the applied context settles to the same frames and
+content size as iOS 27.
+
+The previously failing strict `run-preferred-context-geometry-test.sh` **now passes**, matching native for
+`changed=0` and `changed=1`: flags, adjustments, invalidated paths 0-19, staged item size 60 with unchanged
+neighbour rows, content height 1200 before and after application, and the view's cached 800. All 22 other
+gates still pass (14-scenario golden, layouts 31/32, automatic-size, batch-insert 9/9, prefetch, centering,
+stability, proposal, display order, hidden items, cell resize, attribute snapshot, bounds, updates, delegate,
+invalidation context/predicate/execution/flow-flags/cache, 240 packed updates), and the strict
+`-Werror=unguarded-availability` armv7 iOS 5 runtime archive builds.
+
+Not done: the display lifecycle gate still fails (PST sends `willDisplayCell` before fitting, 9/9 and 10/10
+against native 0), because cell preparation still uses the older measuring scheduler. The context path is
+now native-accurate but is not yet what drives ordinary cell display. Performance unchanged and unmeasured
+on hardware this round.
+
 ## Preferred flow context flags (round 161)
 
 Flow now overrides the preferred-attributes factory to turn off both attribute/metric rebuild flags,

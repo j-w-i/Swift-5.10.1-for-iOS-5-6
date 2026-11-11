@@ -100,6 +100,10 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     BOOL _needsPrepareLayout;
     BOOL _preserveGeometryForContext;
     BOOL _contextRequiresMetrics;
+    // Content size a preferred-size context published before its invalidation is applied (see
+    // invalidationContextForPreferredLayoutAttributes:). Cleared by the next prepareLayout.
+    CGSize _pstStagedContentSize;
+    BOOL _pstHasStagedContentSize;
     char filler[200]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 
@@ -362,6 +366,7 @@ static char kPSTCachedItemRectsKey;
 }
 
 - (CGSize)collectionViewContentSize {
+    if (_pstHasStagedContentSize) return _pstStagedContentSize;
     if (!_data || _needsPrepareLayout) [self prepareLayout];
 
     // Observed against UIKit: a self-sizing layout that scrolls vertically reports a whole-point content height;
@@ -392,7 +397,11 @@ static char kPSTCachedItemRectsKey;
     BOOL metrics = full || (flowContext.invalidateFlowLayoutAttributes && flowContext.invalidateFlowLayoutDelegateMetrics);
     // Contexts coalesce until preparation; a weaker later context cannot cancel a pending metrics rebuild.
     _contextRequiresMetrics = _contextRequiresMetrics || metrics;
-    _preserveGeometryForContext = !_contextRequiresMetrics &&
+    // Named invalidated items still need the rows rebuilt from the retained sizes, even though no delegate
+    // metric is re-queried; only a context that names nothing may keep the current geometry.
+    const BOOL namesItems = context.invalidatedItemIndexPaths.count > 0 ||
+        context.invalidatedSupplementaryIndexPaths.count > 0 || context.invalidatedDecorationIndexPaths.count > 0;
+    _preserveGeometryForContext = !_contextRequiresMetrics && !namesItems &&
         (!_needsPrepareLayout || _preserveGeometryForContext) && _data != nil;
     if (metrics) {
         _preparedLayoutIsReusable = NO;
@@ -435,6 +444,7 @@ static char kPSTCachedItemRectsKey;
 - (void)prepareLayout {
     _needsPrepareLayout = NO;
     _contextRequiresMetrics = NO;
+    _pstHasStagedContentSize = NO;
     if (_preserveGeometryForContext) {
         _preserveGeometryForContext = NO;
         _visibleBounds = self.collectionView.bounds;
@@ -575,9 +585,58 @@ static char kPSTCachedItemRectsKey;
     PSTCollectionViewFlowLayoutInvalidationContext *context = (id)[super invalidationContextForPreferredLayoutAttributes:preferredAttributes withOriginalAttributes:originalAttributes];
     context.invalidateFlowLayoutAttributes = NO;
     context.invalidateFlowLayoutDelegateMetrics = NO;
-    // Recording size changes and invalidated valid-range paths is added separately; never request a metrics
-    // rebuild merely because a cell supplied preferred attributes.
+    // A changed preferred size is recorded and shown in this item's attributes immediately, while the
+    // remaining rows keep their current geometry until the context is applied. The content size published in
+    // the meantime is the section estimate (the tall first row), not the sum of the current item frames.
+    if ([self pstUsesSelfSizing] &&
+        !CGSizeEqualToSize(preferredAttributes.size, originalAttributes.size)) {
+        NSIndexPath *indexPath = originalAttributes.indexPath;
+        if (!_data || _needsPrepareLayout) [self prepareLayout];
+        if (indexPath.section < (NSInteger)_data.sections.count) {
+            PSTGridLayoutSection *section = [_data.sections objectAtIndex:(NSUInteger)indexPath.section];
+            if (indexPath.row >= 0 && indexPath.row < section.itemsCount) {
+                [self pstRecordPreferredSize:preferredAttributes.size forItemAtIndexPath:indexPath proposedFrame:originalAttributes.frame];
+                [section stagePackedItemAtIndex:indexPath.row size:preferredAttributes.size];
+                NSMutableArray *paths = [NSMutableArray array];
+                for (NSInteger item = indexPath.row; item < section.itemsCount; item++) {
+                    [paths addObject:[NSIndexPath indexPathForRow:item inSection:indexPath.section]];
+                }
+                [context invalidateItemsAtIndexPaths:paths];
+                _pstStagedContentSize = [self pstEstimatedContentSize];
+                _pstHasStagedContentSize = YES;
+            }
+        }
+    }
     return context;
+}
+
+/// UIKit's unmeasured-section estimate: rows times the tallest item of the first row, plus margins, header
+/// and footer. Used only for the content size a pending preferred-size context publishes.
+- (CGSize)pstEstimatedContentSize {
+    CGFloat scrolling = 0, cross = _data.dimension;
+    const BOOL horizontal = _data.horizontal;
+    for (PSTGridLayoutSection *section in _data.sections) {
+        const NSInteger count = section.itemsCount, perRow = section.itemsByRowCount;
+        CGFloat extent;
+        if (count <= 0 || perRow <= 0 || [section rowCount] <= 0) {
+            extent = horizontal ? section.frame.size.width : section.frame.size.height;
+        } else {
+            CGFloat tallest = 0;
+            NSInteger first = section.packed ? [section packedFirstItemOfRow:0] : 0;
+            NSInteger n = section.packed ? [section packedItemCountOfRow:0] : perRow;
+            for (NSInteger k = first; k < first + n && k < count; k++) {
+                CGRect f = [section packedItemFrameAtIndex:k];
+                tallest = MAX(tallest, horizontal ? f.size.width : f.size.height);
+            }
+            const CGFloat interstice = horizontal ? section.horizontalInterstice : section.verticalInterstice;
+            const UIEdgeInsets m = section.sectionMargins;
+            extent = ceil((CGFloat)count / (CGFloat)perRow) * (tallest + interstice) - interstice +
+                (horizontal ? m.left + m.right : m.top + m.bottom) + section.headerDimension + section.footerDimension;
+        }
+        scrolling += extent;
+        cross = MAX(cross, horizontal ? section.frame.size.height : section.frame.size.width);
+    }
+    return horizontal ? CGSizeMake(scrolling, cross) : CGSizeMake(cross, scrolling);
 }
 
 - (BOOL)shouldInvalidateLayoutForPreferredLayoutAttributes:(PSTCollectionViewLayoutAttributes *)preferredAttributes withOriginalAttributes:(PSTCollectionViewLayoutAttributes *)originalAttributes {
