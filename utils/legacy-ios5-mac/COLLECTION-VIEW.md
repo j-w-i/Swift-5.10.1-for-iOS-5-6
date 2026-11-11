@@ -1,5 +1,25 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Scene/trait gate made runnable and passing (round 171)
+
+`run-scene-fallthrough-test.sh` requires a prepared native probe directory (`main.m` plus `P.app/Info.plist`
+with `org.example.sceneprobe`) and none existed in the tree, so the scene/trait acceptance criterion had never
+been run during this work. Added the missing probe at `vendor/UIKitBackports/Tests/scene-probe/` (minimal
+scene-less `UIApplicationMain` app; the gate's constructor does the actual checking).
+
+Now runs and passes: **`PASS: scene/trait backport inert on iOS 13+ (classes unchanged)`** - the runtime links
+in, and `UIScene`/`UITraitCollection` are still Apple's classes from the system framework rather than being
+replaced.
+
+Acceptance-criterion status after this round:
+
+| Criterion | Status |
+| --- | --- |
+| No Auto Layout regression | **cannot verify**: suite broken by `49e3e408` (source moved to the Cassowary module without a visible re-export); harness source list fixed, type visibility not |
+| No UIStackView regression | PASS (`run-direct-stack-tests.sh`) |
+| No scene/trait regression | PASS (gate now runnable, probe added) |
+| Collection golden geometry | PASS (14/14) |
+
 ## Declaration-lowering gate extended (round 170)
 
 The Swift-facing criterion ("declarations lowered by the compiler only below the OS that ships the API") is
