@@ -100,6 +100,10 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     BOOL _needsPrepareLayout;
     BOOL _preserveGeometryForContext;
     BOOL _contextRequiresMetrics;
+    // Attribute-only invalidation rebuilds rows from the sizes already laid out, without re-querying the
+    // size delegate: UIKit never re-asks for metrics a context did not invalidate.
+    BOOL _pstReuseStoredSizes;
+    NSArray *_pstStoredSectionSizes;   // NSArray<NSArray<NSValue(CGSize)> *> *)
     // Content size a preferred-size context published before its invalidation is applied (see
     // invalidationContextForPreferredLayoutAttributes:). Cleared by the next prepareLayout.
     CGSize _pstStagedContentSize;
@@ -403,6 +407,25 @@ static char kPSTCachedItemRectsKey;
         context.invalidatedSupplementaryIndexPaths.count > 0 || context.invalidatedDecorationIndexPaths.count > 0;
     _preserveGeometryForContext = !_contextRequiresMetrics && !namesItems &&
         (!_needsPrepareLayout || _preserveGeometryForContext) && _data != nil;
+    // Only a context that merely names paths keeps the laid-out sizes. A pending preferred-size report means
+    // unmeasured items must be re-derived from the updated estimate, as UIKit does.
+    if (namesItems && !_contextRequiresMetrics && _pstEarliestChangedPath == nil) {
+        // Keep the sizes this layout already has; the rows are re-derived from them.
+        NSMutableArray *stored = [NSMutableArray arrayWithCapacity:_data.sections.count];
+        for (PSTGridLayoutSection *section in _data.sections) {
+            NSMutableArray *sizes = [NSMutableArray arrayWithCapacity:(NSUInteger)section.itemsCount];
+            for (NSInteger i = 0; i < section.itemsCount; i++) {
+                CGSize size;
+                if (section.packed) size = [section packedItemFrameAtIndex:i].size;
+                else if (section.fixedItemSize) size = section.itemSize;
+                else size = [[section.items objectAtIndex:(NSUInteger)i] itemFrame].size;
+                [sizes addObject:[NSValue valueWithCGSize:size]];
+            }
+            [stored addObject:sizes];
+        }
+        _pstStoredSectionSizes = stored;
+        _pstReuseStoredSizes = YES;
+    }
     if (metrics) {
         _preparedLayoutIsReusable = NO;
         [_pstStableMeasuredFrames removeAllObjects];
@@ -472,6 +495,7 @@ static char kPSTCachedItemRectsKey;
     _data.rowAlignmentOptions = _rowAlignmentsOptionsDictionary;
     [self fetchItemsInfo];
     [self recordPreparedGeometry];
+    [self pstClearStoredSizes];   // applies to this rebuild only
 }
 
 // Dynamic delegate geometry (per-item sizes, per-section insets/spacings and
@@ -771,6 +795,11 @@ static char kPSTCachedItemRectsKey;
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Private
 
+- (void)pstClearStoredSizes {
+    _pstReuseStoredSizes = NO;
+    _pstStoredSectionSizes = nil;
+}
+
 - (void)fetchItemsInfo {
     // Freeze the mean of reported sizes for this rebuild (see pstSizeForSelfSizing...).
     if (_pstMeasuredSizeCount) _pstProposalAtLayout = CGSizeMake(_pstMeasuredSizeSum.width / (CGFloat)_pstMeasuredSizeCount, _pstMeasuredSizeSum.height / (CGFloat)_pstMeasuredSizeCount);
@@ -838,6 +867,15 @@ static char kPSTCachedItemRectsKey;
 
         NSInteger numberOfItems = [self.collectionView numberOfItemsInSection:section];
 
+        if (_pstReuseStoredSizes && (NSUInteger)section < _pstStoredSectionSizes.count) {
+            NSArray *stored = [_pstStoredSectionSizes objectAtIndex:(NSUInteger)section];
+            if ((NSInteger)stored.count == numberOfItems) {
+                CGSize *sizes = [layoutSection preparePackedItems:numberOfItems];
+                for (NSInteger item = 0; item < numberOfItems; item++)
+                    sizes[item] = [[stored objectAtIndex:(NSUInteger)item] CGSizeValue];
+                continue;
+            }
+        }
         // self-sizing: every item carries the size its cell reported (or the estimate)
         if ([self pstUsesSelfSizing]) {
             // Packed storage: sizes live in one flat buffer instead of an item object per item.

@@ -1,5 +1,25 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Attribute-only invalidation no longer re-queries the delegate (round 179)
+
+A full gate sweep (23 collection gates) found one regression: `run-flow-context-flags-test.sh --named-items`.
+It had been introduced back in round 162, when named contexts were made to force a row rebuild, and the strict
+mode had not been re-run since. Native, for a context that merely names item paths with neither flow flag set,
+recomputes attributes **without asking the size delegate again**; PST was re-querying all sizes and changing
+frames and content height.
+
+Fix: a named context that requests no metrics now rebuilds rows from the sizes already laid out
+(`_pstReuseStoredSizes` plus a per-section snapshot taken before the rebuild), and the snapshot is discarded
+after that one rebuild so later rebuilds query normally. The exception is a pending preferred-size report:
+there the item estimate really has changed, and unmeasured items must be re-derived from it - which is why the
+narrowing condition checks `_pstEarliestChangedPath == nil`. That distinction is exactly the difference between
+the two probes: the flag case keeps 40/320 and the preferred-size case settles to 60/1200.
+
+Verified after the change: `--named-items`, preferred-context staging, base context execution, attribute cache,
+delegate sizing, automatic size, the 14-scenario golden, layouts (31/32, 0 of 210 frames, fitted-item parity
+32/32), and a strict armv7 `-Werror=unguarded-availability` compile. The full 23-gate sweep is green apart from
+this one, which now passes.
+
 ## `automaticSize` is a Swift-overlay declaration, not an ObjC runtime symbol (round 178)
 
 Checked whether `UICollectionViewFlowLayout.automaticSize` (iOS 10) is missing on the backported routes.
