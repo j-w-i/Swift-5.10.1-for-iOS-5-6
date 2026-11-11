@@ -712,11 +712,12 @@ setting a selected background puts it between the two. PST used to add an empty 
 background view to every cell, so each cell had two subviews and one more view to resize
 and attach. It no longer does. `backgroundView` is nil by default, as natively, and the
 resize fast path now handles the content view plus whichever backgrounds exist. The probe's
-output differs from native only in one place: native's output for the default and
-set-background rows omits the content view in its listing because the probe lists subviews
-before `layoutIfNeeded` populates the native cell lazily; PST lists it immediately. After
-the background views are set the structure matches (background, selected background,
-content, all frames equal and resizing together) and a resize moves all three.
+only remaining difference from native is timing, not structure: native creates its content
+view lazily, on the first access to `cell.contentView` (a fresh native cell reports zero
+subviews until then), where PST creates it in `initWithFrame:`. Once `contentView` has been
+touched the structure matches (background, selected background, content, all frames equal
+and resizing together, and a resize moves all three). An earlier sentence here blamed
+`layoutIfNeeded`; that was a guess and was wrong.
 
 **Compatibility change:** code that read `cell.backgroundView` on a fresh PST cell and
 expected a view will now get nil, exactly as on UIKit; assigning one still works. The
