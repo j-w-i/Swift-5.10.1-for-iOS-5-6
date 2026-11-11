@@ -2029,3 +2029,29 @@ and footers and content size match. No code change was needed. The whole test is
 exact, 0 of 210 visible cell frames differing** across eight shapes; the one inexact step is the known
 first-step content width of the horizontal narrow-item shape. Footers with content views, decoration
 views and right-to-left remain untested.
+
+### The Apple route does not yet match iOS 27's stepped self-sizing geometry (measured on the iPod touch 5)
+
+Everything above about stepped geometry concerns PST. The Apple route (iOS 6-9) has its own self-sizing
+scheduler in `UICCollectionViewDisplay.m`, and it was never compared with iOS 27. The same stepped trace
+(60 items, estimate 200x40, four viewport/step configurations, six scroll positions) was built as a
+persistent app with the hooks installed and run on the **iPod touch 5 (iOS 6.1.3)**, then compared with the
+iOS 27 simulator:
+
+| Viewport / step | Rectangles differing per step | Visible set |
+| --- | --- | --- |
+| 120 / 300 | 0, 56, 56, 56, 56, 56 | differs |
+| 60 / 150 | 0, 58, 58, 58, 58, 58 | differs |
+| 240 / 600 | 0, 53, 53, 53, 53, 53 | differs |
+| 120 / 100 | 0, 0, 0, 49, 0, 0 | matches |
+
+**884 of 1,440 item rectangles differ (61.4%)**; the first layout always matches. Content height is off by
+up to 552 points. The fitting counts differ too (for example 15 against 8 calls in one step). This is the
+profile PST had before its scheduler was replaced (63.6%), so the same two causes apply: the hook fits every
+visible cell in one batch instead of UIKit's nearest-first half-batches, and it applies one global mean as
+the proposal rather than a per-section, per-row breakpoint.
+
+So the two routes currently differ from each other: PST matches 8 of 10 stepped fixtures, the Apple route
+about 1 of 4. The scheduling half is portable to the hook as is. The proposal half needs the row a changed
+item sits in, which the hook cannot read from Apple's layout directly; it would have to be inferred from
+item frames (a new row starts when the cross-axis origin does not increase). Not started.
