@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## The +196 outlier is a whole-section mean; but scoping it to runs is worse overall (round 202)
+
+Localised the round-197 outlier geometrically, without changing code. At step 3 of the three-section scenario,
+native's section 1 stays at the estimate (40) while PST's section 1 takes a uniform 54 - i.e. **one report's
+size was applied to that whole section** by the per-section mean. Native does not do that.
+
+Tried the natural correction: keep the per-section mean for *learned breakpoints* only (a changed item's run),
+and fall back to the plain estimate for sections with no learned breakpoint - which is the round-130
+"previous row" shape with a per-section mean.
+
+Result: the outlier disappeared, and the deltas for that scenario became -64, -38, -9, +14 - but the suite got
+**worse overall, 4/32 steps exact against 15/32** for the committed variant. So:
+
+| Variant | steps exact | scenario-0 deltas (initial..step3) |
+| --- | ---: | --- |
+| A: per-section mean as proposal fallback (committed, round 195) | 15/32 | -37, -12, 0, +196 |
+| B: per-section mean only inside learned runs | 4/32 | -64, -38, -9, +14 |
+
+Neither is right, and the fact that A wins early while B wins late is strong evidence that the estimate depends
+on **what has been laid out so far** - i.e. exactly the valid-range state - rather than on a static rule about
+which items are measured. That is consistent with everything else this session found about native's laziness,
+and it means the estimate cannot be finished by tuning this expression.
+
+Reverted; baseline verified (golden PASS, layouts 31/32, fitted-item parity 32/32). Committed variant A remains.
+
 ## Paired baseline-vs-current run: reload variance is measurement noise (round 201)
 
 Settled the round-200 reload question the only way that works: built the **round-175 baseline** from a git
