@@ -51,6 +51,9 @@
 // Make data to re-evaluate dataSources.
 - (void)invalidate;
 
+// Requery geometry already updated by the layout without discarding counts or preparation.
+- (void)invalidateLayoutAttributes;
+
 // Access cached item data
 - (NSInteger)numberOfItemsBeforeSection:(NSInteger)section;
 

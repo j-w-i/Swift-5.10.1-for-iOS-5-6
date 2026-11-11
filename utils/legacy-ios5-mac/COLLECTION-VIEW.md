@@ -1,5 +1,15 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Geometry-only collection data invalidation primitive (round 147)
+
+Added an internal `invalidateLayoutAttributes` operation distinct from the existing full invalidation.
+It discards the valid attribute rect and reads the layout's updated content size, while preserving item
+counts and layout-prepared state. A counter-based test verifies unchanged count queries/preparation,
+exactly one new attribute query and generation increment on the next validation of the same rect, updated
+content/frame size, and no repeat query on a second validation. It passes simulator execution and armv7
+syntax checks. This primitive assumes the layout has already updated its geometry; it does not implement
+incremental geometry, consume a public context, or alter existing runtime paths yet.
+
 ## Context factory dispatch (round 146)
 
 The base layout now provides `+invalidationContextClass` and the preferred-attributes context factory; flow

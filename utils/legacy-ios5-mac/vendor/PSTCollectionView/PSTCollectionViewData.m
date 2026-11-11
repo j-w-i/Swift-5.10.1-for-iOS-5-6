@@ -89,6 +89,11 @@
     _validLayoutRect = CGRectNull;  // don't set CGRectZero in case of _contentSize=CGSizeZero
 }
 
+- (void)invalidateLayoutAttributes {
+    _validLayoutRect = CGRectNull;
+    _contentSize = [self.layout collectionViewContentSize];
+}
+
 - (CGRect)collectionViewContentRect {
     return (CGRect){.size=_contentSize};
 }
