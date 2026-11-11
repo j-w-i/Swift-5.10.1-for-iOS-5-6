@@ -1,5 +1,30 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Cache fix confirmed; the residual is the estimate model (round 194)
+
+Redid the round-164 cache fix now that the lazy layout exists (preparation-time fitting + clearing the data
+cache's content-size validity on display-path named contexts, and not publishing the staged estimate while
+displaying).
+
+Result: the view's content size is **no longer stale**. It now tracks the layout (1910, 1985, 1966, 2022 across
+the four steps) instead of being pinned at the first build's 1770. So the round-193 diagnosis was right and the
+fix is the right one.
+
+It is now **too large** against native (1854, 1854, 1835, 1846) - the residual is roughly +56 to +176, and the
+pattern is systematic rather than noisy. That is exactly what an estimate-model difference looks like: PST
+applies one global running mean to every unmeasured item, while the layouts scenario's cells report sizes by
+`(item*7 + section*3) % 5`, so the per-section means differ from the global mean; native estimates each section
+from its own measured rows.
+
+With the cache fixed, the next change is therefore narrow and testable: make the unmeasured-item proposal
+**per section** (mean of that section's measured items) instead of global. Single-section fixtures cannot
+change, since one section's mean *is* the global mean, so the existing stepped-geometry suites are a safety net
+for that change.
+
+Gate status with the experimental build (before revert): visible frames still exact (0 of 210) but 1/32 steps
+exact and fitted-item parity 11/32 - the content error dominates and some fits still differ. Reverted to keep
+the suite green; baseline re-verified.
+
 ## Decisive probe: the layout exports measured content; the view keeps the first value (round 193)
 
 Instrumented the two remaining points - the item sizes written into the packed buffers and the content size
