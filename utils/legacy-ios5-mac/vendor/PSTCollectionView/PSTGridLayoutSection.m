@@ -505,6 +505,8 @@
 
         if (_packed) {
             [self pstComputePackedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize];
+            // A full build materialises every row; record it so on-demand materialisation is a no-op.
+            _packedLaidOutRows = self.indexOfImcompleteRow + 1;
         } else if (![self pstComputeFixedRowsWithDimension:dimension spacing:spacing sectionSize:&sectionSize]) {
             do {
                 BOOL finishCycle = itemIndex >= self.itemsCount;

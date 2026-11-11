@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Lazy (valid-range) layout wired and green (round 188)
+
+The wiring attempt from round 187 is now working. The cause of that failure was **not** the attribute paths: it
+was that `computeLayout` never recorded how many rows it had materialised, so a fully built (variable-size)
+section reported zero and the on-demand materialiser re-laid its rows *starting from the section's end*,
+displacing every row origin. With `_packedLaidOutRows` recorded by the full builder, on-demand materialisation
+becomes a no-op for fully built sections and only extends genuinely lazy ones.
+
+The earlier contract bug was also real and is fixed: the materialiser must receive the **margin-reduced**
+dimension, the same one the section breaks rows against.
+
+Live behaviour now: `updateItemsLayout` builds uniform packed sections through row 0 only, and both
+`layoutAttributesForElementsInRect:` and `layoutAttributesForItemAtIndexPath:` materialise the rows they touch
+before reading row geometry. Section frames and extent are exact by construction, so content size and the
+golden geometry are unchanged.
+
+**All 25 collection gates pass** with this in place: golden 14/14, row centering, stability, proposal, display
+scroll/supplementary order, hidden items, cell resize, attribute snapshot, bounds, preferred predicate,
+invalidation context, attribute cache, context execution, named-items flow flags, packed updates 240, windowed
+24, lazy section 414, lazy extension 48, preferred-context staging, automatic size, batch insert 9/9, prefetch,
+sizing updates, delegate sizing. Layouts reports 31/32 with 0 of 210 visible frame differences and fitted-item
+parity 32/32.
+
+The lifecycle gate still fails: fitting still happens after layout via the scheduler. The point of this work is
+that it no longer has to - PST now lays out a window rather than every row, which is the precondition for
+fitting during preparation without over-fitting.
+
 ## Wiring attempt: reverted (round 187)
 
 Connected the lazy primitives to the live path: `updateItemsLayout` built uniform packed sections through row 0

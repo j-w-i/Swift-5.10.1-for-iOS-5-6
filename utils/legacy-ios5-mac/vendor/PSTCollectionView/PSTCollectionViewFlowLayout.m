@@ -219,6 +219,8 @@ static char kPSTCachedItemRectsKey;
                 if (itemRects) [rectCache setObject:itemRects forKey:@(sectionIndex)];
             }
 
+            [self pstMaterialiseRowsInSection:(NSInteger)sectionIndex throughRow:-1];
+
             // Rows are laid out in increasing order along the scroll axis, so only a window of
             // them can intersect the rect. Binary search for the first row whose far edge
             // reaches the rect and stop at the first row that starts beyond it, instead of
@@ -300,6 +302,9 @@ static char kPSTCachedItemRectsKey;
     CGRect itemFrame = CGRectZero;
 
     NSInteger pstRowNumber = 0;
+    if (section.packed && indexPath.row >= 0 && indexPath.row < section.itemsCount) {
+        [self pstMaterialiseRowsInSection:indexPath.section throughRow:[section packedRowOfItem:indexPath.row]];
+    }
     if (section.packed) {
         if (indexPath.row >= 0 && indexPath.row < section.itemsCount) {
             pstRowNumber = [section packedRowOfItem:indexPath.row];
@@ -795,6 +800,20 @@ static char kPSTCachedItemRectsKey;
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Private
 
+// Materialise the rows a query needs; uniform packed sections are built lazily.
+- (void)pstMaterialiseRowsInSection:(NSInteger)sectionIndex throughRow:(NSInteger)row {
+    if (sectionIndex < 0 || sectionIndex >= (NSInteger)_data.sections.count) return;
+    PSTGridLayoutSection *section = [_data.sections objectAtIndex:(NSUInteger)sectionIndex];
+    if (!section.packed) return;
+    if (row < 0) row = (NSInteger)[section rowCount] - 1;
+    if (row < [section materialisedRowCount]) return;
+    const CGFloat spacing = _data.horizontal ? section.horizontalInterstice : section.verticalInterstice;
+    const UIEdgeInsets margins = section.sectionMargins;
+    const CGFloat dimension = _data.dimension - (_data.horizontal ? margins.top + margins.bottom
+                                                                    : margins.left + margins.right);
+    [_data materialisePackedRowsInSection:sectionIndex throughRow:row dimension:dimension spacing:spacing];
+}
+
 - (void)pstClearStoredSizes {
     _pstReuseStoredSizes = NO;
     _pstStoredSectionSizes = nil;
@@ -925,7 +944,11 @@ static char kPSTCachedItemRectsKey;
 - (void)updateItemsLayout {
     CGSize contentSize = CGSizeZero;
     for (PSTGridLayoutSection *section in _data.sections) {
-        [section computeLayout];
+        if (section.packed && [section packedSizesAreUniform] && section.layoutInfo.dimension > 0) {
+            [section computeLayoutMaterialisingRowsThrough:0];
+        } else {
+            [section computeLayout];
+        }
 
         // update section offset to make frame absolute (section only calculates relative)
         CGRect sectionFrame = section.frame;
