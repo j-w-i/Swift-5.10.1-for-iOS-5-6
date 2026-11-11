@@ -1,5 +1,27 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Wiring attempt: reverted (round 187)
+
+Connected the lazy primitives to the live path: `updateItemsLayout` built uniform packed sections through row 0
+only, and both attribute paths (`layoutAttributesForElementsInRect:` and
+`layoutAttributesForItemAtIndexPath:`) materialised the rows they touch on demand, using the same reduced
+dimension the section breaks rows against.
+
+Result: the golden geometry still passed (frames and content size are exact by construction), but the layouts
+differential collapsed to **0/32 with 242 visible cell frame differences and fitted-item parity in only 8 of 32
+steps**. One contract bug was found and fixed on the way - the on-demand materialiser must be given the
+*margin-reduced* dimension, not the raw section dimension - and it did not change the outcome, so the remaining
+cause is somewhere else in the interaction (most likely the row-window binary search in
+`layoutAttributesForElementsInRect:` reading rows that a query has not materialised yet, since it searches by
+row index rather than by materialised range).
+
+Reverted; baseline re-verified immediately after (golden PASS, layouts 31/32, 0 of 210 frames, fitted-item
+parity 32/32). The lazy primitives from rounds 185-186 remain, tested, and unused by the live path.
+
+Next time this is attempted the row-window search must be taught about materialisation explicitly, and the
+attempt should be developed against `run-selfsizing-layouts-test.sh --fit-parity` from the first edit rather
+than after the fact.
+
 ## On-demand row materialisation (round 186)
 
 Added the other half of the lazy layout: a section records how many rows it has materialised and the running
