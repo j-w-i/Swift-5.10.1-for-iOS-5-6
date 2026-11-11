@@ -99,6 +99,7 @@ static CGRect PSTPixelOrigin(CGRect r, CGFloat scale) {
     BOOL _preparedLayoutIsReusable;
     BOOL _needsPrepareLayout;
     BOOL _preserveGeometryForContext;
+    BOOL _contextRequiresMetrics;
     char filler[200]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 
@@ -389,7 +390,10 @@ static char kPSTCachedItemRectsKey;
     PSTCollectionViewFlowLayoutInvalidationContext *flowContext = (id)context;
     BOOL full = context.invalidateEverything || context.invalidateDataSourceCounts;
     BOOL metrics = full || (flowContext.invalidateFlowLayoutAttributes && flowContext.invalidateFlowLayoutDelegateMetrics);
-    _preserveGeometryForContext = !metrics && _data != nil;
+    // Contexts coalesce until preparation; a weaker later context cannot cancel a pending metrics rebuild.
+    _contextRequiresMetrics = _contextRequiresMetrics || metrics;
+    _preserveGeometryForContext = !_contextRequiresMetrics &&
+        (!_needsPrepareLayout || _preserveGeometryForContext) && _data != nil;
     if (metrics) {
         _preparedLayoutIsReusable = NO;
         [_pstStableMeasuredFrames removeAllObjects];
@@ -430,6 +434,7 @@ static char kPSTCachedItemRectsKey;
 
 - (void)prepareLayout {
     _needsPrepareLayout = NO;
+    _contextRequiresMetrics = NO;
     if (_preserveGeometryForContext) {
         _preserveGeometryForContext = NO;
         _visibleBounds = self.collectionView.bounds;

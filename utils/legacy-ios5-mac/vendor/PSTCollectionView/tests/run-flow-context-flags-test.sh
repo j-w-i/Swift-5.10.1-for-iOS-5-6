@@ -9,4 +9,4 @@ for m in native pst; do E=(); [[ $m == pst ]] && E=(-DTEST_PST=1 "${OBJECTS[@]}"
  xcrun simctl spawn "$SIM" "$OUT/$m" > "$OUT/$m.txt"
 done
 diff -u "$OUT/native.txt" "$OUT/pst.txt"
-echo "PASS: four flow-context flag combinations match native geometry and delegate-query behavior; artifacts: $OUT"
+echo "PASS: four flag combinations and both coalescing orders match native geometry and delegate-query behavior; artifacts: $OUT"

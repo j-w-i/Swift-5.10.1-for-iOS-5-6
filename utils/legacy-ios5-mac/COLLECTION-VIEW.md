@@ -1,5 +1,14 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Coalesced flow invalidation (round 151)
+
+Extended the flag differential test to queue a metrics-rebuild context and a geometry-preserving context in
+both orders before preparation. It exposed a bug introduced in round 150: a later preserving context erased
+the pending metrics rebuild (height stayed 40 instead of native's 60). Pending metric requirements now
+accumulate until preparation, and a weak context cannot cancel them or a pre-existing dirty layout.
+Both orders and the four single-context cases match native; base context execution also remains passing.
+This fixes coalescing in the new context path only, not the older self-sizing lifecycle or incremental rows.
+
 ## Flow-context delegate metrics (round 150)
 
 Flow now rejects non-flow contexts and distinguishes contexts requesting a delegate-metrics rebuild from
