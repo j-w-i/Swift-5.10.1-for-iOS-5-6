@@ -735,3 +735,34 @@ multi-section scroll 0.81. On this benchmark and device no workload is more than
 3 percent slower than native and most are faster. That is CPU time for synchronous
 layout and view updates on one iPhone 6; it is not frame delivery, not iOS 6 hardware, and
 the benchmark's cells are plain views, so it does not show parity for heavy cell content.
+
+### Round 88: a heavier-cell benchmark contradicts the earlier item-size result
+
+`tests/heavy-cell-bench` runs native UIKit and PST in one binary on the iPhone 6 (iOS
+10.3.3), alternating order, 15 pairs per row, with N plain `UILabel`s in each cell
+(`README.md` there has the build flags). Median PST/native, three runs of the 3-label
+build agreed within 0.04:
+
+| Labels per cell | Item-size change (x3) | Scroll (x10) |
+| ---: | ---: | ---: |
+| 0 | **2.14** | 1.01 |
+| 1 | **1.93** | 0.92 |
+| 3 | **1.70** | 0.86 |
+| 6 | **1.46** | 0.78 |
+
+Other rows at 3 labels: reload and cold, 1.25-1.27 (min 0.89, max 1.63 across runs).
+
+So scroll is at or below native and gets relatively better with heavier cells, but
+**item-size changes are 1.5-2.1x native's time**. This does not agree with the round 87
+figure of 1.03: that harness changes the item size once, from 100x50 to 80x40, so it
+exercises a different mix; this one resizes every visible cell three times. The earlier
+"no workload more than about 3 percent slower than native" statement is therefore true
+only for that harness's workloads and must not be read as covering repeated resizes or
+heavier cells. Cold/reload with labelled cells is also about 25% slower here (single
+scenario, wide spread).
+
+A profile of the 3-label item-size loop (simulator): `UIView setFrame:` 43%, of which
+`resizeSubviewsWithOldSize:` (autoresizing the labels inside the content view) is 23% and
+`UILabel setFrame:` 16%; `computeLayout` 32%. The labels' own autoresizing is UIKit work
+that native presumably avoids or defers when it resizes a cell; why native's cost per
+cell is so much lower was not established.
