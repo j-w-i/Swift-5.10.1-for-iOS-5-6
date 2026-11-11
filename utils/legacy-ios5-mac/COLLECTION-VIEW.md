@@ -1,5 +1,27 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Apple route re-verified on real UIKit 6.1.3 hardware (round 180)
+
+Re-ran `Tests/run-apple-route-ios6-device.sh` on the attached **iPod touch 5 (iOS 6.1.3)** - the only test
+that exercises the collection hooks against real UIKit 6/7, since the newer simulator cannot stand in. Last run
+was before the fit-order work and the invalidation-context additions.
+
+**RESULT: PASS (0 failures)**, 20 checks, including:
+
+* iOS 10 prefetching installed; no prefetch while stationary; announces items ahead of a forward scroll;
+  does not repeat for the same position.
+* `willDisplayCell` once per visible cell (10 callbacks, 10 visible) and `willDisplaySupplementaryView` once for
+  the header.
+* `visibleSupplementaryViewsOfKind:` and `indexPathsForVisibleSupplementaryElementsOfKind:` return the header.
+* Self-sizing drives content height 16020.0 (expected 16020.0) and a self-sized cell takes its preferred
+  height {{0,20},{320,80}}.
+* Layout attribute transform round-trips.
+* Animated insert and delete complete, apply the new item counts, deliver `willDisplay` for cells arriving in
+  the animation (10 -> 15), and show no `willDisplay` regressions after the delete.
+
+So objective item (2)'s device claim for the Apple route holds at HEAD, alongside the PST route measurements
+from round 175 and the paired PST/native ratios from round 165.
+
 ## Attribute-only invalidation no longer re-queries the delegate (round 179)
 
 A full gate sweep (23 collection gates) found one regression: `run-flow-context-flags-test.sh --named-items`.
