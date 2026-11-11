@@ -492,3 +492,28 @@ path, which are the two largest UIKit costs in PST's scroll and reload profiles
 (about 7% and 16% of main-thread time in scroll). Matching this changes observable
 state (the cell stays in `subviews`, hidden) and `didEndDisplaying` timing relative to
 the queue, so it is not a pure optimisation. Not implemented yet.
+
+### Round 78 (continued): iOS 6.1 UIKit disassembly confirms the retired-cell model
+
+Reference only, from the iOS 6.1 i386 UIKit already analysed under
+`ios61-ref/ghidra` (`collection-reuse-output` and a new read-only extraction of
+`_updateVisibleCellsNow:` and `_addControlledSubview:atZIndex:` into
+`collection-update-output`). No code was copied; this records behaviour.
+
+- The shared enqueue helper behind `_reuseCell:` and `_reuseSupplementaryView:`
+  adds the view to the reuse queue and then sends `_setHiddenForReuse:YES`. It
+  sends `removeFromSuperview` only on the other branch, when the queue is at or
+  above a capacity computed from the main screen's area divided by the view's own
+  area (half the screen area over the view area, rounded up, plus one) or when the
+  queue already contains the view. So a retired view normally stays in the hierarchy.
+- `_addControlledSubview:atZIndex:` sends `_setHiddenForReuse:NO` to the incoming
+  view before inserting it, which un-hides a recycled view.
+- `prepareForReuse` is sent at dequeue, not at enqueue (already matched by PST).
+
+This agrees with the iOS 27 observation (retired cells stay as hidden subviews until
+reused), so the behaviour is stable across the oracle and the reference. It is the
+reason native recycles a cell only on a later pass, and it is the missing piece for
+PST's extra `prepareForReuse` calls and for skipping `removeFromSuperview` /
+`insertSubview:` while scrolling. Implementing it needs a private `hiddenForReuse`
+state that survives `hidden` assignments by the layout (apply of attributes must not
+un-hide), the capacity cap, and `subviews`-visible changes to be accepted.
