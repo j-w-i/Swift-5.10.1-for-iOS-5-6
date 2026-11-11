@@ -1,5 +1,23 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Why the Swift lowering test cannot run here: no iOS 5 stdlib (round 232)
+
+Kept going on the round-231 gap and identified it exactly. The toolchain ships twelve binaries and **no standard
+library at all** (`usr/lib` has no `swift` directory), so:
+
+* with the test's own resource dir, or the SDK's, `swiftc -typecheck ... -target armv7-apple-ios5.0` reports
+  `error: unable to load standard library for target 'armv7-apple-ios5.0'`;
+* with `-parse-stdlib` (which the lit test uses to avoid exactly this), the frontend instead fails on its own
+  node set (`unable to find node: identifier("DebugDescription")`) because the devkit was built against a specific
+  stdlib source revision that is not present here;
+* `lit`, `FileCheck` and the devkit's resource directory are all absent, so the in-tree test
+  `test/ClangImporter/legacy_ios5_collection.swift` cannot be driven as written either.
+
+So the Swift declaration-lowering requirement is **specified, implemented and covered by an in-tree test**, but
+verifying it needs a build of this toolchain checkout (which produces the matching stdlib and the lit harness) -
+`LEGACY-IOS5-BUILD.md` in the repository root is that path. Nothing about the backport is missing; the verification
+environment is.
+
 ## Swift declaration lowering: toolchain and test located, still not runnable (round 231)
 
 The earlier claim that no Swift toolchain exists was **wrong**. Two are installed:
