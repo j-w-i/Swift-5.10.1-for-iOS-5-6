@@ -1397,3 +1397,28 @@ The rebuilt armv7 engine also passes the persistent **21-check modern API gate o
 with both animated callbacks finished=YES and unchanged SpringBoard PIDs. No simulator-only fix was
 accepted without an iOS 5 build/run. No iPhone 6 run or hardware speedup claim is made this round. The
 broad goal, stepped geometry, public duplicates and production importer integration remain incomplete.
+
+### Round 108: controlled native cache model, not a guessed shipping fix
+
+Extended the shared trace with viewport/step/final-offset inputs and optional layout-query/invalidation
+logging. The matrix covers viewports 60/120/240, steps 100/150/300/600, and a reverse visit to y=450
+from y=1200, in addition to the original trace. The logging subclass is checked against the ordinary
+native flow layout: all six snapshots' frames, fitting sequence, requests, visibility, content size
+and offset must be identical before its events can support the model. This check passes in all six
+configurations; instrumentation was not assumed transparent merely because it logged plausible events.
+
+For this one-column 60-item fixture, the native events support a precise model: retain actual reports;
+after a coalesced preferred invalidation batch, assign the running mean to unmeasured items starting
+one item before the earliest invalidated index, preserving earlier estimates. A replay of the native
+public events reproduces **all 2160 item heights across 75 invalidation batches** in the six traces.
+At y=300, native batches [9,10] then [8] then [11], so proposal ranges start at 8, 7 and 10. This explains
+why item 7 retains mean 39.4286 while later unmeasured items use 41, instead of PST's one global mean.
+
+This is a model of observed cache responses, not a complete layout algorithm: replay consumes native
+invalidation batches and fitting reports; it does not predict those batches, multi-column/section
+behaviour, pixel-rounded origins, or arbitrary preferred-size functions. PST's measurement batching
+also differs. No runtime policy is patched from this limited fixture. The matrix mode now checks the
+native model reproducibly, and the initial-only fitting budget remains separately scoped. The next
+implementation needs row-aware/multi-column evidence and a bounded measurement schedule, rather
+than simply replacing PST's global mean with an untested per-item heuristic. Shipping code and device
+state are unchanged this round; no hardware performance or completed parity claim is made.
