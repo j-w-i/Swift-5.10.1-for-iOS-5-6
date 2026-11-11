@@ -2243,7 +2243,10 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             CGRect startRect = startAttrs.frame;
             CGRect finalRect = finalAttrs.frame;
 
-            if (CGRectIntersectsRect(self.visibleBoundRects, startRect) || CGRectIntersectsRect(self.visibleBoundRects, finalRect)) {
+            // A nil startAttrs reads as CGRectZero, which touches the visible rect whenever the view
+            // is scrolled to the origin; an insert far outside the viewport would then be given a
+            // cell, a willDisplay and a data source request that UIKit does not make.
+            if ((startAttrs && CGRectIntersectsRect(self.visibleBoundRects, startRect)) || CGRectIntersectsRect(self.visibleBoundRects, finalRect)) {
 
                 if (!startAttrs) {
                     startAttrs = [finalAttrs copy];

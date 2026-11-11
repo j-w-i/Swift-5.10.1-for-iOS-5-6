@@ -1742,3 +1742,27 @@ override change, cold at 5,000 items went from 1.50x to 0.92x and reload from 1.
 This is a single synthetic workload with a trivial cell and no delegate; with a size delegate the
 earlier ratios (cold 0.99-1.26, reload 0.95-1.14) have not been re-measured since these two changes and
 should be before any claim of parity there. The native figure is one run. The iPhone 6 was not run.
+
+### Fixed: inserts outside the viewport were given cells, willDisplay and data source requests
+
+`updateWithItems:` decides whether an inserted item is on screen by testing its start and final
+frames against the visible rect. When the layout has no initial attributes for the item, `startAttrs`
+is nil and its frame reads as `CGRectZero`, which touches the visible rect whenever the view is
+scrolled to the origin. So an insert far below the viewport was treated as visible: PST created a cell,
+sent `willDisplay` and called the data source for it, none of which UIKit does. A profile of the batch
+scenario showed 5 such requests per insert of 5 items, and the visible cells themselves were also
+re-created.
+
+The start rect now counts only when start attributes exist. New test `tests/batch-insert-visibility.m`
+runs nine insert scenarios on iOS 27 UIKit and PST (far below at the top, far below while scrolled,
+inside, just past the viewport edge, above while scrolled, a delete plus insert mix, into an empty
+collection, and at the end of a short list) and compares requests, `willDisplay`, visible items and
+content height. **Before: 6 of 9 match (three scenarios issued 2-5 extra requests and display events).
+After: 9 of 9.** The golden geometry, centering, stability, mutation, delegate, first-layout, display
+order, supplementary display, prefetch lifecycle, empty-collection, hidden-item, cell-resize and
+attribute-snapshot gates all still pass.
+
+The harness's `batch-insert-delete-200` ratio (PST/native, simulator, 3 runs) moved from 1.10-1.17 to
+1.04-1.09. It is still the only scenario above 1.0; the remaining cost is per-update bookkeeping in
+`updateWithItems:` (index-path key objects and dictionaries for 9 visible cells). This is a simulator
+number; no hardware measurement of batch updates yet.
