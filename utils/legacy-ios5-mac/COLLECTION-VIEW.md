@@ -1454,3 +1454,32 @@ compact row-range cache with changed-report means, followed by full measurement-
 checks before promotion. Variable widths, incomplete rows, multiple sections, horizontal flow, native
 batch prediction and pixel rounding remain outside these fixed-width models. No production runtime,
 physical-device state or published artifact changes this round.
+
+### Round 110: compact row-range prototype tested, not promoted
+
+Implemented the response model in an **isolated generated source copy**, leaving the original flow
+layout unchanged. The new test generator adds contiguous C-struct breakpoints stored in NSMutableData,
+binary-search lookup, previous-row suffix updates, coalescing/truncation on backward updates, and
+clearing on explicit invalidation/reload. It offers changed-only and all-report variants for A/B
+comparison. No per-unmeasured-item dictionary is added. The trace exposes the prototype's record count;
+the one-column run stores 2 through 6 records, and a reverse visit to y=450 truncates 6 records to 4.
+These are record counts, not claimed allocations or latency measurements.
+
+The changed-only prototype preserves initial 8/8 fitting calls and exact initial geometry. At y=300,
+visible paths improve from PST [7,8,9,10] to [8,9,10,11], matching native; cumulative requests improve
+10->9 (native 8), stage fitting calls 15->12 (native 8), and content height 2556->2518.33 (native 2434).
+But later content errors are mixed and visible paths still differ: at y=1200 the prototype shows
+[23,24,25] versus native [25,26]. Fifty-three item frames still differ. The native invalidation
+response model alone is not sufficient when PST supplies different measurement batches.
+
+The isolated candidate passes the initial-only fitting budget, four-case stability gate,
+visible/offscreen mutation gate and sizing-delegate geometry gate. Grid A/B traces still differ in
+51–60 rectangles in some changed-only stages. For width60/viewport120, changed-only differences by
+stage are 56/53/51/51/51/51, while all-report differences remain 57 throughout. Other grids remain
+ambiguous or mixed. These are not passing parity results and no timing/FPS claim is made.
+
+**Promotion rejected:** retain the reproducible prototype under tests, not in the production runtime.
+The next work is measurement scheduling/coalescing and full rectangle verification, plus the still
+uncovered variable-width/section/horizontal cases. The generator copies only simulator sizing sources
+and tests, not sibling device runtime projects, and installs nothing. No device, shipping selection,
+compiler or published toolchain is changed this round.
