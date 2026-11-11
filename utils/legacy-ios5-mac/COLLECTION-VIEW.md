@@ -1867,3 +1867,40 @@ item count (2.7 ms at 200, 29 ms at 1,000) and PST's does not.
 Limits, unchanged: one device; the Apple route is stock iOS 6.1.3 plus the backport hooks; a trivial
 cell; animations disabled for batches; 5,000-item rows have 5 pairs and no batch row; and the iPhone 6
 (iOS 10.3.3, real Apple implementation of the API) was not run because it is not attached.
+
+### Stepped self-sizing geometry: the exact-geometry scheduler costs 2.6x on cold layout, so it is not promoted
+
+The isolated prototype generator was brought up to date with the current sources (positional proposal
+lookup in the sparse seed loop) and given a fresh-candidate order option. It was scored on all ten
+stepped fixtures (6 one-column, 4 grid) as the number of item rectangles that differ from iOS 27 UIKit,
+over six scroll positions each (3,600 rectangles):
+
+| Source | Fixtures exact | Rectangles differing |
+| --- | ---: | ---: |
+| Shipping | 0 of 10 | 2,290 (63.6%) |
+| Prototype: half-batch, previous-row proposal, nearest-origin order | 8 of 10 | 417 (11.6%) |
+| Same, index order | 6 of 10 | worse on grids |
+| Same, column-major order | 7 of 10 | worse |
+
+The prototype passes every other gate: geometry golden, centering, stability, first-layout proposal,
+display order, supplementary display, hidden items, cell resize, attribute snapshots, mutation,
+delegate sizing and the nine batch-insert scenarios. Two fixtures remain inexact: a one-column case at
+viewport 60 where fitting order differs for one item, and a three-column grid at viewport 120 where an
+item at the end of a row is fitted twice before the row settles.
+
+**But it is slower, and the reason is structural.** Self-sizing no-delegate, 5,000 items, simulator:
+cold 3.4 ms (shipping) against 9.1 ms (prototype), reload 5.4 against 9-10 ms; scroll is unchanged.
+Matching UIKit's geometry needs UIKit's *batching*: several smaller invalidation batches per layout pass
+instead of the shipping code's one or two. Each batch makes PST rebuild every item object and every row
+(5,000 of each), and the profile shows 68% of time in `computeLayout` and 80% in the measurement loop,
+against about 49% for shipping. UIKit evidently invalidates incrementally, so its extra batches are
+cheap.
+
+So the two goals conflict until the layout rebuild is incremental: geometry parity needs more batches,
+and speed parity needs each batch to cost O(rows after the change), not O(items). The shipping code
+currently trades geometry parity for speed, and that trade is now measured: on hardware it is at or
+within 7% of the Apple route, while 64% of rectangles differ from iOS 27 after scrolling.
+
+**Next step if this is pursued:** make `PSTGridLayoutSection` recompute only from the first changed row
+(`recomputeFromIndex:` exists but is a stub that invalidates everything), then promote the prototype. The
+generator and trace gates are in place to prove the result.

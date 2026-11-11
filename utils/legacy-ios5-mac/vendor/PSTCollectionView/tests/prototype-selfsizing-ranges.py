@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate an isolated compact-range prototype. NEVER edits the vendor originals.
 Usage: prototype-selfsizing-ranges.py PST_SOURCE NEW_COPY [changed-only|all-reports]
-       [none|one|two|half] [frame|estimate] [top|center] [raw|pixel]
+       [none|one|two|half] [frame|estimate] [top|center] [raw|pixel] [distance|index|column]
 This is a cache-response experiment, not a shipping implementation or parity claim.
 The copy supports the simulator sizing probes; sibling backport projects/device packaging
 are deliberately not copied or installed.
@@ -16,8 +16,9 @@ schedule = sys.argv[4] if len(sys.argv) > 4 else 'none'
 stability = sys.argv[5] if len(sys.argv) > 5 else 'frame'
 row_alignment = sys.argv[6] if len(sys.argv) > 6 else 'top'
 rounding = sys.argv[7] if len(sys.argv) > 7 else 'raw'
+order = sys.argv[8] if len(sys.argv) > 8 else 'distance'
 if (mode not in ('changed-only', 'all-reports') or schedule not in ('none', 'one', 'two', 'half')
-        or stability not in ('frame', 'estimate') or row_alignment not in ('top', 'center') or rounding not in ('raw', 'pixel')
+        or stability not in ('frame', 'estimate') or row_alignment not in ('top', 'center') or rounding not in ('raw', 'pixel') or order not in ('distance', 'index', 'column')
         or out.exists() or out.is_relative_to(src)):
     raise SystemExit('Use a new output outside the vendor source and documented experiment modes')
 out.mkdir()
@@ -41,6 +42,7 @@ static BOOL PSTPrototypeRunBefore(PSTPrototypeProposalRun r, NSInteger section, 
 }
 @interface PSTCollectionViewFlowLayout (PrototypeRanges)
 - (CGSize)pstPrototypeProposalAtIndexPath:(NSIndexPath *)path;
+- (CGSize)pstPrototypeProposalAtSection:(NSInteger)section item:(NSInteger)item;
 - (void)pstPrototypeApplyPending;
 - (NSUInteger)pstPrototypeRangeCount;
 @end
@@ -58,9 +60,11 @@ replace("/// The layout's current size for an item: what its cell last reported,
 - (NSUInteger)pstPrototypeRangeCount { return _pstPrototypeRunCount; }
 
 - (CGSize)pstPrototypeProposalAtIndexPath:(NSIndexPath *)path {
+    return [self pstPrototypeProposalAtSection:path.section item:path.item];
+}
+- (CGSize)pstPrototypeProposalAtSection:(NSInteger)section item:(NSInteger)item {
     if (!_pstPrototypeRunCount) return _pstProposalAtLayout;
     const PSTPrototypeProposalRun *runs = _pstPrototypeRuns.bytes;
-    NSInteger section = path.section, item = path.item;
     NSUInteger lo = 0, hi = _pstPrototypeRunCount;
     while (lo < hi) {
         NSUInteger mid = lo + (hi - lo) / 2;
@@ -104,8 +108,11 @@ replace("/// The layout's current size for an item: what its cell last reported,
 }
 
 /// The layout's current size for an item: what its cell last reported, else the estimate.''')
-replace('    if (_pstMeasuredSizeCount) return _pstProposalAtLayout;',
-        '    if (_pstMeasuredSizeCount) return [self pstPrototypeProposalAtIndexPath:indexPath];')
+# The per-item proposal now lives in the seed loop; pstUnmeasuredProposal stays the frozen mean for first layout.
+replace('    return [self pstUnmeasuredProposal];\n}\n\n/// The size proposed',
+        '    if (_pstMeasuredSizeCount) return [self pstPrototypeProposalAtIndexPath:indexPath];\n    return [self pstUnmeasuredProposal];\n}\n\n/// The size proposed')
+replace('                for (NSInteger item = 0; item < numberOfItems; item++)\n                    [layoutSection addItem].itemFrame = (CGRect){.size=proposal};',
+        '                const BOOL prototypeRanges = _pstMeasuredSizeCount && _pstPrototypeRunCount;\n                for (NSInteger item = 0; item < numberOfItems; item++)\n                    [layoutSection addItem].itemFrame = (CGRect){.size=prototypeRanges ? [self pstPrototypeProposalAtSection:(NSInteger)section item:item] : proposal};')
 replace('    [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];\n    return YES;', '''    [self pstAccumulateMeasuredSize:size replacing:wasMeasured ? &old : NULL];
     if (!_pstPrototypePending || [indexPath compare:_pstPrototypePending] == NSOrderedAscending)
         _pstPrototypePending = indexPath;
@@ -194,7 +201,23 @@ if schedule != 'none':
 
 '''
     limit = {'one': '1', 'two': 'MIN((NSUInteger)2,fresh.count)', 'half': 'MAX((NSUInteger)1,fresh.count/2)'}[schedule]
-    text = text[:start] + body.replace('PROTOTYPE_LIMIT', limit) + text[end:]
+    body = body.replace('PROTOTYPE_LIMIT', limit)
+    if order == 'column':
+        a = body.index('[fresh sortUsingComparator:')
+        b = body.index('[confirm sortUsingComparator:')
+        body = body[:a] + '''[fresh sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
+                CGPoint x = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:a]).layoutAttributes.frame.origin;
+                CGPoint y = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:b]).layoutAttributes.frame.origin;
+                if (x.x != y.x) return x.x < y.x ? NSOrderedAscending : NSOrderedDescending;
+                if (x.y != y.y) return x.y < y.y ? NSOrderedAscending : NSOrderedDescending;
+                return [a.indexPath compare:b.indexPath];
+            }];
+            ''' + body[b:]
+    if order == 'index':
+        a = body.index('[fresh sortUsingComparator:')
+        b = body.index('[confirm sortUsingComparator:')
+        body = body[:a] + '[fresh sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) { return [a.indexPath compare:b.indexPath]; }];\n            ' + body[b:]
+    text = text[:start] + body + text[end:]
     p.write_text(text)
 if row_alignment == 'center':
     p = out / 'PSTGridLayoutRow.m'
