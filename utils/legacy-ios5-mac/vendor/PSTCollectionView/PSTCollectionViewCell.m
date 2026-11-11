@@ -51,6 +51,11 @@
     self.layoutAttributes = nil;
 }
 
+- (void)pstSetBoundsSize:(CGSize)size {
+    CGRect bounds = (CGRect){.origin = self.bounds.origin, .size = size};
+    self.bounds = bounds;
+}
+
 - (void)applyLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
     if (layoutAttributes != _layoutAttributes) {
         // A layout may mutate/reuse its attributes object after application.
@@ -62,7 +67,7 @@
         // freshly created cells (size/centre already match, everything else is a
         // default) and for every cell that stays visible across a scroll pass.
         if (!CGSizeEqualToSize(self.bounds.size, layoutAttributes.size)) {
-            self.bounds = (CGRect){.origin = self.bounds.origin, .size = layoutAttributes.size};
+            [self pstSetBoundsSize:layoutAttributes.size];
         }
         if (!CGPointEqualToPoint(self.center, layoutAttributes.center)) {
             self.center = layoutAttributes.center;
@@ -169,6 +174,30 @@
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 #pragma mark - Public
+
+/// UIKit autoresizes each subview on every bounds change, which dominates a size change for
+/// the cell's own background and content views. When the cell holds only those (plus the
+/// selected background) with the default masks, set their frames directly instead. Any extra
+/// subview an app added to the cell, or a changed mask, falls back to ordinary autoresizing.
+- (void)pstSetBoundsSize:(CGSize)size {
+    const UIViewAutoresizing kDefaultMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    NSUInteger expected = 2 + (_selectedBackgroundView ? 1 : 0);
+    BOOL stock = self.autoresizesSubviews && self.subviews.count == expected &&
+        _backgroundView.superview == self && _contentView.superview == self &&
+        _backgroundView.autoresizingMask == kDefaultMask && _contentView.autoresizingMask == kDefaultMask &&
+        (!_selectedBackgroundView || (_selectedBackgroundView.superview == self && _selectedBackgroundView.autoresizingMask == kDefaultMask)) &&
+        CGRectEqualToRect(_backgroundView.frame, self.bounds) && CGRectEqualToRect(_contentView.frame, self.bounds) &&
+        (!_selectedBackgroundView || CGRectEqualToRect(_selectedBackgroundView.frame, self.bounds));
+    CGRect bounds = (CGRect){.origin = self.bounds.origin, .size = size};
+    if (!stock) { self.bounds = bounds; return; }
+    self.autoresizesSubviews = NO;
+    self.bounds = bounds;
+    self.autoresizesSubviews = YES;
+    CGRect inner = (CGRect){.origin = bounds.origin, .size = size};
+    _backgroundView.frame = inner;
+    _contentView.frame = inner;
+    if (_selectedBackgroundView) _selectedBackgroundView.frame = inner;
+}
 
 - (void)prepareForReuse {
     self.layoutAttributes = nil;

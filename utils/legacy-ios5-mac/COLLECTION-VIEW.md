@@ -433,3 +433,27 @@ compiles for armv7, armv7s and arm64.
 touch 5 has not been connected, and no oracle exists for how iOS 6/7's own engine
 responds to these proposals. The rule is copied from PST, which was fitted to the iOS
 27 and iOS 10 native behaviour, so on iOS 6/7 it is a hypothesis.
+
+### Round 76: cell resize without per-subview autoresizing (iPhone 6, arm64)
+
+Fresh same-device baseline, median PST/native paired ratio over three launches
+(higher is slower): cold 1.08, idle 0.76, scroll 1.34, reload 1.75, batch 0.73,
+item-size 1.88, bounds 0.99, multi-section cold 1.10, multi-section scroll 0.99.
+
+A profile of the item-size loop (simulator) put 50% of main-thread time in
+`applyLayoutAttributes:`, almost all in UIKit autoresizing the cell's background and
+content views on every bounds change. A microbenchmark on the phone: 38.6 us per
+cell with autoresizing against 13.4 us setting the child frames directly (0.35x).
+`PSTCollectionViewCell` now sets those frames itself, with autoresizing suspended, when
+the cell is stock (only its background, content and optional selected-background views,
+default masks, frames equal to bounds). Any extra subview, a changed mask or a changed
+frame takes the ordinary path. `tests/run-cell-resize-test.sh` checks that the cell,
+content view and two app-added subviews (one on the cell, one in the content view) end
+up where native UIKit puts them; it passes on the simulator and the iPod touch 3.
+
+Six alternating-order pairs, new/old PST median: **item-size 0.729 (6/6 pairs faster)**,
+cold 0.993, idle 1.007, scroll 0.998, reload 0.994, batch 0.996, bounds 1.005,
+multi-section cold 1.015, multi-section scroll 0.997. So only the size-change workload
+moved, from about 1.88x to about 1.37x native. That is an estimate from multiplying
+medians measured in separate runs, not a measured ratio. Reload (1.75x), scroll (1.34x)
+and cold layout (1.08x) are unchanged and still slower than native.
