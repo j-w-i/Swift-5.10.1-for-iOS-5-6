@@ -163,7 +163,7 @@
                 }
             }
             item.itemFrame = itemFrame; // might call nil; don't care
-            [rects addObject:[NSValue valueWithCGRect:itemFrame]];
+            if (rects) [rects addObject:[NSValue valueWithCGRect:itemFrame]]; // layoutRow passes no array: skip the boxing
             frame = CGRectUnion(frame, itemFrame);
         }
         _rowSize = frame.size;

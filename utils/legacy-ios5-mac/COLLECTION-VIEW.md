@@ -619,3 +619,19 @@ This corrects the previous section, which said PST animations did not run for re
 unknown and that the retirement change was not the cause: the cause was this return-type
 bug, present since `b6a45a5c`. Existing gates pass; the earlier "snapping" evidence was
 the same bug.
+
+### Round 83: stop boxing item rects when nobody asked for them
+
+Profile of the item-size loop with the current code (simulator): `layoutRow` is 16% of
+main-thread time, and `PSTGridLayoutRow layoutRowAndGenerateRectArray:` is called with
+`NO` by `layoutRow`, which passes no array, yet it still created an `NSValue` for every
+item and sent `addObject:` to nil. It now skips that when no array is requested.
+
+iPhone 6, six alternating pairs against the previous build, new/old PST median:
+**item-size 0.889 (6/6 faster), batch 0.946 (6/6), bounds 0.952 (6/6), cold 0.966 (6/6),
+multi-section cold 0.965 (6/6)**, idle 0.971, reload 0.993, scroll 0.998,
+multi-section scroll 0.990. All gates pass (14 geometry scenarios, self-sizing,
+automatic-size, display events); iOS 5 compile has no errors.
+
+The profile now has `applyLayoutAttributes:` (mostly `UIView setFrame:`) at about 44% for
+a size change and `PSTGridLayoutSection computeLayout` at about 21%.
