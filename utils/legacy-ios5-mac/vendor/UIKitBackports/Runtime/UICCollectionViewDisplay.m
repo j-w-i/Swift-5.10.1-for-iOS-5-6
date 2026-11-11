@@ -137,7 +137,7 @@ void UICInstallCollectionViewDisplay(void) {
 // class are unaffected). After each layout pass the visible cells are asked for their preferred size; when any
 // differs the layout is invalidated and laid out again, bounded to a few rounds.
 
-static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey;
+static char UICEstimateKey, UICMeasuredKey, UICStableKey, UICRoundsKey, UICRunsKey, UICChangedKey, UICPreservingKey;
 // Sum/count of cell-reported sizes and the mean frozen for the current rebuild (see UICSizeForItem).
 static char UICReportedKey, UICProposalKey;
 static char UICSizeWrapperKey;
@@ -146,7 +146,11 @@ static IMP UICOriginalInvalidateFlowLayout;
 
 static void UICInvalidateFlowLayout(id self, SEL _cmd) {
     // Keep measured estimates but permit another preferred-size query after invalidation.
-    [(NSMutableSet *)objc_getAssociatedObject(self, &UICStableKey) removeAllObjects];
+    if (!objc_getAssociatedObject(self, &UICPreservingKey)) {
+        [(NSMutableDictionary *)objc_getAssociatedObject(self, &UICStableKey) removeAllObjects];
+        objc_setAssociatedObject(self, &UICRunsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(self, &UICChangedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     ((void (*)(id, SEL))UICOriginalInvalidateFlowLayout)(self, _cmd);
 }
 
@@ -156,7 +160,54 @@ static BOOL UICLayoutIsSelfSizing(id layout) {
     CGSize size = [value CGSizeValue];
     return size.width > 0 && size.height > 0;
 }
+typedef struct { NSInteger section, item; CGSize size; } UICRun;
+
+// iOS 6-9's flow layout asks the size hook for every item on every rebuild, so what it reads must be cheap. The
+// lookups it used to make per call (six associated objects and an NSIndexPath hash) are taken once per rebuild into
+// this snapshot, and measured sizes are searched in a sorted C array instead of a dictionary.
+// Diagnostic counters, read by tests through UICSelfSizingCounters(); one increment each, no effect on layout.
+static unsigned long UICCountRebuilds, UICCountSizeCalls, UICCountSnapshotItems;
+void UICSelfSizingCounters(unsigned long out[3]) { out[0] = UICCountRebuilds; out[1] = UICCountSizeCalls; out[2] = UICCountSnapshotItems; }
+void UICResetSelfSizingCounters(void) { UICCountRebuilds = UICCountSizeCalls = UICCountSnapshotItems = 0; }
+typedef struct { NSInteger section, item; CGSize size; } UICMeasuredEntry;
+static struct {
+    __unsafe_unretained id layout;   // the layout the snapshot belongs to (main thread only)
+    BOOL valid, selfSizing, hasProposal;
+    CGSize estimate, proposal;
+    const UICRun *runs; NSUInteger runCount;
+    const UICMeasuredEntry *measured; NSUInteger measuredCount;
+    NSData *runsKeepAlive, *measuredKeepAlive;
+} UICSnapshot;
+static int UICCompareMeasured(const void *a, const void *b) {
+    const UICMeasuredEntry *x = a, *y = b;
+    if (x->section != y->section) return x->section < y->section ? -1 : 1;
+    return x->item < y->item ? -1 : x->item > y->item;
+}
+static CGSize UICSizeForItemSlow(id layout, NSIndexPath *indexPath);
+static CGSize UICSizeForItemFast(NSIndexPath *indexPath) {
+    UICCountSizeCalls++;
+    const NSInteger section = indexPath.section, item = indexPath.item;
+    if (UICSnapshot.measuredCount) {
+        NSUInteger lo = 0, hi = UICSnapshot.measuredCount;
+        const UICMeasuredEntry *m = UICSnapshot.measured;
+        while (lo < hi) { NSUInteger mid = lo + (hi - lo) / 2;
+            if (m[mid].section < section || (m[mid].section == section && m[mid].item < item)) lo = mid + 1; else hi = mid; }
+        if (lo < UICSnapshot.measuredCount && m[lo].section == section && m[lo].item == item) return m[lo].size;
+    }
+    if (!UICSnapshot.hasProposal) return UICSnapshot.estimate;
+    if (!UICSnapshot.runCount) return UICSnapshot.proposal;
+    const UICRun *r = UICSnapshot.runs; NSUInteger lo = 0, hi = UICSnapshot.runCount;
+    while (lo < hi) { NSUInteger mid = lo + (hi - lo) / 2;
+        if (r[mid].section < section || (r[mid].section == section && r[mid].item <= item)) lo = mid + 1; else hi = mid; }
+    if (lo && r[lo - 1].section == section) return r[lo - 1].size;
+    return UICSnapshot.estimate;
+}
 static CGSize UICSizeForItem(id layout, NSIndexPath *indexPath) {
+    // Inside a rebuild the snapshot is current; anywhere else read the live state.
+    if (UICSnapshot.valid && UICSnapshot.layout == layout) return UICSizeForItemFast(indexPath);
+    return UICSizeForItemSlow(layout, indexPath);
+}
+static CGSize UICSizeForItemSlow(id layout, NSIndexPath *indexPath) {
     NSValue *measured = [objc_getAssociatedObject(layout, &UICMeasuredKey) objectForKey:indexPath];
     if (measured) return [measured CGSizeValue];
     CGSize estimate = [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
@@ -165,8 +216,16 @@ static CGSize UICSizeForItem(id layout, NSIndexPath *indexPath) {
     if (CGSizeEqualToSize(estimate, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX))) estimate = CGSizeMake(50, 50);
     // Once cells have reported sizes UIKit proposes their mean for unmeasured items; the
     // estimate only seeds the first layout. The mean is frozen per rebuild by UICFreezeProposal.
+    NSData *runs = objc_getAssociatedObject(layout, &UICRunsKey);
     NSValue *proposal = objc_getAssociatedObject(layout, &UICProposalKey);
-    return proposal ? [proposal CGSizeValue] : estimate;
+    if (!proposal) return estimate;
+    if (!runs.length) return [proposal CGSizeValue];
+    // A learned size applies only inside the section it was learned in, from its first item onward.
+    const UICRun *r = runs.bytes; NSUInteger n = runs.length / sizeof(UICRun), lo = 0, hi = n;
+    while (lo < hi) { NSUInteger mid = lo + (hi - lo) / 2;
+        if (r[mid].section < indexPath.section || (r[mid].section == indexPath.section && r[mid].item <= indexPath.item)) lo = mid + 1; else hi = mid; }
+    if (lo && r[lo - 1].section == indexPath.section) return r[lo - 1].size;
+    return estimate;
 }
 /// Records a cell-reported size (replacing an earlier one for the same path) in the running sum.
 static void UICAccumulateReported(id layout, CGSize size, const CGSize *old) {
@@ -191,11 +250,14 @@ static void UICResetMeasured(id layout) {
     objc_setAssociatedObject(layout, &UICStableKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(layout, &UICReportedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(layout, &UICProposalKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(layout, &UICRunsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(layout, &UICChangedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 /// The delegate hook: UIKit's flow layout calls this once the delegate responds to it.
 static CGSize UICDelegateSizeForItem(id self, SEL _cmd, UICollectionView *collectionView,
                                      UICollectionViewFlowLayout *layout, NSIndexPath *indexPath) {
+    if (UICSnapshot.valid && UICSnapshot.layout == layout) return UICSnapshot.selfSizing ? UICSizeForItemFast(indexPath) : [layout itemSize];
     if (UICLayoutIsSelfSizing(layout)) return UICSizeForItem(layout, indexPath);
     return [layout itemSize];
 }
@@ -289,6 +351,29 @@ static void UICEstimatedItemSizeSetter(id self, SEL _cmd, CGSize size) {
     [(UICollectionViewLayout *)self invalidateLayout];
 }
 
+/// Captures what the size hook reads, once for the rebuild that is about to run.
+static void UICTakeSnapshot(id layout) {
+    UICSnapshot.layout = layout; UICSnapshot.selfSizing = UICLayoutIsSelfSizing(layout);
+    CGSize estimate = [objc_getAssociatedObject(layout, &UICEstimateKey) CGSizeValue];
+    if (CGSizeEqualToSize(estimate, CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX))) estimate = CGSizeMake(50, 50);
+    UICSnapshot.estimate = estimate;
+    NSValue *proposal = objc_getAssociatedObject(layout, &UICProposalKey);
+    UICSnapshot.hasProposal = proposal != nil; UICSnapshot.proposal = proposal ? [proposal CGSizeValue] : CGSizeZero;
+    NSData *runs = objc_getAssociatedObject(layout, &UICRunsKey);
+    UICSnapshot.runsKeepAlive = runs; UICSnapshot.runs = runs.bytes; UICSnapshot.runCount = runs.length / sizeof(UICRun);
+    NSDictionary *measured = objc_getAssociatedObject(layout, &UICMeasuredKey);
+    NSMutableData *packed = [NSMutableData dataWithLength:measured.count * sizeof(UICMeasuredEntry)];
+    UICMeasuredEntry *out = packed.mutableBytes; NSUInteger n = 0;
+    for (NSIndexPath *path in measured) { out[n].section = path.section; out[n].item = path.item; out[n].size = [[measured objectForKey:path] CGSizeValue]; n++; }
+    qsort(out, n, sizeof(UICMeasuredEntry), UICCompareMeasured);
+    UICSnapshot.measuredKeepAlive = packed; UICSnapshot.measured = out; UICSnapshot.measuredCount = n;
+    UICSnapshot.valid = YES; UICCountRebuilds++; UICCountSnapshotItems += n;
+}
+static void UICDropSnapshot(void) {
+    UICSnapshot.valid = NO; UICSnapshot.layout = nil; UICSnapshot.runsKeepAlive = nil; UICSnapshot.measuredKeepAlive = nil;
+    UICSnapshot.runs = NULL; UICSnapshot.measured = NULL; UICSnapshot.runCount = UICSnapshot.measuredCount = 0;
+}
+
 static void UICPrepareLayout(id self, SEL _cmd) {
     UICollectionView *collectionView = nil;
     BOOL internal = NO;
@@ -300,7 +385,12 @@ static void UICPrepareLayout(id self, SEL _cmd) {
             internal = ((id (*)(id, SEL))UICOriginalDelegateGetter)(collectionView, sel_registerName("delegate")) == nil;
         }
     }
-    if (!internal) { ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd); return; }
+    const BOOL selfSizing = UICLayoutIsSelfSizing(self);
+    if (selfSizing) UICTakeSnapshot(self);
+    if (!internal) {
+        @try { ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd); } @finally { if (selfSizing) UICDropSnapshot(); }
+        return;
+    }
     UICollectionView *previousView = UICPreparingView;
     UICPreparingView = collectionView; UICPreparingDepth++;
     @try {
@@ -309,6 +399,7 @@ static void UICPrepareLayout(id self, SEL _cmd) {
         ((void (*)(id, SEL))UICOriginalPrepareLayout)(self, _cmd);
     } @finally {
         UICPreparingDepth--; UICPreparingView = previousView;
+        if (selfSizing) UICDropSnapshot();
     }
 }
 
@@ -324,45 +415,130 @@ static UICollectionViewLayoutAttributes *UICPreferredAttributes(UICollectionReus
     return preferred;
 }
 
-/// After a layout pass: ask every visible cell whether it wants a different size than the layout gave it.
-static BOOL UICMeasureVisibleCells(UICollectionView *collectionView) {
+// Rows are not exposed by Apple's layout, so a row is recovered from item frames. Items in a row are centred on a
+// shared line, so each one reaches past the near edge of the row built so far, while an item of the next row starts
+// at or beyond the far edge of the previous one. Works for both scroll directions.
+static NSInteger UICFirstItemOfRow(UICollectionViewFlowLayout *layout, NSInteger section, NSInteger item) {
+    const BOOL horizontal = layout.scrollDirection == UICollectionViewScrollDirectionHorizontal;
+    CGFloat nearEdge = CGFLOAT_MAX; NSInteger first = item;
+    for (NSInteger k = item; k >= 0; k--) {
+        CGRect f = [layout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:k inSection:section]].frame;
+        CGFloat lo = horizontal ? CGRectGetMinX(f) : CGRectGetMinY(f), hi = horizontal ? CGRectGetMaxX(f) : CGRectGetMaxY(f);
+        if (k != item && hi <= nearEdge) break;     // this item belongs to the previous row
+        nearEdge = MIN(nearEdge, lo); first = k;
+    }
+    return first;
+}
+
+/// Once per preferred-size batch: apply the current mean from one row before the earliest changed item onward.
+static void UICApplyProposalForChangedItems(id layout) {
+    NSIndexPath *path = objc_getAssociatedObject(layout, &UICChangedKey);
+    objc_setAssociatedObject(layout, &UICChangedKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSArray *reported = objc_getAssociatedObject(layout, &UICReportedKey);
+    NSUInteger count = [[reported objectAtIndex:2] unsignedIntegerValue];
+    if (!path || !count) return;
+    NSInteger rowStart = UICFirstItemOfRow(layout, path.section, path.item);
+    NSInteger first = rowStart > 0 ? UICFirstItemOfRow(layout, path.section, rowStart - 1) : 0;
+    NSMutableData *runs = objc_getAssociatedObject(layout, &UICRunsKey);
+    if (!runs) { runs = [NSMutableData data]; objc_setAssociatedObject(layout, &UICRunsKey, runs, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    NSValue *frozen = objc_getAssociatedObject(layout, &UICProposalKey);
+    if (!runs.length && frozen) { UICRun seed = {0, 0, [frozen CGSizeValue]}; [runs appendBytes:&seed length:sizeof seed]; }
+    CGSize mean = CGSizeMake([[reported objectAtIndex:0] doubleValue] / (double)count, [[reported objectAtIndex:1] doubleValue] / (double)count);
+    const UICRun *r = runs.bytes; NSUInteger n = runs.length / sizeof(UICRun), keep = 0;
+    while (keep < n && (r[keep].section < path.section || (r[keep].section == path.section && r[keep].item < first))) keep++;
+    BOOL coalesce = keep && CGSizeEqualToSize(r[keep - 1].size, mean);
+    [runs setLength:keep * sizeof(UICRun)];
+    if (!coalesce) { UICRun next = {path.section, first, mean}; [runs appendBytes:&next length:sizeof next]; }
+}
+
+enum { UICAttemptsPerCell = 6, UICMaxPasses = 256 };
+
+/// Fits visible cells the way UIKit does: nearest the visible origin first, about half of the not-yet-fitted cells per
+/// step, relaying out between steps, confirmations last. A first report equal to its proposal leaves the item an
+/// estimate (only a differing report is kept and feeds the mean). Bounded per cell and per transaction.
+static void UICMeasureSelfSizing(UICollectionView *collectionView, SEL layoutSubviews) {
     id layout = [collectionView collectionViewLayout];
-    if (![layout isKindOfClass:[UICollectionViewFlowLayout class]] || !UICLayoutIsSelfSizing(layout)) return NO;
+    if (![layout isKindOfClass:[UICollectionViewFlowLayout class]] || !UICLayoutIsSelfSizing(layout)) return;
     NSMutableDictionary *measured = objc_getAssociatedObject(layout, &UICMeasuredKey);
     if (!measured) { measured = [NSMutableDictionary dictionary]; objc_setAssociatedObject(layout, &UICMeasuredKey, measured, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
-    NSMutableSet *stable = objc_getAssociatedObject(layout, &UICStableKey);
-    if (!stable) { stable = [NSMutableSet set]; objc_setAssociatedObject(layout, &UICStableKey, stable, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
-    BOOL changed = NO;
-    for (UICollectionViewCell *cell in [[collectionView visibleCells] copy]) {
-        NSIndexPath *indexPath = [collectionView indexPathForCell:cell];
-        if (!indexPath || [stable containsObject:indexPath]) continue;
-        UICollectionViewLayoutAttributes *proposal = [layout layoutAttributesForItemAtIndexPath:indexPath];
-        if (!proposal) continue;
-        UICollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:[proposal copy]];
-        CGSize size = preferred ? preferred.size : proposal.size;
-        CGSize current = UICSizeForItem(layout, indexPath);
-        NSValue *previous = [measured objectForKey:indexPath];
-        CGSize previousSize = previous ? [previous CGSizeValue] : CGSizeZero;
-        [measured setObject:[NSValue valueWithCGSize:size] forKey:indexPath];
-        // Delegate seeds are stored in `measured` too, but only cell reports feed the mean.
-        UICAccumulateReported(layout, size, previous ? &previousSize : NULL);
-        if (CGSizeEqualToSize(size, current)) [stable addObject:indexPath];
-        else { [stable removeObject:indexPath]; changed = YES; }
+    NSMutableDictionary *stable = objc_getAssociatedObject(layout, &UICStableKey);   // path -> NSValue(CGRect) confirmed frame
+    if (!stable) { stable = [NSMutableDictionary dictionary]; objc_setAssociatedObject(layout, &UICStableKey, stable, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+    NSMutableDictionary *attempts = [NSMutableDictionary dictionary];
+    for (NSUInteger pass = 0; pass < UICMaxPasses; pass++) {
+        NSMutableArray *fresh = [NSMutableArray array], *confirm = [NSMutableArray array];
+        NSMutableDictionary *frames = [NSMutableDictionary dictionary];
+        for (UICollectionViewCell *cell in [[collectionView visibleCells] copy]) {
+            NSIndexPath *path = [collectionView indexPathForCell:cell];
+            if (!path) continue;
+            CGRect proposed = [layout layoutAttributesForItemAtIndexPath:path].frame;
+            NSValue *confirmed = [stable objectForKey:path];
+            // An item that never differed from its estimate has no retained size to compare: its confirmation stands.
+            if (confirmed && (![measured objectForKey:path] || CGRectEqualToRect([confirmed CGRectValue], proposed))) continue;
+            NSUInteger tries = [[attempts objectForKey:path] unsignedIntegerValue];
+            if (tries >= UICAttemptsPerCell) continue;
+            [frames setObject:[NSValue valueWithCGRect:proposed] forKey:path];
+            [(tries ? confirm : fresh) addObject:@[path, cell]];
+        }
+        if (!fresh.count && !confirm.count) break;
+        NSArray *chosen;
+        if (fresh.count) {
+            const CGPoint origin = collectionView.bounds.origin;
+            [fresh sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
+                CGPoint x = [[frames objectForKey:a[0]] CGRectValue].origin, y = [[frames objectForKey:b[0]] CGRectValue].origin;
+                CGFloat da = (x.x - origin.x) * (x.x - origin.x) + (x.y - origin.y) * (x.y - origin.y);
+                CGFloat db = (y.x - origin.x) * (y.x - origin.x) + (y.y - origin.y) * (y.y - origin.y);
+                if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
+                return [a[0] compare:b[0]];
+            }];
+            chosen = [fresh subarrayWithRange:NSMakeRange(0, MAX((NSUInteger)1, fresh.count / 2))];
+        } else {
+            [confirm sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) { return [a[0] compare:b[0]]; }];
+            chosen = confirm;
+        }
+        BOOL changed = NO;
+        for (NSArray *entry in chosen) {
+            NSIndexPath *path = entry[0]; UICollectionViewCell *cell = entry[1];
+            [attempts setObject:@([[attempts objectForKey:path] unsignedIntegerValue] + 1) forKey:path];
+            UICollectionViewLayoutAttributes *proposal = [layout layoutAttributesForItemAtIndexPath:path];
+            if (!proposal) continue;
+            UICollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:[proposal copy]];
+            CGSize size = preferred ? preferred.size : proposal.size, current = UICSizeForItem(layout, path);
+            NSValue *previous = [measured objectForKey:path];
+            CGSize previousSize = previous ? [previous CGSizeValue] : CGSizeZero;
+            BOOL seededByDelegate = [[collectionView delegate] respondsToSelector:@selector(collectionView:layout:sizeForItemAtIndexPath:)];
+            if (CGSizeEqualToSize(size, current)) {
+                [stable setObject:[frames objectForKey:path] forKey:path];
+                if (previous || seededByDelegate) {                       // equal-to-proposal first reports stay estimates
+                    [measured setObject:[NSValue valueWithCGSize:size] forKey:path];
+                    UICAccumulateReported(layout, size, previous ? &previousSize : NULL);
+                }
+            } else {
+                [measured setObject:[NSValue valueWithCGSize:size] forKey:path];
+                UICAccumulateReported(layout, size, previous ? &previousSize : NULL);
+                [stable removeObjectForKey:path];
+                NSIndexPath *earliest = objc_getAssociatedObject(layout, &UICChangedKey);
+                if (!earliest || [path compare:earliest] == NSOrderedAscending)
+                    objc_setAssociatedObject(layout, &UICChangedKey, path, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                changed = YES;
+            }
+        }
+        if (changed) {
+            UICApplyProposalForChangedItems(layout);
+            UICFreezeProposal(layout);
+            objc_setAssociatedObject(layout, &UICPreservingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [layout invalidateLayout];
+            objc_setAssociatedObject(layout, &UICPreservingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            ((void (*)(id, SEL))UICOriginalLayoutSubviews)(collectionView, layoutSubviews);
+        }
     }
-    return changed;
 }
 
 static void UICLayoutSubviews(UICollectionView *self, SEL _cmd) {
     ((void (*)(id, SEL))UICOriginalLayoutSubviews)(self, _cmd);
-    NSNumber *running = objc_getAssociatedObject(self, &UICRoundsKey);
-    if (running) return;                                   // already inside the measuring loop
+    if (objc_getAssociatedObject(self, &UICRoundsKey)) return;   // already inside the measuring transaction
     objc_setAssociatedObject(self, &UICRoundsKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    for (int round = 0; round < 6 && UICMeasureVisibleCells(self); round++) {
-        UICFreezeProposal([self collectionViewLayout]);
-        [[self collectionViewLayout] invalidateLayout];
-        ((void (*)(id, SEL))UICOriginalLayoutSubviews)(self, _cmd);
-    }
-    objc_setAssociatedObject(self, &UICRoundsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    @try { UICMeasureSelfSizing(self, _cmd); }
+    @finally { objc_setAssociatedObject(self, &UICRoundsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
 }
 
 static void UICReloadData(UICollectionView *self, SEL _cmd) {

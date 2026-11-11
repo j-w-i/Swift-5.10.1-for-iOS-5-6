@@ -2055,3 +2055,43 @@ So the two routes currently differ from each other: PST matches 8 of 10 stepped 
 about 1 of 4. The scheduling half is portable to the hook as is. The proposal half needs the row a changed
 item sits in, which the hook cannot read from Apple's layout directly; it would have to be inferred from
 item frames (a new row starts when the cross-axis origin does not increase). Not started.
+
+### Apple route: UIKit-order self-sizing in the hook, and why it costs more on iOS 6-9 (iOS 8.1 binary examined)
+
+The hook's measuring pass now fits cells the way PST's does and the way iOS 27 does: nearest the visible
+origin first, about half of the not-yet-fitted cells per step, relayout between steps, confirmations last;
+unmeasured proposals are breakpoints scoped to the section they were learned in, applied from one row before
+the earliest changed item (rows are recovered from item frames, since Apple's layout does not expose them); a
+first report equal to its proposal stays an estimate. A per-rebuild snapshot replaces six associated-object
+reads and a dictionary lookup per size query with a sorted C array.
+
+**Geometry, iPod touch 5 (iOS 6.1.3) against iOS 27**, four stepped configurations, 1,440 rectangles: before
+61.4% differed (884); now 763 differ at the 1e-3 level, of which 478 are sub-third-point origin differences
+(the oracle runs at 3x, the device at 2x) and 285 are larger. Three of four configurations are exact within a
+pixel, with identical fitting sequences and visible sets. The 60-point-viewport configuration still differs
+by more than a point on 57 items per step. Not closed.
+
+**Cost, same device, Apple route (native + hooks), self-sizing, no delegate, cold layout:** 200 items
+19 -> 49 ms, 1,000 items 66 -> 170 ms, 5,000 items 307 -> 783 ms (a separate run measured 736 ms), about
+2.5x slower than the single-batch fit it replaced, which is exactly why the geometry was wrong. With a size
+delegate the change is 1.0-1.35x. PST on the same device is unaffected and is 0.06-0.22x of the Apple route
+here, and every gate passes (21-check API gate on both iPods, nil-delegate gate 10/10).
+
+**Where the time goes, measured on the device:** a 5,000-item cold layout runs 5 rebuilds of Apple's layout
+and the size hook is called 5,000 times in each (25,000 total) at about 29 microseconds per item per rebuild.
+The hook's own work is a binary search; the remainder is Apple's iOS 6 grid engine building an object per item
+and row on every rebuild. Matching UIKit's geometry needs UIKit's batches, so the cost is
+(number of batches) x (O(items) rebuild).
+
+**iOS 8.1 UIKit (Xcode 6.1.1 simulator SDK, saved under `ios81-ref`) shows why UIKit does not pay this.** Its
+flow layout has selectors iOS 6.1's lacks entirely: `_fetchItemsInfoForRect:`, `_updateItemsLayoutForRect:`,
+`computeLayoutInRect:forSection:invalidating:`, `rowsInRect:`, `_UIFlowLayoutItem isPositionEstimated`,
+`_UIFlowLayoutInfo didUpdateSizeForSection:withDelta:` and `_updateContentSizeScrollingDimensionWithDelta:`.
+iOS 6.1 has `_fetchItemsInfo` and `_updateItemsLayout` with no rect and no per-item estimated flag. So iOS 8
+lays out only the rows around the visible rect and adjusts the content size by a delta when an item's size
+changes, which makes each batch cheap; iOS 6-9's engine rebuilds everything. That machinery is part of the
+engine, not a hook point, so the hook cannot reproduce it on top of iOS 6's engine.
+
+**Options that would remove the trade-off:** replace Apple's flow layout engine on iOS 6-9 with PST's
+packed engine (the same layout, driven through the UICollectionView API), which already measures 0.06-0.22x of
+this cost on the same device; or accept a size threshold. Neither is done.
