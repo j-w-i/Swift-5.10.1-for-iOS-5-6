@@ -766,3 +766,37 @@ A profile of the 3-label item-size loop (simulator): `UIView setFrame:` 43%, of 
 `UILabel setFrame:` 16%; `computeLayout` 32%. The labels' own autoresizing is UIKit work
 that native presumably avoids or defers when it resizes a cell; why native's cost per
 cell is so much lower was not established.
+
+### Round 89: PST's cost grows with item count; native's does not
+
+`scaling-resize.m` / `scaling-all.m` (iPhone 6, iOS 10.3.3; plain cells, fixed 320x58 items,
+320x480 view; 40 timed iterations after warm-up) against the number of items. Microseconds:
+
+| Items | Resize, native | Resize, PST | Scroll step, native | Scroll step, PST | Reload, native | Reload, PST |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 8 | 544 | 436 | | | | |
+| 50 | 577 | 763 | | | | |
+| 200 | 624 | 1,769 | 242 | 178 | 854 | 614 |
+| 1,000 | 569 | 7,239 | 220 | 228 | 886 | 802 |
+| 5,000 | 615 | 34,112 | 235 | 739 | 894 | 1,387 |
+| 20,000 | | | 216 | 1,488 | 1,276 | 1,694 |
+
+Native's resize, scroll and reload are essentially flat in the item count. PST's resize grows
+linearly (about 7 us per item), and its scroll step stops being competitive somewhere past
+1,000 items (3.1x native at 5,000, 6.9x at 20,000). At 200 items, which is what the other
+benchmarks here use, the gap is small, which is why it was not visible: **the earlier
+"within about 3 percent of native" and "at or below native" statements do not hold for
+large collections.** Cold layout at 5,000 and 20,000 items took 33.5 ms and 118 ms in PST against
+about 2 ms native.
+
+Cause (from the profile and the code): `computeLayout` visits every item and builds a row
+object per row even for fixed-size sections, so a layout rebuild is O(items); and
+`layoutAttributesForElementsInRect:` walks every row of every section testing
+`CGRectIntersectsRect`, so a scroll step is O(rows). Native evidently does neither.
+
+Next candidates, in order of how contained they are: (1) in the attribute query, rows are
+ordered along the scroll axis, so find the first intersecting row by binary search and stop
+at the first row past the rect (keeps the structure, makes scroll O(visible)); (2) a
+closed-form fast path for fixed-size sections that does not build row objects (changes the
+structure that self-sizing, updates and the attribute query rely on, so it needs the
+14-scenario geometry gate and the self-sizing suites around it). Not started.
