@@ -1935,8 +1935,12 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     [cell applyLayoutAttributes:layoutAttributes];
 
     // reset selected/highlight state
-    [cell setHighlighted:[_indexPathsForHighlightedItems containsObject:indexPath]];
-    [cell setSelected:[_indexPathsForSelectedItems containsObject:indexPath]];
+    // UIKit does not call the setters when nothing changes; a fresh or reused
+    // cell is normally unselected and unhighlighted already.
+    BOOL wantHighlighted = _indexPathsForHighlightedItems.count && [_indexPathsForHighlightedItems containsObject:indexPath];
+    BOOL wantSelected = _indexPathsForSelectedItems.count && [_indexPathsForSelectedItems containsObject:indexPath];
+    if (cell.isHighlighted != wantHighlighted) [cell setHighlighted:wantHighlighted];
+    if (cell.isSelected != wantSelected) [cell setSelected:wantSelected];
 
     // voiceover support
     cell.isAccessibilityElement = YES;

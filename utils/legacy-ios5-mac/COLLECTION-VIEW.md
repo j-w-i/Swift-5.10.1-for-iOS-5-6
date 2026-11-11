@@ -265,3 +265,17 @@ cold 0.988, idle 0.955, scroll 0.984 (6/6), reload 1.013 (0/6), batch 1.018,
 item-size 1.005, bounds 1.001, multi-section cold 1.001, multi-section scroll 0.868 (6/6).
 Reload remains about 1% slower in every pair; batch is noisy (range 0.967-1.058).
 This is CPU time only, not frame delivery, and does not reach native parity.
+
+### Round 68: selection-state calls on reuse
+
+`tests/reuse-selected.m` (diagnostic, not a pass/fail gate) logs `prepareForReuse`,
+`setSelected:` and `setHighlighted:` on a cell subclass through select, scroll away
+and scroll back. Native UIKit calls the two setters once per `prepareForReuse` and
+not at all when a cell is created. PST used to call them again after every cell
+creation (8 setter pairs against native's 2 in the scroll phase). PST now sets them
+at creation only when the value changes; the per-reuse ratio matches native.
+Not fixed: PST prepares 4 reused cells where native prepares 2, which suggests
+native creates arriving cells before it retires departing ones. Observable through
+`prepareForReuse` counts. Profile of a reload loop (simulator, 200 items): about
+64% of main-thread time in `pstAddVisibleViewForAttributes:key:`, of which
+`addControlledSubview:` (UIKit `insertSubview:atIndex:`) is about 39%.
