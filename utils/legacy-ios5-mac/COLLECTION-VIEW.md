@@ -1,5 +1,40 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Retraction: round 209's packing diagnosis was built on a bad comparison (round 210)
+
+Round 209 concluded that the last failing value came from native packing one item per column where PST packed
+three. That conclusion is **withdrawn**.
+
+The rect arrays are compared positionally, and they cannot be: both engines report the same number of
+attributes per scenario (42/42, 32/32, 36/36), but the arrays are not in the same order or the same assignment.
+The evidence is in scenario 0, where the differential passes with content and every visible frame equal, yet the
+rect distributions differ structurally:
+
+| scenario | native shape (distinct x, distinct y) | PST shape |
+| --- | --- | --- |
+| 0 (passes) | (1, 16) | (1, 42) |
+| 2 (passes) | (2, 32) | (1, 32) |
+| 3 (passes) | (16, 2) | (42, 1) |
+| 4 (fails) | (30, 3) | (20, 3) |
+
+If the arrays were comparable, scenarios 0, 2 and 3 would fail too - 42 distinct y positions against 16 cannot
+describe the same layout. They pass because the gate compares what is actually comparable (content size,
+visible cell frames, supplementary frames, fitted sets) and those all agree.
+
+So the only solid fact about the last gap remains: **scenario 4 (horizontal, narrow) reports content width 773.09
+against native's 707.09 at the initial step, while every visible frame in that scenario matches**. Everything
+about per-column packing from round 209 was read off misaligned indices.
+
+### What the test needs before the next diagnosis
+
+The rect comparison has to be keyed by index path, not by array position: the trace should record
+`{indexPath: rect}` (or emit the index path alongside each rect) so native and PST can be compared item by item.
+Only then can "which items are in which column" be read off honestly. That is a change to
+`tests/selfsizing-layouts-trace.m` and its parser, roughly twenty lines, and it should come before any further
+speculation about perRow.
+
+I would rather record this retraction than leave a confident-sounding but wrong conclusion in the log.
+
 ## The last failing value is a packing difference, not gap arithmetic (round 209)
 
 The layouts gate fails on exactly one value: `horizontal narrow`, initial step, content width 773.09 against
