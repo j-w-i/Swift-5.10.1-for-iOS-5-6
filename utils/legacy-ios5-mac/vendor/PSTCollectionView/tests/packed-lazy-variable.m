@@ -45,5 +45,38 @@ int main(void){@autoreleasepool{
   }
   checks++;
  }
- printf("PASS: %lu variable lazy sections are exact when fully materialised and monotonic otherwise\n",(unsigned long)checks);
+ // Lazily built variable sections, materialised on demand, must end exactly at the rebuild's frames and
+ // content extent - which requires the reported growth to be the estimate being replaced.
+ for(int horizontal=0;horizontal<2;horizontal++){
+  const NSInteger n=22;
+  CGSize sizes[22];for(NSInteger i=0;i<n;i++)sizes[i]=horizontal?CGSizeMake(40,26+(i%5)*9):CGSizeMake(44,26+(i%5)*9);
+  PSTGridLayoutInfo*li=[PSTGridLayoutInfo new];li.horizontal=horizontal;li.selfSizing=YES;li.dimension=194;
+  PSTGridLayoutInfo*ri=[PSTGridLayoutInfo new];ri.horizontal=horizontal;ri.selfSizing=YES;ri.dimension=194;
+  CGFloat off=0, offRef=0;
+  for(int s=0;s<3;s++){
+   PSTGridLayoutSection*a1=make(li,horizontal,sizes,n);PSTGridLayoutSection*a2=make(ri,horizontal,sizes,n);
+   [a1 computeLayoutMaterialisingRowsThrough:0 estimate:horizontal?CGSizeMake(40,44):CGSizeMake(44,44)];
+   [a2 computeLayout];
+   CGRect f1=a1.frame,f2=a2.frame;
+   if(horizontal){f1.origin.x=off;f2.origin.x=offRef;off+=f1.size.width;offRef+=f2.size.width;}
+   else {f1.origin.y=off;f2.origin.y=offRef;off+=f1.size.height;offRef+=f2.size.height;}
+   a1.frame=f1;a2.frame=f2;
+   li.contentSize=horizontal?CGSizeMake(off,194):CGSizeMake(194,off);
+   ri.contentSize=horizontal?CGSizeMake(offRef,194):CGSizeMake(194,offRef);
+  }
+  for(int s=0;s<3;s++) if(![li materialisePackedRowsInSection:s throughRow:30 dimension:194 spacing:(horizontal?6:4)])return 11;
+  if(!nearC(li.contentSize.width,ri.contentSize.width)||!nearC(li.contentSize.height,ri.contentSize.height)){
+   printf("h=%d content lazy=(%.1f %.1f) ref=(%.1f %.1f)\n",horizontal,li.contentSize.width,li.contentSize.height,ri.contentSize.width,ri.contentSize.height);
+   return 12;}
+  for(int s=0;s<3;s++){
+   CGRect a1=((PSTGridLayoutSection*)li.sections[s]).frame,a2=((PSTGridLayoutSection*)ri.sections[s]).frame;
+   if(!nearC(a1.origin.x,a2.origin.x)||!nearC(a1.origin.y,a2.origin.y)||
+      !nearC(a1.size.width,a2.size.width)||!nearC(a1.size.height,a2.size.height)){
+    printf("h=%d sec=%d lazy=(%.2f %.2f %.2f %.2f) ref=(%.2f %.2f %.2f %.2f)\n",horizontal,s,
+      a1.origin.x,a1.origin.y,a1.size.width,a1.size.height,a2.origin.x,a2.origin.y,a2.size.width,a2.size.height);
+    return 13;}
+  }
+  checks++;
+ }
+ printf("PASS: %lu lazy layouts (variable sections, with propagation) land on the rebuild\n",(unsigned long)checks);
 }return 0;}

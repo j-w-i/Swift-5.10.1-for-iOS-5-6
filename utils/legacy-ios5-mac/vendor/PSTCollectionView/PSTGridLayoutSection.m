@@ -30,6 +30,8 @@
     CGFloat *_packedRowOrigin;    // origin of each row along the scroll axis
     NSInteger _packedLaidOutRows; // rows whose geometry is materialised (valid-range extension)
     CGSize _packedPrefixExtent;   // running extent after those rows, before any derived remainder
+    NSInteger _packedTotalRows;   // rows in the section
+    CGSize _packedRemainderEstimate; // size assumed for rows not yet materialised
     CGSize *_packedRowSize;       // size of each row
 }
 @property (nonatomic, strong) NSArray *items;
@@ -329,6 +331,19 @@
 
 /// Materialises further rows of a lazily built uniform section, continuing from the recorded prefix extent.
 /// Returns the section's scrolling-axis growth, which the caller must propagate to later sections.
+/// Scrolling-axis extent the section reports for a given number of materialised rows: the measured prefix plus
+/// the estimate for the rest. Materialising rows replaces part of that estimate, so the difference is the growth
+/// the caller must propagate.
+- (CGFloat)packedEstimatedExtentForLaidOutRows:(NSInteger)laid {
+    const BOOL horizontal = self.layoutInfo.horizontal;
+    const CGFloat prefix = horizontal ? _packedPrefixExtent.width : _packedPrefixExtent.height;
+    const NSInteger rest = _packedTotalRows - laid;
+    if (rest <= 0) return prefix;
+    const CGFloat rowExtent = horizontal ? _packedRemainderEstimate.width : _packedRemainderEstimate.height;
+    const CGFloat gap = horizontal ? self.horizontalInterstice : self.verticalInterstice;
+    return prefix + (CGFloat)rest * rowExtent + (CGFloat)(rest - 1) * gap;
+}
+
 - (BOOL)materialisePackedRowsThroughRow:(NSInteger)row dimension:(CGFloat)dimension spacing:(CGFloat)spacing
                           scrollGrowth:(CGFloat *)growth {
     if (growth) *growth = 0;
@@ -336,14 +351,22 @@
     const NSInteger rows = self.indexOfImcompleteRow + 1;
     const NSInteger target = MIN(row + 1, rows);
     if (target <= _packedLaidOutRows) return YES;
+    const CGFloat before = [self packedEstimatedExtentForLaidOutRows:_packedLaidOutRows];
     CGSize extent = _packedPrefixExtent;
     [self pstLayOutPackedRowsFrom:_packedLaidOutRows to:target dimension:dimension spacing:spacing sectionSize:&extent];
     _packedPrefixExtent = extent;
     _packedLaidOutRows = target;
-    // A lazily built uniform section already reports the extent of every row (see
-    // computeLayoutMaterialisingRowsThrough:), so materialising geometry never grows the section: the
-    // caller's frame, later sections and the content extent stay as built.
-    if (growth) *growth = 0;
+    const CGFloat after = [self packedEstimatedExtentForLaidOutRows:_packedLaidOutRows];
+    // The cross axis is the largest row so far; materialising rows can raise it, so refresh it here.
+    const BOOL horiz = self.layoutInfo.horizontal;
+    CGFloat crossMax = 0;
+    for (NSInteger r = 0; r < _packedLaidOutRows; r++)
+        crossMax = MAX(crossMax, horiz ? _packedRowSize[r].height : _packedRowSize[r].width);
+    CGRect own = _frame;
+    if (horiz) own.size.height = MAX(own.size.height, crossMax);
+    else own.size.width = MAX(own.size.width, crossMax);
+    _frame = own;
+    if (growth) *growth = after - before;
     return YES;
 }
 
@@ -450,6 +473,8 @@
     const NSInteger rows = self.indexOfImcompleteRow + 1;
     const NSInteger limit = MIN(MAX(lastRow + 1, (NSInteger)0), rows);
     _packedPrefixExtent = sectionSize;   // extent after the header and leading margin, before any rows
+    _packedRemainderEstimate = estimate;
+    _packedTotalRows = self.indexOfImcompleteRow + 1;
     if (limit > 0) {
         [self pstLayOutPackedRowsFrom:0 to:limit dimension:dimension spacing:spacing sectionSize:&sectionSize];
         _packedPrefixExtent = sectionSize;

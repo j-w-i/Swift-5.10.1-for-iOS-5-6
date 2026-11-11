@@ -1,5 +1,28 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Growth accounting for variable sections finished (round 206)
+
+Completed the round-205 work, diagnosing rather than guessing. Instrumenting the materialiser showed the growth
+was actually correct all along (`before=400.0 after=472.0` per section); two different things were missing:
+
+1. the information layer never applied that growth to the **section's own frame** (only to later sections and the
+   content extent), and
+2. the **cross axis** was not refreshed: in a horizontal layout a section's height is the largest row so far, and
+   materialising rows can raise it - a horizontal section reported 170 against the rebuild's 179.
+
+With the own-frame update and a cross-axis refresh on materialisation, the invariant holds in both axes: a lazily
+built variable layout, materialised on demand, lands exactly on the rebuild's frames and content extent.
+
+Gate `run-packed-lazy-variable-test.sh` now checks 12 cases: 10 mixed-size sections laid out at every window
+(materialised rows equal to a rebuild, extent positive) plus 2 three-section layouts materialised on demand and
+compared frame-by-frame with a rebuild. Also re-verified: lazy section 414, lazy extension 48, windowed 24,
+packed updates 240, golden 14/14, layouts 31/32 with fitted-item parity 32/32, and a strict armv7
+`-Werror=unguarded-availability` compile.
+
+The flow layout still uses the full `computeLayout`, so behaviour is unchanged. What is now in place is the
+complete mechanism the estimate rework needs: lazy layout for uniform *and* variable sections, on-demand
+materialisation with correct growth propagation in both axes.
+
 ## Growth accounting for variable sections: attempted, not finished (round 205)
 
 Next step after round 204: a freshly materialised row replaces part of the estimate, so the section extent has to

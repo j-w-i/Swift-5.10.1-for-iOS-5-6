@@ -95,6 +95,10 @@
     CGFloat grew = 0;
     if (![section materialisePackedRowsThroughRow:row dimension:dimension spacing:spacing scrollGrowth:&grew]) return NO;
     if (grew != 0) {
+        // The section that materialised rows grew first; then everything after it moves by the same delta.
+        CGRect own = section.frame;
+        if (self.horizontal) own.size.width += grew; else own.size.height += grew;
+        section.frame = own;
         for (NSUInteger i = (NSUInteger)sectionIndex + 1; i < _sections.count; i++) {
             PSTGridLayoutSection *later = [_sections objectAtIndex:i];
             CGRect frame = later.frame;
