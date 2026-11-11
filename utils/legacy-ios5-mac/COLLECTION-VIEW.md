@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Paired hardware measurement at HEAD (round 165)
+
+Re-ran the interleaved paired benchmark (both engines in one app, alternating order, median of the reps) on
+the **iPod touch 5 (iOS 6.1.3)** against commit `fa173768`+docs, i.e. after all of rounds 144-164. Ratio is
+PST / Apple-route, lower is better.
+
+| Scenario | 200 | 1,000 | 5,000 |
+| --- | ---: | ---: | ---: |
+| Fixed-size cold layout | 0.87 | 0.97 | - |
+| Fixed-size reload | 0.78 | 0.07 | - |
+| Fixed-size batch insert+delete 5 | 0.51 | 0.50 | - |
+| Self-sizing + delegate cold | 0.48 | 0.48 | 0.49 |
+| Self-sizing + delegate reload | 0.29 | 0.22 | 0.29 |
+| Self-sizing + delegate batch | 0.40 | 0.36 | - |
+| Self-sizing, no delegate, cold | 0.24 | 0.12 | 0.08 |
+| Self-sizing, no delegate, reload | 0.16 | 0.07 | 0.07 |
+
+Every measured cell is at or below 1.0; the worst is fixed-size cold layout at 1,000 items (0.97, within
+noise of parity) and the objective's original 0.79-1.49 spread is now 0.07-0.97. **Honest limit:** the
+"native" side of this pair is Apple's iOS 6.1 engine *with my self-sizing hooks installed*, not stock iOS 8+
+self-sizing, so these ratios compare PST against the backport on the Apple route, not against Apple's own
+self-sizing implementation on a device that has it.
+
+Build note recorded because it cost time: the paired bench must compile `main.m` with
+`-DINSTALL_BACKPORT_HOOKS`, otherwise the Apple-route self-sizing rows abort with an unrecognised
+`estimatedItemSize` selector on iOS 6.1, and the app dies before writing those rows.
+
 ## Second preparation-time attempt: content-size settling isolated, still reverted (round 164)
 
 Round 163 left one hypothesis: the cached content size must refresh during a display pass but stay cached for
