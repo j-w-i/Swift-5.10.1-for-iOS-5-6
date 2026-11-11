@@ -16,7 +16,7 @@
 #define UICollectionElementKindSectionFooter PSTCollectionElementKindSectionFooter
 #define UICollectionReusableView PSTCollectionReusableView
 #endif
-static BOOL horizontal_;
+static BOOL horizontal_,perSection_;
 @interface LC:UICollectionViewCell @end
 @implementation LC
 - (UICollectionViewLayoutAttributes*)preferredLayoutAttributesFittingAttributes:(UICollectionViewLayoutAttributes*)a{
@@ -30,6 +30,14 @@ static BOOL horizontal_;
 - (NSInteger)numberOfSectionsInCollectionView:(UICollectionView*)cv{return self.sections;}
 - (NSInteger)collectionView:(UICollectionView*)cv numberOfItemsInSection:(NSInteger)s{return self.items;}
 - (UICollectionViewCell*)collectionView:(UICollectionView*)cv cellForItemAtIndexPath:(NSIndexPath*)p{return [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:p];}
+- (UIEdgeInsets)collectionView:(UICollectionView*)cv layout:(UICollectionViewLayout*)l insetForSectionAtIndex:(NSInteger)s{
+ return perSection_?UIEdgeInsetsMake(4+s*6,8+s*4,10-s*2,8+s*2):((UICollectionViewFlowLayout*)l).sectionInset;}
+- (CGFloat)collectionView:(UICollectionView*)cv layout:(UICollectionViewLayout*)l minimumLineSpacingForSectionAtIndex:(NSInteger)s{
+ return perSection_?3+s*5:((UICollectionViewFlowLayout*)l).minimumLineSpacing;}
+- (CGFloat)collectionView:(UICollectionView*)cv layout:(UICollectionViewLayout*)l minimumInteritemSpacingForSectionAtIndex:(NSInteger)s{
+ return perSection_?4+s*3:((UICollectionViewFlowLayout*)l).minimumInteritemSpacing;}
+- (CGSize)collectionView:(UICollectionView*)cv layout:(UICollectionViewLayout*)l referenceSizeForFooterInSection:(NSInteger)s{
+ return perSection_?CGSizeMake(0,14+s*6):CGSizeZero;}
 - (UICollectionReusableView*)collectionView:(UICollectionView*)cv viewForSupplementaryElementOfKind:(NSString*)k atIndexPath:(NSIndexPath*)p{return [cv dequeueReusableSupplementaryViewOfKind:k withReuseIdentifier:@"h" forIndexPath:p];}
 @end
 static NSArray *r4(CGRect r){return @[@(r.origin.x),@(r.origin.y),@(r.size.width),@(r.size.height)];}
@@ -58,9 +66,11 @@ int main(int argc,char**argv){@autoreleasepool{[UIApplication sharedApplication]
   {3,14,YES,30,{0,0,0,0},0,0,200},
   {2,16,YES,0,{8,8,8,8},6,6,90},
   {4,9,NO,24,{4,0,12,0},0,0,200},
+  {3,12,NO,20,{0,0,0,0},0,0,90},      // delegate: per-section insets, spacing and footers, narrow items
+  {3,12,YES,20,{0,0,0,0},0,0,90},     // the same, horizontal
  };
  if(sc<0||sc>=(int)(sizeof S/sizeof S[0]))return 64;
- horizontal_=S[sc].h;
+ horizontal_=S[sc].h;perSection_=sc>=6;
  UICollectionViewFlowLayout*l=[UICollectionViewFlowLayout new];l.minimumLineSpacing=S[sc].line;l.minimumInteritemSpacing=S[sc].inter;l.sectionInset=S[sc].in;
  if(S[sc].h)l.scrollDirection=UICollectionViewScrollDirectionHorizontal;
  l.estimatedItemSize=S[sc].h?CGSizeMake(60,S[sc].ew<150?90:200):CGSizeMake(S[sc].ew,40);
@@ -69,7 +79,8 @@ int main(int argc,char**argv){@autoreleasepool{[UIApplication sharedApplication]
  UICollectionView*cv=[[UICollectionView alloc]initWithFrame:fr collectionViewLayout:l];cv.prefetchingEnabled=NO;
  [cv registerClass:[LC class] forCellWithReuseIdentifier:@"c"];
  [cv registerClass:[LH class] forSupplementaryViewOfKind:UICollectionElementKindSectionHeader withReuseIdentifier:@"h"];
- LS*s=[LS new];s.sections=S[sc].sec;s.items=S[sc].items;cv.dataSource=s;
+ [cv registerClass:[LH class] forSupplementaryViewOfKind:UICollectionElementKindSectionFooter withReuseIdentifier:@"h"];
+ LS*s=[LS new];s.sections=S[sc].sec;s.items=S[sc].items;cv.dataSource=s;if(sc>=6)cv.delegate=s;
  [cv reloadData];settle(cv);snap(@"initial",cv,l,s);
  CGFloat step=S[sc].h?160:150;
  for(int i=1;i<=3;i++){cv.contentOffset=S[sc].h?CGPointMake(step*i,0):CGPointMake(0,step*i);settle(cv);snap([NSString stringWithFormat:@"step%d",i],cv,l,s);}

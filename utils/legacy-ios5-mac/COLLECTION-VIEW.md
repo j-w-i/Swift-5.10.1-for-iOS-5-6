@@ -2019,3 +2019,13 @@ queries layout attributes for off-screen items will see different numbers than o
 Limits: unit-size estimates and four to five sections of 9-16 items; no footers with content, no
 supplementary views other than headers, no decoration views, no section insets that differ per section,
 no delegate-supplied spacing, and no right-to-left. iPhone 6 not run.
+
+### Per-section delegate geometry and footers also match
+
+The layouts test gained two shapes with a delegate answering per-section insets, line spacing, item spacing
+and footer sizes (different for every section), narrow self-sizing items, vertical and horizontal. Both
+match iOS 27 on screen at all four scroll positions: 0 of 62 further visible cell frames differ, headers
+and footers and content size match. No code change was needed. The whole test is now **31 of 32 steps
+exact, 0 of 210 visible cell frames differing** across eight shapes; the one inexact step is the known
+first-step content width of the horizontal narrow-item shape. Footers with content views, decoration
+views and right-to-left remain untested.
