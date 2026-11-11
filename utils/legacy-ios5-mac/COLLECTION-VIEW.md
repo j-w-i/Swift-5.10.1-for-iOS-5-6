@@ -1,5 +1,29 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Instrumented the branch: the fit path runs, content is affected, value is not (round 225)
+
+Instrumented the preparation fit on `prep-fit-measurement-path` and found the block does run
+(`DBGPREP item=0 proposed=40.0 preferred=30.0`, 17 reports in scenario 0). Two further candidates were then
+tested and ruled out:
+
+* **content-size cache**: added `invalidateContentSize` to the data cache and called it before each relayout in
+  the convergence loop - no change (42/64). The cache is not what freezes the value.
+* **iterating the relayout to convergence** (up to four passes while measurements keep arriving) - no change
+  either (42/64).
+
+And one thing was confirmed rather than ruled out: the branch *does* change content relative to main (1817 against
+1854 at the first step of the three-section case), so measurements recorded during preparation are reaching the
+layout. The difference is in **which cells report and in what order**, not whether reports are applied - which also
+explains why changing the proposal expression, the trust threshold, the fit set and the relayout count all left
+the numbers identical: none of them changes the reporting sequence.
+
+Reverted all experiments; the branch stays at `b8fdd47a` (exact lifecycle parity, 0 of 420 differing visible
+frames), main remains the published verified state.
+
+The next instrument to write is on the reporting side: log (indexPath, proposed size, reported size) for both
+engines and diff the sequences. That is the only axis that has not been examined, and the evidence now points at
+it from three directions.
+
 ## The branch's content gap does not come from the estimate expression (round 224)
 
 On `prep-fit-measurement-path`, mapped the remaining content differences against the settled oracle: 22 of 64
