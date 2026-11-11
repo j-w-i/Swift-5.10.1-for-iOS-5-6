@@ -1,5 +1,34 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Published: every gate green at 2fabed77 (round 212)
+
+Ran the complete acceptance set at HEAD and pushed the result to `origin/main` (`a417e858..2fabed77`). This is
+the first publication of the collection-view work in this session.
+
+**Green (28 gates):**
+
+* collection: golden 14/14, row centering, self-sizing stability, proposal, display scroll order, display
+  supplementary order, hidden items, cell resize, attribute snapshot, bounds, preferred-invalidation predicate,
+  invalidation context, attribute cache invalidation, context execution, packed item updates 240, windowed
+  layout 24, lazy section 414, lazy extension 48, lazy variable 12, preferred-context staging, automatic size,
+  batch insert 9/9, prefetch lifecycle, sizing updates, delegate sizing, named-items flow flags - **26/26**;
+* backports: Auto Layout solver suite (11 parity rows, 80 golden frames, `installed=3612`, `rebuilds=3`),
+  fitting suite, scene/trait fall-through ("classes unchanged" on iOS 13+).
+
+**Known limits, stated rather than hidden:**
+
+1. one content-size step differs from the iOS 27 oracle - `horizontal narrow`, initial, 773.09 against 707.09 -
+   and round 211 showed why: native returns estimated attributes for a section it has not laid out, PST returns
+   a real layout for it. Visible frames, fitted sets and every other content value agree.
+2. the lazy valid-range layout is implemented and gated but **not** in the live path: three wiring attempts made
+   visible frames worse, so the shipped path still materialises every row.
+3. the lifecycle gate is not shipped: fitting still happens after layout via the scheduler, so PST reports
+   cells displayed before they are fitted (9/0 and 8/0 against native's 0/0).
+4. Swift declaration lowering is unverified - no `swift_ios5` toolchain is installed here.
+5. the iPhone 6 (iOS 10.3.3) has never been attached, so the native-route no-regression run is unrun.
+6. device performance is measured and comparable to the Apple route (paired runs), but the absolute numbers are
+   noisy at this granularity on a 512 MB iPod touch; the paired methodology in round 201 is the one to trust.
+
 ## Index-path keyed rects: the difference is in the second section only (round 211)
 
 Fixed the instrument as round 210 required: `tests/selfsizing-layouts-trace.m` now emits `rectsBySection`, a
