@@ -470,3 +470,25 @@ item-size 0.986 (6/6), bounds 0.988, multi-section cold 0.991 (6/6), idle 0.986,
 reload is still roughly 1.7x native. The profile's remaining time is `insertSubview`
 (about 38%, UIKit) and view dequeue/creation. The cell-with-superview difference is
 not changed (native keeps the retired cell attached until it is reused).
+
+### Round 78: native keeps retired cells attached and hidden (cause of the reuse difference)
+
+`tests/retired-cells.m` counts a collection view's cell subviews through scroll steps
+(200x100 view, 50pt rows, 40 items; iOS 27 simulator):
+
+| | cell subviews | hidden | `visibleCells` |
+| --- | ---: | ---: | ---: |
+| Native initial | 2 | 0 | 2 |
+| Native after scrolling to 500 | 4 | 2 | 2 |
+| Native after scrolling to 1000 | 4 | 2 | 2 |
+| PST at every step | 2 | 0 | 2 |
+
+Native does not detach a retired cell. It hides it and leaves it in the view
+hierarchy, and a later dequeue reuses it (un-hiding it). That explains the earlier
+reuse-count difference: a cell retired in a pass is not yet in the queue when the same
+pass creates arriving cells, so native creates new ones where PST recycles. It also
+means native skips `removeFromSuperview` and `insertSubview:atIndex:` on the scroll
+path, which are the two largest UIKit costs in PST's scroll and reload profiles
+(about 7% and 16% of main-thread time in scroll). Matching this changes observable
+state (the cell stays in `subviews`, hidden) and `didEndDisplaying` timing relative to
+the queue, so it is not a pure optimisation. Not implemented yet.
