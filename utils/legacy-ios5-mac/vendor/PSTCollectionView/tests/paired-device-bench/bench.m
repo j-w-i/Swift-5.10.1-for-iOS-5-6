@@ -26,16 +26,16 @@ static NSInteger COUNT_;
 - (CGSize)collectionView:(UICollectionView*)cv layout:(UICollectionViewLayout*)l sizeForItemAtIndexPath:(NSIndexPath*)p{return CGSizeMake(320,40+(p.item%7)*6);}
 - (UICollectionViewCell*)collectionView:(UICollectionView*)cv cellForItemAtIndexPath:(NSIndexPath*)p{return [cv dequeueReusableCellWithReuseIdentifier:@"c" forIndexPath:p];}
 @end
-static BOOL SELFSIZE_;
+static BOOL SELFSIZE_,DELEGATE_;
 static UICollectionView *make(NSInteger n,BENCH_DS**keep){COUNT_=n;
  UICollectionViewFlowLayout*l=[UICollectionViewFlowLayout new];l.itemSize=CGSizeMake(320,58);l.minimumLineSpacing=0;
  UICollectionView*cv=[[UICollectionView alloc]initWithFrame:CGRectMake(0,0,320,480) collectionViewLayout:l];
  if(SELFSIZE_)[l setValue:[NSValue valueWithCGSize:CGSizeMake(320,50)] forKey:@"estimatedItemSize"];
- [cv registerClass:SELFSIZE_?[BENCH_CELL class]:[UICollectionViewCell class] forCellWithReuseIdentifier:@"c"];BENCH_DS*d=[BENCH_DS new];*keep=d;cv.dataSource=d;if(SELFSIZE_)cv.delegate=d;return cv;}
+ [cv registerClass:SELFSIZE_?[BENCH_CELL class]:[UICollectionViewCell class] forCellWithReuseIdentifier:@"c"];BENCH_DS*d=[BENCH_DS new];*keep=d;cv.dataSource=d;if(SELFSIZE_&&DELEGATE_)cv.delegate=d;return cv;}
 // scenario: 0 cold layout, 1 reload, 2 insert 5 at end + delete 5 at start (each in its own batch, laid out)
 double BENCH_NAME(int scenario,NSInteger items){
  @autoreleasepool{
-  SELFSIZE_=scenario>=3;if(scenario>=3)scenario-=3;
+  SELFSIZE_=scenario>=3;DELEGATE_=scenario>=3&&scenario<6;if(scenario>=6)scenario-=6;else if(scenario>=3)scenario-=3;
   BENCH_DS*d;UICollectionView*cv=make(items,&d);double t;
   if(scenario==0){t=now();[cv layoutIfNeeded];return now()-t;}
   [cv layoutIfNeeded];

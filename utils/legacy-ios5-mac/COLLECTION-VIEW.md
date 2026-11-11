@@ -1827,3 +1827,43 @@ Limits: one device; the Apple route is stock iOS 6.1.3 plus the backport hooks, 
 implementation; the cell is trivial apart from its preferred size; animations are disabled in the batch
 rows; 5,000 items has 5 pairs rather than 9. No iPhone 6 run. The no-delegate self-sizing case uses the
 non-interleaved figures above and has not been re-run in the paired app.
+
+### Paired self-sizing without a delegate, and the full paired table (iPod touch 5)
+
+The no-delegate self-sizing case, the one that depends on the nil-delegate fix to the Apple route, now
+runs in the paired app too. Same iPod touch 5, one launch, both engines alternating, median of 9 pairs
+(5 at 5,000 items). PST / native:
+
+| Items | Cold | Reload | Insert 5 + delete 5 |
+| ---: | ---: | ---: | ---: |
+| 200 | 0.84 | 0.44 | 0.57 |
+| 1,000 | 0.97 | 0.50 | 0.64 |
+| 5,000 | 1.04 | 0.85 | not run |
+
+This replaces the earlier non-interleaved no-delegate figures (cold 0.84/1.20/1.15, reload 0.85/0.99/1.23)
+that compared a PST median of three against a single native run and overstated PST's cost at 1,000 and
+5,000 items. Content heights matched in the earlier unpaired run of this case.
+
+**Complete paired table, iPod touch 5, PST / native, interleaved** (this run; the earlier fixed-size and
+delegate figures reproduce within a few hundredths):
+
+| Workload | 200 | 1,000 | 5,000 |
+| --- | ---: | ---: | ---: |
+| Fixed size, cold | 0.86 | 1.03 | |
+| Fixed size, reload | 0.77 | 0.07 | |
+| Fixed size, batch | 0.54 | 0.50 | |
+| Self-sizing + delegate, cold | 0.85 | 1.01 | 1.07 |
+| Self-sizing + delegate, reload | 0.52 | 0.51 | 0.76 |
+| Self-sizing + delegate, batch | 0.66 | 0.71 | |
+| Self-sizing, no delegate, cold | 0.84 | 0.97 | 1.04 |
+| Self-sizing, no delegate, reload | 0.44 | 0.50 | 0.85 |
+| Self-sizing, no delegate, batch | 0.57 | 0.64 | |
+
+Across 21 measured cells PST ranges 0.07-1.07 of the Apple route. The cells above 1.0 are cold layout at
+1,000 and 5,000 items (1.01-1.07), which is parity within run-to-run variation; no cell is more than
+7% slower. The 0.07 is fixed-size reload at 1,000 items, where the Apple route's rebuild cost grows with
+item count (2.7 ms at 200, 29 ms at 1,000) and PST's does not.
+
+Limits, unchanged: one device; the Apple route is stock iOS 6.1.3 plus the backport hooks; a trivial
+cell; animations disabled for batches; 5,000-item rows have 5 pairs and no batch row; and the iPhone 6
+(iOS 10.3.3, real Apple implementation of the API) was not run because it is not attached.
