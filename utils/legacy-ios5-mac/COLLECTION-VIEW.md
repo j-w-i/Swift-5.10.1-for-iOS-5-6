@@ -1,5 +1,32 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Decision recorded: Apple's mechanism is preparation fitting, but it needs lazy estimation first (round 217)
+
+Asked the user which configuration should ship, since the two trade observable behaviour against each other.
+Answer: *"whichever one is closest to Apple's implementation"*.
+
+Apple's implementation, as the iOS 8.1 reference decompilation showed, is: create the cell, fit its preferred
+attributes, apply the invalidation context, then insert it and call `willDisplay`. That is **preparation
+fitting**, and it is therefore the direction to converge on - it is why the lifecycle gate matters.
+
+But the measurements say preparation fitting alone does not reproduce Apple's *results*: without Apple's lazy
+valid-range estimation PST gets callback order exactly right and content size wrong on 16 steps (15/32), because
+it materialises every section while native estimates the ones it has not reached (round 211's finding). So the
+mechanism cannot be adopted in isolation; it needs the estimation work the plan describes.
+
+Decision for now:
+
+* **shipped default stays the baseline** (post-layout fitting): 26/26 collection gates, golden 14/14, content
+  31/32, all backport suites green. It is the only configuration that is verified across the board.
+* **preparation fitting is the target** (fit -> invalidate -> display, i.e. Apple's order), fully implemented and
+  measured: lifecycle exact, visible frames exact, 22 of 23 gates, content 15/32, hang fixed by the per-index-path
+  cap. It becomes the default once lazy estimation brings content back in line, because then both the mechanism
+  and the results match.
+
+Tried one more combination this round (staged-content suppression on top of the fixed prep-fitting build) but the
+patch did not apply to that base, so it was not actually tested; recording that honestly rather than implying a
+result.
+
 ## The hang was refitting the same index path across cell instances (round 216)
 
 Round 215's hang ("non-converging cell hung layout") was a fit cap applied to the **cell instance**, which a pass
