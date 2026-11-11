@@ -1799,3 +1799,31 @@ Limits: one device, one cell type, animations disabled so the batch figures are 
 cost, not animation cost; the cells are trivial. Self-sizing and delegate-sized layouts are measured
 separately above. No iPhone 6 run and no iPod touch 3 run of this bench (PST only would not be a
 ratio).
+
+### Paired self-sizing with a size delegate on the iPod touch 5 (closes the open ratio)
+
+The paired bench now also runs self-sizing with `estimatedItemSize`, a size delegate and a cell whose
+preferred height varies. Same iPod touch 5, one launch, both engines alternating, median of 9 pairs
+(5 for the 5,000-item rows). Build of the current sources, Apple route with the backport hooks.
+PST / native:
+
+| Items | Cold | Reload | Insert 5 + delete 5 |
+| ---: | ---: | ---: | ---: |
+| 200 | 0.89 | 0.53 | 0.64 |
+| 1,000 | 1.01 | 0.60 | 0.69 |
+| 5,000 | 1.05 | 0.82 | not run |
+
+So with a size delegate PST is at parity on cold layout (0.89-1.05), and faster on reload (0.53-0.82)
+and on batch updates (0.64-0.69). This supersedes the earlier non-interleaved figures for the same case
+(cold 1.03/1.32/1.03, reload 1.07/1.22/0.97), which compared a PST median of three repetitions against a
+single native run and overstated PST's cost, most visibly at 1,000 items. The interleaved numbers are the
+ones to use.
+
+Together with the fixed-size table above, every paired same-device workload on the iPod touch 5 now has
+PST at or within 5% of the Apple route, and mostly well below it. The slowest cell is 5,000-item
+self-sizing cold layout at 1.05, which is within the variation seen between runs.
+
+Limits: one device; the Apple route is stock iOS 6.1.3 plus the backport hooks, not a native iOS 8
+implementation; the cell is trivial apart from its preferred size; animations are disabled in the batch
+rows; 5,000 items has 5 pairs rather than 9. No iPhone 6 run. The no-delegate self-sizing case uses the
+non-interleaved figures above and has not been re-run in the paired app.

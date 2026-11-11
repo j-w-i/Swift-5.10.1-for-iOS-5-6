@@ -8,9 +8,10 @@ extern void UICInstallCollectionViewDisplay(void);
 static int cmp(const void*a,const void*b){double x=*(double*)a,y=*(double*)b;return x<y?-1:x>y;}
 static void run(void){@autoreleasepool{
  FILE*f=fopen(OUTFILE,"w");int saved=dup(1);fflush(stdout);dup2(fileno(f),1);setvbuf(stdout,NULL,_IONBF,0);
- const char*names[3]={"cold layout","reload","batch ins5+del5"};NSInteger sizes[2]={200,1000};
- for(int si=0;si<2;si++)for(int s=0;s<3;s++){
-  int reps=9;double n[9],p[9];nativeBench(s,sizes[si]);pstBench(s,sizes[si]);
+ const char*names[6]={"cold layout","reload","batch ins5+del5","selfsize+dlg cold","selfsize+dlg reload","selfsize+dlg batch"};NSInteger sizes[3]={200,1000,5000};
+ for(int si=0;si<3;si++)for(int s=0;s<6;s++){
+  if(si==2&&s!=3&&s!=4)continue; // 5,000 only for the self-sizing cold/reload rows
+  int reps=si==2?5:9;double n[9],p[9];nativeBench(s,sizes[si]);pstBench(s,sizes[si]);
   for(int i=0;i<reps;i++){if(i%2){p[i]=pstBench(s,sizes[si]);n[i]=nativeBench(s,sizes[si]);}else{n[i]=nativeBench(s,sizes[si]);p[i]=pstBench(s,sizes[si]);}}
   qsort(n,reps,sizeof(double),cmp);qsort(p,reps,sizeof(double),cmp);
   printf("%-16s items=%-5ld native=%9.0fus pst=%9.0fus pst/native=%.2f\n",names[s],(long)sizes[si],n[reps/2]/1000,p[reps/2]/1000,p[reps/2]/n[reps/2]);
