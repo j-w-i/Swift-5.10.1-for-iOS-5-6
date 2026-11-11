@@ -1,5 +1,19 @@
 # Toolchain-native UIKit collection views on iOS 5
 
+## Device re-run blocked: the iPod touch 5 is locked (round 229)
+
+After the ordering change, tried to re-run the Apple-route device gate on the iPod touch 5. It failed with an
+empty result, and a manual launch reports **`launch result=3`** - the device is locked/asleep, and `n2launch`
+cannot start an app in that state. Nothing about the change is implicated:
+
+* the Apple-route app builds only `UICCollectionViewDisplay.m` from the runtime, and `git log 23ca9ebf..HEAD --
+  .../Runtime` is empty: the code that app exercises is byte-for-byte the code that PASSED 20 checks in round 221;
+* the PST change is in `PSTCollectionView.m`, which the Apple-route app does not compile at all.
+
+So the device verification of the new ordering is **not done**, and will need the device unlocked. Recorded rather
+than glossed: the simulator oracle covers the ordering (28/28 gates, exact lifecycle parity), but the real-iOS-6
+confirmation is outstanding.
+
 ## Display lifecycle parity achieved (round 229)
 
 The last behavioural gap is closed. `collectionView:willDisplayCell:forItemAtIndexPath:` now matches the iOS 27
