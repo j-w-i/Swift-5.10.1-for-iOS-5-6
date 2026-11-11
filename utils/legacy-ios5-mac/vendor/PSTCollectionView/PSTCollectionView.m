@@ -146,6 +146,7 @@ CGFloat PSTSimulatorAnimationDragCoefficient(void);
     // only has to scan/reorder subviews when this is true; the common cell-only
     // grid must not copy and scan the whole subview array per inserted cell.
     BOOL _pstHasFloatingViews;
+    BOOL _pstRecordedPreferredSizeThisPass;
     char filler[232]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
 @property (nonatomic, strong) PSTCollectionViewData *collectionViewData;
@@ -1819,6 +1820,13 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     _pstLastVisibleBounds = self.bounds;
     _pstVisibleViewsMatchAttributes = YES;
     PST_STATS_END_PASS();
+    if (_pstRecordedPreferredSizeThisPass && [_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) {
+        _pstRecordedPreferredSizeThisPass = NO;
+        [(PSTCollectionViewFlowLayout *)_layout pstInvalidateForPreferredSizeChanges];
+        [_collectionViewData validateLayoutInRect:self.bounds];
+        [self updateVisibleCellsNow:YES];
+        return;
+    }
     [self pstMeasureSelfSizingCells];
     [self pstPrefetchAfterPass];
 }
@@ -2013,6 +2021,24 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
 
     // Apply attributes
     [cell applyLayoutAttributes:layoutAttributes];
+
+    // Fit before the cell is inserted and announced, as UIKit does: ask for the preferred attributes, record the
+    // answer through the layout's own measurement path (so the post-layout scheduler sees it as stable and does
+    // not fit it a second time), then apply the geometry that recording produced.
+    if ([_layout isKindOfClass:[PSTCollectionViewFlowLayout class]]) {
+        PSTCollectionViewFlowLayout *pstFlow = (PSTCollectionViewFlowLayout *)_layout;
+        if ([pstFlow pstUsesSelfSizing] &&
+            ![pstFlow pstHasStableMeasuredSizeForItemAtIndexPath:indexPath proposedFrame:layoutAttributes.frame]) {
+            PSTCollectionViewLayoutAttributes *preferred = [cell preferredLayoutAttributesFittingAttributes:layoutAttributes];
+            if (preferred && !CGSizeEqualToSize(preferred.size, layoutAttributes.size) &&
+                [pstFlow pstRecordPreferredSize:preferred.size forItemAtIndexPath:indexPath
+                                  proposedFrame:layoutAttributes.frame]) {
+                // Do not re-query the layout here: that would move frames while this pass is still iterating
+                // them. One relayout at the end of the pass applies everything recorded during it.
+                _pstRecordedPreferredSizeThisPass = YES;
+            }
+        }
+    }
 
     // reset selected/highlight state
     // UIKit does not call the setters when nothing changes; a fresh or reused
