@@ -81,6 +81,11 @@
         NSInteger usedItemCount = 0;
         NSInteger itemIndex = 0;
         CGFloat spacing = isHorizontal ? self.section.verticalInterstice : self.section.horizontalInterstice;
+        // UIKit's default mode (1) centers unequal items on the row's scroll axis.
+        // Preserve the former top/leading behaviour for other private option values.
+        id verticalOption = [self.section.rowAlignmentOptions objectForKey:PSTFlowLayoutRowVerticalAlignmentKey];
+        BOOL centerItems = !verticalOption || ([verticalOption respondsToSelector:@selector(integerValue)] && [verticalOption integerValue] == 1);
+        CGFloat maxScrollDimension = self.fixedItemSize ? (isHorizontal ? self.section.itemSize.width : self.section.itemSize.height) : 0;
         // the last row should justify as if it is filled with more (invisible) items so that the whole
         // UICollectionView feels more like a grid than a random line of blocks
         while (itemIndex < self.itemCount || isLastRow) {
@@ -89,6 +94,8 @@
             if (!self.fixedItemSize) {
                 PSTGridLayoutItem *item = [self.items objectAtIndex:(NSUInteger)MIN(itemIndex, self.itemCount - 1)];
                 nextItemSize = isHorizontal ? item.itemFrame.size.height : item.itemFrame.size.width;
+                if (centerItems && itemIndex < self.itemCount)
+                    maxScrollDimension = MAX(maxScrollDimension, isHorizontal ? item.itemFrame.size.width : item.itemFrame.size.height);
             }else {
                 nextItemSize = isHorizontal ? self.section.itemSize.height : self.section.itemSize.width;
             }
@@ -155,12 +162,14 @@
             // (since our default mode is justify) calculated from the total leftover
             // space divided by the number of intervals
             if (isHorizontal) {
+                itemFrame.origin.x = centerItems ? (maxScrollDimension - itemFrame.size.width) / 2 : 0;
                 itemFrame.origin.y = itemOffset.y;
                 itemOffset.y += itemFrame.size.height + self.section.verticalInterstice;
                 if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify) {
                     itemOffset.y += interSpacing;
                 }
             }else {
+                itemFrame.origin.y = centerItems ? (maxScrollDimension - itemFrame.size.height) / 2 : 0;
                 itemFrame.origin.x = itemOffset.x;
                 itemOffset.x += itemFrame.size.width + self.section.horizontalInterstice;
                 if (horizontalAlignment == PSTFlowLayoutHorizontalAlignmentJustify) {

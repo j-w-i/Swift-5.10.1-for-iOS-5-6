@@ -1517,3 +1517,16 @@ state, and an analyser keeps exact baseline requirements separate from failing g
 hardware run, latency/FPS result, production runtime change, compiler change or publication is claimed.
 The next work is to isolate centering/quantisation and resolve fresh-cell creation/priority/coalescing
 rather than treating a useful half-batch heuristic as the finished native scheduler.
+
+### Rows: default within-row centering now matches UIKit (verified on device)
+
+Native flow layout centers unequal-size items on the row's scroll axis; PST pinned them to
+the top/leading edge. A new independent gate (`tests/flow-row-centering.m`) covers 16
+variable-size cases (vertical and horizontal scroll, padded and unpadded sections, 1/5/6/7
+items, including an incomplete final row) with no estimates and no scheduling prototype.
+
+Result: stock UIKit 6.1 on the iPod 5 passes all 16 cases, the previous PST engine failed 12,
+and the fix makes both routes produce **byte-identical frame matrices**. The fix is confined to
+`PSTGridLayoutRow` and only changes the default alignment option value (1); other private
+option values keep the former top/leading behaviour. Re-verified afterwards: visible/offscreen
+sizing mutation, four-case stability and sizing-delegate geometry gates all still pass.
