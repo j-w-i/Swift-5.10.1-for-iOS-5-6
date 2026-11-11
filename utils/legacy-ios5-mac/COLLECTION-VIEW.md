@@ -2095,3 +2095,34 @@ engine, not a hook point, so the hook cannot reproduce it on top of iOS 6's engi
 **Options that would remove the trade-off:** replace Apple's flow layout engine on iOS 6-9 with PST's
 packed engine (the same layout, driven through the UICollectionView API), which already measures 0.06-0.22x of
 this cost on the same device; or accept a size threshold. Neither is done.
+
+### Fit order: 9 of 10 stepped fixtures exact on PST, and the Apple route within a pixel everywhere
+
+The one-column fixture that differed (viewport 60) was a fit-order difference. Seven candidate orderings
+were scored against all 885 first-pass fit sequences captured from iOS 27 UIKit (750 of them were
+multi-fit). None of the simple ones (index, distance from the origin, distance from the query rect)
+explained more than 342. The rule that fits, learnt from the data and then verified:
+
+- **One cell per row (or column):** the cell that *spans* the visible origin first, then the cells after
+  it, then those before it nearest-first. This explains `[9, 10, 8, 11]` where nearest-top would give
+  `[9, 10, 11, 8]`. 452 of 485 single-column sequences, and the remaining misses were one case that
+  appears in two traces.
+- **Several cells per row:** the cells nearest the visible origin. The same spanning rule scored 20 of 200
+  on two-column grids and 0 of 200 on three-column grids, so the two regimes are real, not one rule. Which
+  applies is read from the frames.
+
+Applying it in PST took the stepped fixtures from 8 of 10 to **9 of 10 exact**. The one left is the
+three-column grid at viewport 120, where native fits `[0,3,1,6,4,7,9,10,2,5,8]` and PST `[0,3,6,1,9,4,7,10,
+2,5,8]`: both start with column-major, but native interleaves the columns as each fit changes the next
+batch's candidate set. Not explained yet.
+
+The same ordering is in the Apple-route hook. On the iPod touch 5 (iOS 6.1.3) against iOS 27, over four
+stepped configurations (1,440 rectangles): **0 differ by more than half a point**, down from 884 (61.4%)
+before the hook was changed and 285 larger-than-sub-pixel differences in the previous round; fit sequences
+match step for step on all four configurations. The 673 rectangles that are not bit-exact are all below half
+a point, which is the oracle running at 3x scale and the device at 2x. All PST gates pass, the 21-check API
+gate passes on both iPods and the nil-delegate gate passes 10 of 10.
+
+Limit: this is evidence from five fixture families (1, 2 and 3 columns, vertical scroll). Horizontal
+ordering is implemented by symmetry and is covered only by the layouts test, which compares frames, not
+fit order.

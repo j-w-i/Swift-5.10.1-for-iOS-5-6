@@ -1939,11 +1939,31 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
             NSArray *chosen;
             if (fresh.count) {
                 const CGPoint origin = self.bounds.origin;
+                const BOOL horizontal = ((PSTCollectionViewFlowLayout *)_layout).scrollDirection == PSTCollectionViewScrollDirectionHorizontal;
+                // One cell per row (or column): UIKit fits the cell that spans the visible origin first, then the
+                // cells after it, then those before it nearest-first. With several cells per row it fits the cells
+                // nearest the origin instead. Which applies is read from the frames, not from the layout.
+                BOOL singleLine = YES; { CGFloat firstCross = NAN;
+                    for (PSTCollectionViewItemKey *k in fresh) {
+                        CGRect f = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:k]).layoutAttributes.frame;
+                        CGFloat cross = horizontal ? CGRectGetMinY(f) : CGRectGetMinX(f);
+                        if (isnan(firstCross)) firstCross = cross; else if (cross != firstCross) { singleLine = NO; break; }
+                    } }
                 [fresh sortUsingComparator:^NSComparisonResult(PSTCollectionViewItemKey *a, PSTCollectionViewItemKey *b) {
-                    CGPoint x = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:a]).layoutAttributes.frame.origin;
-                    CGPoint y = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:b]).layoutAttributes.frame.origin;
-                    CGFloat da = (x.x - origin.x) * (x.x - origin.x) + (x.y - origin.y) * (x.y - origin.y);
-                    CGFloat db = (y.x - origin.x) * (y.x - origin.x) + (y.y - origin.y) * (y.y - origin.y);
+                    CGRect x = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:a]).layoutAttributes.frame;
+                    CGRect y = ((PSTCollectionReusableView *)[_allVisibleViewsDict objectForKey:b]).layoutAttributes.frame;
+                    if (singleLine) {
+                        const CGFloat o = horizontal ? origin.x : origin.y;
+                        CGFloat lo[2] = { horizontal ? CGRectGetMinX(x) : CGRectGetMinY(x), horizontal ? CGRectGetMinX(y) : CGRectGetMinY(y) };
+                        CGFloat hi[2] = { horizontal ? CGRectGetMaxX(x) : CGRectGetMaxY(x), horizontal ? CGRectGetMaxX(y) : CGRectGetMaxY(y) };
+                        int rank[2];
+                        for (int k = 0; k < 2; k++) rank[k] = (lo[k] <= o && o < hi[k]) ? 0 : (lo[k] >= o ? 1 : 2);
+                        if (rank[0] != rank[1]) return rank[0] < rank[1] ? NSOrderedAscending : NSOrderedDescending;
+                        if (lo[0] != lo[1]) return (rank[0] == 2) == (lo[0] > lo[1]) ? NSOrderedAscending : NSOrderedDescending;
+                        return [a.indexPath compare:b.indexPath];
+                    }
+                    CGFloat da = (x.origin.x - origin.x) * (x.origin.x - origin.x) + (x.origin.y - origin.y) * (x.origin.y - origin.y);
+                    CGFloat db = (y.origin.x - origin.x) * (y.origin.x - origin.x) + (y.origin.y - origin.y) * (y.origin.y - origin.y);
                     if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
                     return [a.indexPath compare:b.indexPath];
                 }];

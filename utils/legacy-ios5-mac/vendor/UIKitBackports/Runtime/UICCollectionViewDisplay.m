@@ -483,10 +483,29 @@ static void UICMeasureSelfSizing(UICollectionView *collectionView, SEL layoutSub
         NSArray *chosen;
         if (fresh.count) {
             const CGPoint origin = collectionView.bounds.origin;
+            const BOOL horizontal = [(UICollectionViewFlowLayout *)layout scrollDirection] == UICollectionViewScrollDirectionHorizontal;
+            // One cell per row (or column): the cell spanning the visible origin first, then those after it, then
+            // those before it nearest-first. With several per row: the cells nearest the origin. Read from the frames.
+            BOOL singleLine = YES; { CGFloat firstCross = NAN;
+                for (NSArray *entry in fresh) {
+                    CGRect f = [[frames objectForKey:entry[0]] CGRectValue];
+                    CGFloat cross = horizontal ? CGRectGetMinY(f) : CGRectGetMinX(f);
+                    if (isnan(firstCross)) firstCross = cross; else if (cross != firstCross) { singleLine = NO; break; }
+                } }
             [fresh sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) {
-                CGPoint x = [[frames objectForKey:a[0]] CGRectValue].origin, y = [[frames objectForKey:b[0]] CGRectValue].origin;
-                CGFloat da = (x.x - origin.x) * (x.x - origin.x) + (x.y - origin.y) * (x.y - origin.y);
-                CGFloat db = (y.x - origin.x) * (y.x - origin.x) + (y.y - origin.y) * (y.y - origin.y);
+                CGRect x = [[frames objectForKey:a[0]] CGRectValue], y = [[frames objectForKey:b[0]] CGRectValue];
+                if (singleLine) {
+                    const CGFloat o = horizontal ? origin.x : origin.y;
+                    CGFloat lo[2] = { horizontal ? CGRectGetMinX(x) : CGRectGetMinY(x), horizontal ? CGRectGetMinX(y) : CGRectGetMinY(y) };
+                    CGFloat hi[2] = { horizontal ? CGRectGetMaxX(x) : CGRectGetMaxY(x), horizontal ? CGRectGetMaxX(y) : CGRectGetMaxY(y) };
+                    int rank[2];
+                    for (int k = 0; k < 2; k++) rank[k] = (lo[k] <= o && o < hi[k]) ? 0 : (lo[k] >= o ? 1 : 2);
+                    if (rank[0] != rank[1]) return rank[0] < rank[1] ? NSOrderedAscending : NSOrderedDescending;
+                    if (lo[0] != lo[1]) return (rank[0] == 2) == (lo[0] > lo[1]) ? NSOrderedAscending : NSOrderedDescending;
+                    return [a[0] compare:b[0]];
+                }
+                CGFloat da = (x.origin.x - origin.x) * (x.origin.x - origin.x) + (x.origin.y - origin.y) * (x.origin.y - origin.y);
+                CGFloat db = (y.origin.x - origin.x) * (y.origin.x - origin.x) + (y.origin.y - origin.y) * (y.origin.y - origin.y);
                 if (da != db) return da < db ? NSOrderedAscending : NSOrderedDescending;
                 return [a[0] compare:b[0]];
             }];
