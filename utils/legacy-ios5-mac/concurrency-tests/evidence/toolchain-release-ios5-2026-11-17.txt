@@ -4,7 +4,7 @@ libswiftCore.dylib sha256: e5879d3af8579ba5b77fc693014ac86c243befb7b004fe3d7f72d
 Date: 2026-11-17
 
 == CLI suites (run-on-ipod.sh)
-ConcurrencyRuntime:  PASS,  FAIL, 
+ConcurrencyRuntime: 14 PASS, 0 FAIL, ALL PASS EXIT=0 
 ConcurrencyAsyncSequences: 12 PASS, 0 FAIL, ALL PASS EXIT=0
 FoundationAsync: 57 PASS, 0 FAIL, checks: 57 passed, 0 failed, 0 skipped ALL PASS EXIT=0
 FoundationFileIO: 7 PASS, 0 FAIL, FILE IO PARITY PASS EXIT=0
