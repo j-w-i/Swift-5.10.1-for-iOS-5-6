@@ -1,0 +1,42 @@
+Device: iPod touch 3 (iPod3,1), iOS 5.1.1, armv7, over USB (iproxy :2225)
+Toolchain: fresh-clone build-all at a0247c6c+393c8a63 (released as v2026.11.16-1809 / -1900)
+libswiftCore.dylib sha256: e5879d3af8579ba5b77fc693014ac86c243befb7b004fe3d7f72d77e1d261cc1
+Date: 2026-11-17
+
+== CLI suites (run-on-ipod.sh)
+ConcurrencyRuntime:  PASS,  FAIL, 
+ConcurrencyAsyncSequences: 12 PASS, 0 FAIL, ALL PASS EXIT=0
+FoundationAsync: 57 PASS, 0 FAIL, checks: 57 passed, 0 failed, 0 skipped ALL PASS EXIT=0
+FoundationFileIO: 7 PASS, 0 FAIL, FILE IO PARITY PASS EXIT=0
+UIKitSemanticColors: 7 PASS, 0 FAIL, EXIT=0
+ConcurrencyClocks: sleep(for:) ok, elapsed >= 40ms: true;sleep(until:) ok;Duration math: 2s; EXIT=0
+
+== App: kit new-project template (scene lifecycle) + GenericRuntimeSmoke, built by the kit's generated iOS 5.0 armv7 command
+Binary: armv7, LC_VERSION_MIN_IPHONEOS 5.0, LC_UNIXTHREAD; installed /Applications/LSDKCheck.app, launched via SpringBoard (n2launch)
+LSDKCheck viewDidLoad iOS 5.1.1
+PASS scene lifecycle: key window 320x480
+PASS metadata.same-specialization
+PASS metadata.distinct-specializations
+PASS metadata.derived-class
+PASS metadata.static-dynamic-agreement
+PASS NSObject.identity-round-trip
+PASS cast.reject-wrong-generic-argument
+PASS inheritance.generic-base-and-override
+PASS cast.protocol-and-dynamic-dispatch
+PASS cast.reject-wrong-derived-specialization
+PASS method.swift-generic
+PASS NSObject.class-name-and-description: class=_TtGC9LSDKCheckP6$fca1c15GenericSmokeBoxSi_; description=<_TtGC9LSDKCheckP6$fca1c15GenericSmokeBoxSi_: 0x1e5e8930>
+PASS collection.generic-array
+PASS collection.generic-dictionary
+PASS bridge.NSArray-generic-objects
+PASS bridge.NSDictionary-generic-objects
+PASS bridge.NSString
+PASS objc.responds-to-selector
+PASS objc.perform-selector
+PASS lifetime.weak-zeroed
+PASS lifetime.derived-deinit: count=1
+PASS lifetime.generic-base-deinit: count=1
+PASS lifetime.generic-payload-release: count=1
+PASS in-app task group + MainActor (2870)
+LSDKCHECK DONE
+Crash reports for LSDKCheck: 0
