@@ -15,7 +15,7 @@ ROOT="${LEGACY_BUILD_ROOT:?set LEGACY_BUILD_ROOT to a directory (created if miss
 XC="${XCODE_13_4_1_DEVELOPER_DIR:?set XCODE_13_4_1_DEVELOPER_DIR to Xcode 13.4.1.app/Contents/Developer}"
 HERE="$(cd "$(dirname "$0")" && pwd -P)"; REPO="$(cd "$HERE/../.." && pwd -P)"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"; SWIFT_JOBS="${SWIFT_JOBS:-$JOBS}"; export JOBS
-case "$XC$ROOT" in *" "*) echo "Paths containing spaces are not supported by the LLVM/Swift build systems (XCODE_13_4_1_DEVELOPER_DIR, LEGACY_BUILD_ROOT)." >&2; exit 64;; esac
+case "$ROOT" in *" "*) echo "LEGACY_BUILD_ROOT must not contain spaces (the LLVM/Swift build systems split it). An Xcode path with spaces is fine: it is cloned into the build root." >&2; exit 64;; esac
 mkdir -p "$ROOT"; ROOT="$(cd "$ROOT" && pwd -P)"
 # xcrun/xcodebuild report Xcode's real path, so a space-free symlink is not enough: the kit installs
 # Xcode under "Application Support", and the 5.1.5 compiler-rt CMake splices that path unquoted into
