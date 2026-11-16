@@ -404,8 +404,20 @@ if [ "$CHECK_ONLY" -eq 1 ] || [ -z "$ENVROOT" ]; then
   exit 0
 fi
 
-/usr/bin/python3 "$HERE/publish-ios5-profile.py" --environment-root "$ENVROOT" --toolchain "$TC" \
-  --evidence "$OUTPUT/qualification-evidence.json"
+# --force replaces a published profile only now that every check has passed; the previous one is
+# kept under Backups/profiles rather than beside the live profile.
+if [ "$FORCE" -eq 1 ] && [ -f "$ENVROOT/ios5-profile.json" ]; then
+  mkdir -p "$ENVROOT/Backups/profiles"
+  PREVIOUS="$ENVROOT/Backups/profiles/ios5-profile-$(date -u +%Y%m%dT%H%M%SZ).json"
+  /bin/mv "$ENVROOT/ios5-profile.json" "$PREVIOUS"
+  echo "Previous profile kept at $PREVIOUS"
+  /usr/bin/python3 "$HERE/publish-ios5-profile.py" --environment-root "$ENVROOT" --toolchain "$TC" \
+    --evidence "$OUTPUT/qualification-evidence.json" \
+    || { /bin/mv "$PREVIOUS" "$ENVROOT/ios5-profile.json"; die "publishing failed; previous profile restored"; }
+else
+  /usr/bin/python3 "$HERE/publish-ios5-profile.py" --environment-root "$ENVROOT" --toolchain "$TC" \
+    --evidence "$OUTPUT/qualification-evidence.json"
+fi
 echo
 echo "iOS 5 is now available in the kit for that environment (device execution: pending, static checks only)."
 if [ "$INSTALLED" -eq 1 ]; then echo "Toolchain installed at $TC"; fi
