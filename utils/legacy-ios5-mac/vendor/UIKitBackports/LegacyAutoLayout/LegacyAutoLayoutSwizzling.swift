@@ -195,7 +195,12 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         let before = view.frame
         LegacyAutoLayoutInstaller.callOriginalVoidRect(
             selector: NSSelectorFromString("setFrame:"), receiver: view, argument: frame)
-        if before != view.frame && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+        let after = view.frame
+        // A move that keeps the size is a translation: it can only change a solution when the view's
+        // position is itself part of a constraint system (see legacyPositionAffectsConstraints).
+        let relevant = before.size != after.size ? view.legacyGeometryAffectsConstraints
+                                                 : view.legacyPositionAffectsConstraints
+        if before != after && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && relevant {
             legacyClearAutoresizingReference(view)
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
@@ -230,7 +235,10 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             receiver: view,
             argument: center
         )
-        if before != view.center && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyGeometryAffectsConstraints {
+        // A center change never changes the size, so it can only matter where the view's position takes part
+        // in a constraint system. Collection and table views move every recycled cell this way while scrolling;
+        // treating that as a constraint mutation defeated the engine's no-change fast path on every frame.
+        if before != view.center && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && view.legacyPositionAffectsConstraints {
             legacyClearAutoresizingReference(view)
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()

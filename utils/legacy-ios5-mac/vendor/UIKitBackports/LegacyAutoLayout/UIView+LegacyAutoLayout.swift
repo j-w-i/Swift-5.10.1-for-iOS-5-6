@@ -578,6 +578,36 @@ extension UIView {
         return LegacyViewState.existing(of: self)?.geometryAnchorsLayout ?? false
     }
 
+    /// Whether moving this view (same size, new position) can change any constraint solution.
+    ///
+    /// Constraints inside the view are solved relative to its own bounds, so a translation leaves them alone. The
+    /// position matters only where it is an input or output of a constraint system: the engine positions the view
+    /// (`translatesAutoresizingMaskIntoConstraints == false`), or a constraint installed on an ancestor names it or
+    /// something inside it, such as a layout-guide proxy (a constraint is installed on the nearest common ancestor
+    /// of its items, so one relating this subtree to the outside lives on an ancestor and the walk finds it). A
+    /// frame-managed cell in a collection view is neither, which is what keeps scrolling - the collection view
+    /// re-centres recycled cells - from invalidating every layout root.
+    internal var legacyPositionAffectsConstraints: Bool {
+        guard legacyGeometryAffectsConstraints else { return false }
+        if let state = LegacyViewState.existing(of: self), state.translatesAutoresizingMaskIntoConstraints == false {
+            return true
+        }
+        func inside(_ item: Any?) -> Bool {
+            guard let view = item as? UIView else { return false }
+            return view === self || view.isDescendant(of: self)
+        }
+        var ancestor = superview
+        while let current = ancestor {
+            if let state = LegacyViewState.existing(of: current) {
+                for constraint in state.constraints where inside(constraint.firstItem) || inside(constraint.secondItem) {
+                    return true
+                }
+            }
+            ancestor = current.superview
+        }
+        return false
+    }
+
     /// O(depth) only when participation first reaches an ancestor; geometry reads
     /// remain O(1). Insertion propagates a moved participating subtree too.
     internal func legacyPropagateGeometryParticipation() {
