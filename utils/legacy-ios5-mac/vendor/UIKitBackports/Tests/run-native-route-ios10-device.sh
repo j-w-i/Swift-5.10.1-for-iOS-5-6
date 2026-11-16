@@ -14,12 +14,13 @@ PORT=${1:?usage: run-native-route-ios10-device.sh SSH_PORT [DEVICE_PASSWORD]}
 export DEVICE_PASSWORD=${2:-${DEVICE_PASSWORD:-alpine}}
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 RT="$HERE/../Runtime"
-CLANG=${CLANG:-/Users/jwalr/Applications/Xcode-13.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}
-SDK=${SDK:-/Users/jwalr/Applications/Xcode-13.4.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk}
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/../../../device-env.sh"
+CLANG=${CLANG:-$XCODE_13_4_1_DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}
+SDK=${SDK:-$XCODE_13_4_1_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk}
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/native-ios10.XXXXXX")
 FLAGS=(-target arm64-apple-ios10.0 -isysroot "$SDK" -O2 -fobjc-arc -fblocks -fno-modules
        -Wno-nullability-completeness -Wno-incompatible-pointer-types
-       -L /Users/jwalr/Developer/Legacy-Build-Inputs)
+       -L "$LEGACY_CRT_DIR")
 "$CLANG" "${FLAGS[@]}" -I "$RT" -c "$RT/UICCollectionViewDisplay.m" -o "$OUT/display.o"
 "$CLANG" "${FLAGS[@]}" "$HERE/native_route_ios10_cli_test.m" "$OUT/display.o" \
   -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics -o "$OUT/probe10"

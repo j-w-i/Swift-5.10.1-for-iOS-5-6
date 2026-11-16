@@ -4,11 +4,12 @@
 set -euo pipefail
 RT=${1:?runtime .m};NAME=${2:?app name};OUT=${3:?new output}
 [[ "$NAME" =~ ^[A-Za-z][A-Za-z0-9]*$ && "$OUT" = /* && ! -e "$OUT" ]] || { echo 'bad arguments' >&2; exit 64; }
-D=/Users/jwalr/Applications/Xcode-13.4.1.app/Contents/Developer
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/../../../device-env.sh"
+D="$XCODE_13_4_1_DEVELOPER_DIR"
 SDK="$D/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk";CC="$D/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P);mkdir -p "$OUT/$NAME.app"
 "$CC" -target armv7-apple-ios6.0 -marm -isysroot "$SDK" -O2 -fobjc-arc -fblocks -fno-modules -Wno-unguarded-availability-new \
- -L /Users/jwalr/Developer/Legacy-Build-Inputs "$HERE/nil_delegate_selfsizing.m" "$RT" \
+ -L "$LEGACY_CRT_DIR" "$HERE/nil_delegate_selfsizing.m" "$RT" \
  -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics -o "$OUT/$NAME.app/$NAME" >"$OUT/build.log" 2>&1 || { tail -30 "$OUT/build.log" >&2; exit 1; }
 python3 - "$OUT/$NAME.app" "$NAME" <<'PY'
 import plistlib,sys,pathlib

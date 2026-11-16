@@ -13,10 +13,11 @@ set -euo pipefail
 PORT=${1:-2227}
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 RUNTIME="$HERE/../Runtime"
-KEY=${DEVICE_KEY:-/Users/jwalr/Developer/Neocord2-iOS5-Work/device-bridge/device-key}
+KEY=${DEVICE_KEY:?set DEVICE_KEY to the device SSH private key}
 DEV=${DEVICE:-root@127.0.0.1}
-CLANG=${CLANG:-/Users/jwalr/Applications/Xcode-13.4.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}
-SDK=${SDK:-/Users/jwalr/Applications/Xcode-13.4.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk}
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/../../../device-env.sh"
+CLANG=${CLANG:-$XCODE_13_4_1_DEVELOPER_DIR/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang}
+SDK=${SDK:-$XCODE_13_4_1_DEVELOPER_DIR/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.5.sdk}
 [ -x "$CLANG" ] && [ -d "$SDK" ] && [ -f "$KEY" ] || { echo "missing clang, SDK or device key" >&2; exit 2; }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/apple-route.XXXXXX")
 SSH=(ssh -p "$PORT" -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa)
@@ -30,7 +31,7 @@ APP_FLAGS=("${RUNTIME_FLAGS[@]/armv7-apple-ios5.0/armv7-apple-ios6.0}")
   || { tail -30 "$OUT/build.log" >&2; exit 1; }
 APP="$OUT/AppleRoute.app"
 mkdir -p "$APP"
-"$CLANG" "${APP_FLAGS[@]}" -I "$RUNTIME" -L /Users/jwalr/Developer/Legacy-Build-Inputs \
+"$CLANG" "${APP_FLAGS[@]}" -I "$RUNTIME" -L "$LEGACY_CRT_DIR" \
   "$HERE/apple_route_ios6_device_test.m" "$OUT/display.o" \
   -framework UIKit -framework Foundation -framework QuartzCore -framework CoreGraphics \
   -o "$APP/AppleRoute" 2>>"$OUT/build.log" || { tail -30 "$OUT/build.log" >&2; exit 1; }

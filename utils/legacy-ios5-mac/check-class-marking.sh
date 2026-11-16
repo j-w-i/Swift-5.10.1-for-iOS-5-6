@@ -31,7 +31,7 @@ done
 normalize() { /usr/bin/grep -v -E '^(; ModuleID|source_filename)' "$1"; }
 diff <(normalize "$OUT/stock.ll") <(normalize "$OUT/disabled.ll")
 diff <(normalize "$OUT/legacy.ll") <(normalize "$OUT/runtime.ll")
-python3 - "$OUT" <<'PY'
+/usr/bin/python3 - "$OUT" <<'PY'
 from pathlib import Path
 import re, sys
 root = Path(sys.argv[1])

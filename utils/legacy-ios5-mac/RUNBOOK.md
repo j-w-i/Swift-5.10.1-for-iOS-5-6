@@ -1,3 +1,7 @@
+> **Obsolete (kept for history).** This is the original hand-run recipe. It depends on build trees
+> (`~/swift-ios5-build`, `~/swift-5.10-ios5-build`) that no longer exist and is not how the published
+> toolchain is made. Use `build-all.sh` (see `LEGACY-IOS5-BUILD.md`) instead.
+
 # End-to-end runbook: isolated Swift 5.10 iOS 5 toolchain
 
 Every step is explicit, serial and non-destructive: no global `xcode-select`, no
