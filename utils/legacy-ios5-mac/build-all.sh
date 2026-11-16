@@ -17,6 +17,21 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"; REPO="$(cd "$HERE/../.." && pwd -P)"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"; SWIFT_JOBS="${SWIFT_JOBS:-$JOBS}"; export JOBS
 case "$XC$ROOT" in *" "*) echo "Paths containing spaces are not supported by the LLVM/Swift build systems (XCODE_13_4_1_DEVELOPER_DIR, LEGACY_BUILD_ROOT)." >&2; exit 64;; esac
 mkdir -p "$ROOT"; ROOT="$(cd "$ROOT" && pwd -P)"
+# xcrun/xcodebuild report Xcode's real path, so a space-free symlink is not enough: the kit installs
+# Xcode under "Application Support", and the 5.1.5 compiler-rt CMake splices that path unquoted into
+# -isysroot. Use an APFS clone inside the build root instead (no extra disk space; same volume only).
+XC_REAL="$(cd "$XC" && pwd -P)"
+case "$XC_REAL" in *" "*)
+  XC_APP="$(dirname "$(dirname "$XC_REAL")")"; XC_CLONE="$ROOT/tools/Xcode-13.4.1.app"
+  if [ ! -d "$XC_CLONE/Contents/Developer" ]; then
+    [ "$(stat -f %d "$XC_APP")" = "$(stat -f %d "$ROOT")" ] || {
+      echo "Xcode resolves to a path with spaces ($XC_APP) on another volume; move Xcode or the build root so they share an APFS volume, or use a space-free Xcode path." >&2; exit 64; }
+    echo "Xcode's real path has spaces; cloning it (APFS, no extra space) to $XC_CLONE"
+    mkdir -p "$ROOT/tools"; rm -rf "$XC_CLONE.partial"
+    /bin/cp -cR "$XC_APP" "$XC_CLONE.partial" && mv "$XC_CLONE.partial" "$XC_CLONE"
+  fi
+  XC="$XC_CLONE/Contents/Developer" ;;
+esac
 export LEGACY_BUILD_ROOT="$ROOT" XCODE_13_4_1_DEVELOPER_DIR="$XC" DEVELOPER_DIR="$XC"
 mkdir -p "$ROOT"/{src,build,logs,out,downloads,tools,.stamps}
 S="$ROOT/src"; L="$ROOT/logs"
