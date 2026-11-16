@@ -98,6 +98,18 @@ whenever a release is published.
 - Not source: the bootstrap compiler, Xcode and the pinned SDKs listed above (compiler bootstrap and platform SDKs).
 - Not verified: device execution of any build (qualification is static; `deviceExecution` stays `pending`).
 
+## Reproducibility check (2026-11-17): fresh clone at HEAD, empty build root
+A fresh clone into an empty build root, using the kit environment's own Xcode
+(`<env>/Xcode-13.4.1-LSDK.app`, a path with spaces; build-all clones it), ran every stage including
+`multiarch` and `qualify-ios5` to `DONE` (about 72 minutes on 14 cores). Two fixes were needed first:
+the Xcode clone and the explicit iOS 5 runtime failure allow-list (see `build-all.sh`).
+Compared with the toolchain the published profile was qualified against:
+- same 1,116 files and the same armv7/armv7s/arm64 slices;
+- all 240 `.swiftinterface` files, plus every header, modulemap, apinotes and yaml file, are identical
+  once the compiler commit hash and build/source paths are normalised;
+- binaries are not byte-identical: the compiler version string embeds the source commit, and debug
+  and `#sourceLocation` data embed absolute build and source paths.
+
 ## Reproducibility proof (2026-10-26): fresh clone, empty build root
 A fresh `git clone` of this repo into an empty directory, then `utils/legacy-ios5-mac/build-all.sh`, ran start to finish
 with `EXIT=0` on an Apple Silicon Mac (macOS 27, 14 cores, Xcode 13.4.1 at a space-free path). 65 minutes wall clock,
