@@ -85,6 +85,13 @@ for dev in "${ENVROOT:+$ENVROOT/Xcode-13.4.1-LSDK.app/Contents/Developer}" "${EN
 done
 HOST_XCODE_DEV="${HOST_XCODE_DEV:-${XCODE_13_4_1_DEVELOPER_DIR:-}}"
 HOST_CLANG="$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+# Link with Xcode 13.4.1's ld64, the linker kit builds use, not whatever `ld` comes first on PATH.
+# Below iOS 7, ld64 deliberately encodes absolute exports (libswiftCore's __swiftImmortalRefCount) as
+# regular exports because iOS 5/6 dyld lacks the absolute kind; modern linkers refuse to link against
+# such a dylib ("vmOffset too large"), which made qualification depend on the host's default Xcode.
+if [ -x "$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld" ]; then
+  export PATH="$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin:$PATH"
+fi
 [ -x "$HOST_CLANG" ] || HOST_CLANG="$TOOLCHAIN/usr/bin/clang"
 [ -x "$HOST_CLANG" ] || die "no linker clang found (looked in the environment Xcode and the toolchain)"
 
