@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Audit unstripped, PST-containing armv7 dylib constructor instruction state.
+"""Audit unstripped, PST-containing ARM32 dylib constructor instruction state.
 
-Usage: check-macho-initializers.py [--generic] DYLIB | --self-test
+Usage: check-macho-initializers.py [--arch armv7|armv7s] [--generic] DYLIB | --self-test
+Thin and universal inputs are accepted; the exact requested slice is required.
+The default armv7 matches iOS 5 qualification (not arm64 qualification).
 Checks all S_MOD_INIT_FUNC_POINTERS entries. By default also requires both PST
 constructors; --generic audits other dylibs without the UIKit-specific names.
 Read-only: no Mach-O rewriting, external tools, or installed-output changes.
 """
+import argparse
 import struct
 import sys
 from pathlib import Path
-from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
+from macho_slices import arm32_slice
 
-def audit(path, require_pst=True):
-    audit_bytes(select_armv7(Path(path).read_bytes()), require_pst=require_pst)
+def audit(path, arch='armv7', require_pst=True):
+    print('Auditing initializer pointers: %s (%s)' % (path, arch))
+    audit_bytes(Path(path).read_bytes(), arch, require_pst=require_pst)
 
 
-def audit_bytes(data, require_pst=True):
+def audit_bytes(data, arch='armv7', require_pst=True):
+    data = arm32_slice(data, arch)
     def unpack(fmt, offset):
         size = struct.calcsize(fmt)
         if offset < 0 or offset + size > len(data):
@@ -157,11 +162,13 @@ if __name__ == '__main__':
     try:
         if sys.argv[1:] == ['--self-test']:
             self_test()
-        elif len(sys.argv) == 3 and sys.argv[1] == '--generic':
-            audit(sys.argv[2], require_pst=False)
-        elif len(sys.argv) == 2:
-            audit(sys.argv[1])
         else:
-            raise ValueError('usage: check-macho-initializers.py [--generic] DYLIB | --self-test')
+            parser = argparse.ArgumentParser(description=__doc__)
+            parser.add_argument('--arch', choices=('armv7', 'armv7s'), default='armv7')
+            parser.add_argument('--generic', action='store_true',
+                                help='do not require the UIKit PST constructors')
+            parser.add_argument('dylib')
+            args = parser.parse_args()
+            audit(args.dylib, args.arch, require_pst=not args.generic)
     except (ValueError, IndexError, OSError, struct.error) as error:
         raise SystemExit('FAIL: ' + str(error))

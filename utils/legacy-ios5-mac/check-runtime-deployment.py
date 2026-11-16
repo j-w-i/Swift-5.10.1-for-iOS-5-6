@@ -294,7 +294,8 @@ def main(argv=None):
     parser.add_argument("--compiler-provenance", help="optional source compiler provenance file to hash")
     parser.add_argument("--sdk-provenance", help="optional SDK provenance file to hash")
     parser.add_argument("--self-test", action="store_true", help="run sibling synthetic metadata tests (no runtime execution)")
-    parser.add_argument("--test-work-dir", default="/Users/jwalr/Developer/Neocord2-iOS5-Work/sdk-build/runtime-floor-check",
+    parser.add_argument("--test-work-dir", default=os.environ.get("LEGACY_TEST_WORK_DIR") or
+                        str(Path.home() / "Library/Caches/legacy-ios5/runtime-floor-check"),
                         help="self-test filesystem fixtures/cache root; never system temp or the SDK")
     args = parser.parse_args(argv)
     if args.self_test and (args.toolchain or args.runtime_dir or args.objects_dir or args.command_log

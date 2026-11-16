@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Reject data pointers into ARM/Thumb code that lack the interworking bit.
 
+Usage: check-thumb-pointers.py [--arch armv7|armv7s] IMAGE | --self-test
+Thin and universal inputs require the exact requested slice (default: armv7).
+ARM64 slices are not ARM/Thumb images and are not covered by this audit.
+
 The legacy iOS 5 toolchain is linked by an older ld64 that drops the low bit of
 local relocations to Thumb functions. The symbol table still marks those
 functions as Thumb, so a stored pointer without bit 0 makes iOS 5 dyld enter
@@ -15,10 +19,11 @@ symbols must be present (unstripped local text symbols) and ordinary 32-bit word
 are scanned in the listed pointer sections only. The pipeline separately
 compiles every image it links for iOS 5 in ARM mode, which removes the ambiguity.
 """
+import argparse
 import struct
 import sys
 from pathlib import Path
-from armv7slice import select_armv7  # local helper: unwrap fat images to the armv7 slice
+from macho_slices import arm32_slice
 
 N_ARM_THUMB_DEF = 0x0008
 # Sections that can hold absolute addresses into __text. Relative-offset Swift
@@ -32,8 +37,13 @@ POINTER_SECTIONS = {
 }
 
 
-def load(path):
-    data = select_armv7(Path(path).read_bytes())
+def load(path, arch='armv7'):
+    print('Auditing Thumb pointers: %s (%s)' % (path, arch))
+    audit_bytes(Path(path).read_bytes(), arch)
+
+
+def audit_bytes(data, arch='armv7'):
+    data = arm32_slice(data, arch)
 
     def unpack(fmt, offset):
         size = struct.calcsize(fmt)
@@ -128,7 +138,7 @@ def self_test():
         sizeofcmds = 2 * 72 + segment_size + symtab_size
         total = const_address + 4
         data = bytearray(total)
-        struct.pack_into('<7I', data, 0, 0xfeedface, 12, 6, 6, 2, sizeofcmds, 0)
+        struct.pack_into('<7I', data, 0, 0xfeedface, 12, 9, 6, 2, sizeofcmds, 0)
         struct.pack_into('<2I', data, 28, 1, segment_size)
         struct.pack_into('<2I16s8I', data, 28, 1, segment_size, b'\0' * 16,
                          0, total, 0, total, 7, 5, 2, 0)
@@ -152,15 +162,11 @@ def self_test():
     bad = image(0x1000)    # same function, bit lost
     for label, payload, should_pass in (('thumb-bit pointer', good, True),
                                         ('lost-bit pointer', bad, False)):
-        path = Path('/tmp/thumb-audit-self-test-%d' % should_pass)
-        path.write_bytes(payload)
         try:
-            load(path)
+            audit_bytes(payload)
             failure = None
         except ValueError as error:
             failure = error
-        finally:
-            path.unlink()
         if should_pass and failure:
             raise ValueError('self-test expected pass but failed: ' + str(failure))
         if not should_pass and not failure:
@@ -176,6 +182,10 @@ if __name__ == '__main__':
             raise SystemExit('FAIL: ' + str(error))
         raise SystemExit(0)
     try:
-        load(sys.argv[1])
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument('--arch', choices=('armv7', 'armv7s'), default='armv7')
+        parser.add_argument('image')
+        args = parser.parse_args()
+        load(args.image, args.arch)
     except (ValueError, IndexError, OSError, struct.error) as error:
         raise SystemExit('FAIL: ' + str(error))

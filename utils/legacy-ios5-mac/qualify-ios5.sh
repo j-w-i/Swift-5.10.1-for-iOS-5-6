@@ -72,14 +72,17 @@ fi
 
 # iPhoneOS SDK: the kit environment's Xcode first, then the build's Xcode 13.4.1.
 if [ -z "$SDK" ]; then
-  for dev in "${ENVROOT:+$ENVROOT/Xcode.app/Contents/Developer}" "${XCODE_13_4_1_DEVELOPER_DIR:-}"; do
+  for dev in "${ENVROOT:+$ENVROOT/Xcode-13.4.1-LSDK.app/Contents/Developer}" "${ENVROOT:+$ENVROOT/Xcode.app/Contents/Developer}" "${XCODE_13_4_1_DEVELOPER_DIR:-}"; do
     [ -n "$dev" ] && [ -d "$dev/Platforms/iPhoneOS.platform/Developer/SDKs" ] || continue
     SDK="$(ls -d "$dev/Platforms/iPhoneOS.platform/Developer/SDKs"/iPhoneOS*.sdk 2>/dev/null | sort -V | tail -1)"
     [ -n "$SDK" ] && break
   done
 fi
 [ -n "$SDK" ] && [ -d "$SDK" ] || die "no iPhoneOS SDK found; pass --sdk or set XCODE_13_4_1_DEVELOPER_DIR"
-HOST_XCODE_DEV="${ENVROOT:+$ENVROOT/Xcode.app/Contents/Developer}"
+HOST_XCODE_DEV=""
+for dev in "${ENVROOT:+$ENVROOT/Xcode-13.4.1-LSDK.app/Contents/Developer}" "${ENVROOT:+$ENVROOT/Xcode.app/Contents/Developer}"; do
+  [ -n "$dev" ] && [ -d "$dev" ] && { HOST_XCODE_DEV="$dev"; break; }
+done
 HOST_XCODE_DEV="${HOST_XCODE_DEV:-${XCODE_13_4_1_DEVELOPER_DIR:-}}"
 HOST_CLANG="$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
 [ -x "$HOST_CLANG" ] || HOST_CLANG="$TOOLCHAIN/usr/bin/clang"
@@ -88,6 +91,15 @@ HOST_CLANG="$HOST_XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
 if [ -z "$OUTPUT" ]; then
   [ -n "${LEGACY_BUILD_ROOT:-}" ] || die "set LEGACY_BUILD_ROOT or pass --output"
   OUTPUT="$LEGACY_BUILD_ROOT/out/ios5-qualification"
+fi
+# A published profile references its evidence, so evidence must live inside the environment
+# (a build root is scratch space and the profile stores environment-relative paths).
+if [ -n "$ENVROOT" ] && [ "$CHECK_ONLY" -eq 0 ]; then
+  case "$OUTPUT" in
+    "$ENVROOT"/*) ;;
+    *) OUTPUT="$ENVROOT/Qualification/$(basename "$OUTPUT")-$(date -u +%Y%m%dT%H%M%SZ)"
+       echo "Evidence goes inside the environment: $OUTPUT" ;;
+  esac
 fi
 [ ! -e "$OUTPUT" ] || die "refusing to overwrite evidence directory: $OUTPUT (choose --output or remove it)"
 
@@ -141,11 +153,13 @@ echo "== 1/5 static build products"
 "$TC/usr/bin/swift-frontend" --version > "$OUTPUT/logs/static-build.txt" 2>&1 || die "swift-frontend --version failed"
 if [ -n "$BUILDLOG" ]; then cp "$BUILDLOG" "$OUTPUT/logs/compiler-515.log"; else cp "$OUTPUT/logs/static-build.txt" "$OUTPUT/logs/compiler-515.log"; fi
 echo "   $(head -1 "$OUTPUT/logs/static-build.txt")"
-/usr/bin/python3 "$HERE/check-macho-initializers.py" "$RES/iphoneos/libswiftUIKit.dylib" \
+# Qualification builds armv7 executables. Audit that exact runtime slice even
+# when the installed runtime also contains armv7s/arm64; never pick the first slice.
+/usr/bin/python3 "$HERE/check-macho-initializers.py" --arch armv7 "$RES/iphoneos/libswiftUIKit.dylib" \
   > "$OUTPUT/logs/arm-initializers.log" 2>&1 \
   || { tail -30 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb runtime initializer"; }
 for name in Dispatch CoreGraphics Foundation Metal QuartzCore CoreImage UIKit; do
-  /usr/bin/python3 "$HERE/check-thumb-pointers.py" "$RES/iphoneos/libswift$name.dylib" \
+  /usr/bin/python3 "$HERE/check-thumb-pointers.py" --arch armv7 "$RES/iphoneos/libswift$name.dylib" \
     >> "$OUTPUT/logs/arm-initializers.log" 2>&1 \
     || { tail -20 "$OUTPUT/logs/arm-initializers.log" >&2; die "unsafe ARM/Thumb pointer in libswift$name"; }
 done
@@ -251,6 +265,26 @@ bash "$HERE/check-foundation-api.sh" "$TC" "$SDK" "$OUTPUT/foundation-api" \
   > "$OUTPUT/logs/foundation-api.log" 2>&1 \
   || { tail -40 "$OUTPUT/logs/foundation-api.log" >&2; die "Foundation backport API check failed"; }
 
+# The 64-bit slices serve the same backported surface on their iOS 7.0 floor.
+# Verify that rather than assuming the armv7 result carries over.
+if /usr/bin/lipo "$RES/iphoneos/libswiftCore.dylib" -verify_arch arm64 2>/dev/null; then
+  bash "$HERE/check-backports-multiarch.sh" "$TC" "$SDK" "$OUTPUT/backports-multiarch" \
+    > "$OUTPUT/logs/backports-multiarch.log" 2>&1 \
+    || { tail -40 "$OUTPUT/logs/backports-multiarch.log" >&2; die "armv7s/arm64 backport check failed"; }
+fi
+
+# Wide-slice runtime gates: a class-bit / bridging regression is invisible to compile-only checks and
+# only shows up as heap corruption on a modern system, so run it against a booted simulator when one is
+# available (the gate itself is OS-agnostic). run-sim-gates.sh takes the toolchain's usr/ directory.
+if [ -n "$(xcrun simctl list devices booted 2>/dev/null | grep -oE '[0-9A-F-]{36}' | head -1)" ] \
+   && /usr/bin/lipo "$RES/iphoneos/libswiftCore.dylib" -verify_arch arm64 2>/dev/null; then
+  LEGACY_TOOLCHAIN="$TC/usr" LEGACY_SDK="$SDK" bash "$HERE/runtime-gates/run-sim-gates.sh" "$RES/iphoneos" \
+    > "$OUTPUT/logs/runtime-gates.log" 2>&1 \
+    || { tail -40 "$OUTPUT/logs/runtime-gates.log" >&2; die "simulator runtime gates failed"; }
+else
+  echo "   (no booted simulator or no arm64 slice: dynamic runtime gates skipped)"
+fi
+
 echo "== 5/6 default resource tree still builds iOS 7.0 (LC_MAIN)"
 mkdir -p "$OUTPUT/default-ios6-app"
 printf 'let values = [1, 2, 3]\nprint("default-route \\(values.reduce(0, +))")\n' > "$OUTPUT/default-ios6-app/main.swift"
@@ -272,7 +306,12 @@ echo "== 6/6 imports and host signatures"
 import subprocess, sys, pathlib
 res, app, report = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 def run(*cmd):
-    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False).stdout
+    # Missing/invalid architecture must fail qualification, not look like an
+    # empty symbol/dependency list (especially with universal runtime inputs).
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise SystemExit('inspection failed: ' + repr(cmd) + '\n' + result.stdout)
+    return result.stdout
 lines, problems = [], []
 deps = [line.split(" (compatibility")[0].strip() for line in run("/usr/bin/otool", "-L", str(app)).splitlines()[1:]]
 for dep in deps:

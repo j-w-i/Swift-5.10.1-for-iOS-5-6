@@ -22,7 +22,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "check-runtime-deployment.py"
 spec = importlib.util.spec_from_file_location("runtime_deployment_checker", SCRIPT)
 checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
-TEST_WORK_ROOT = Path("/Users/jwalr/Developer/Neocord2-iOS5-Work/sdk-build/runtime-floor-check")
+TEST_WORK_ROOT = Path(os.environ.get("LEGACY_TEST_WORK_DIR") or
+                      Path.home() / "Library/Caches/legacy-ios5/runtime-floor-check")
 V5 = 0x50000
 V7 = 0x70000
 

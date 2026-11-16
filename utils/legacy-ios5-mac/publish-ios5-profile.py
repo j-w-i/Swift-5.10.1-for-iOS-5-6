@@ -3,7 +3,10 @@
 
 Usage (all three paths must be explicit and absolute):
   publish-ios5-profile.py --environment-root ROOT --toolchain TC.xctoolchain \
-      --evidence /absolute/qualification.json [--validate-only]
+      --evidence /absolute/qualification.json [--validate-only] [--allow-external-paths]
+
+The published profile stores every path relative to ROOT, so the environment can be moved
+or restored on another Mac; paths outside ROOT are refused unless --allow-external-paths.
 
 Evidence contract (JSON; duplicate keys and non-finite numbers are rejected):
   schemaVersion: 1
@@ -312,6 +315,28 @@ def check_toolchain(toolchain, evidence):
     return resources, receipt_path, receipt_hash, files
 
 
+def portable_paths(root, profile, allow_external=False):
+    """Store every path relative to the environment root so the environment can move.
+
+    The kit resolves relative profile paths against the directory holding ios5-profile.json.
+    A path outside the environment would tie the profile to one machine's build folders, so it
+    is refused unless explicitly allowed (and then kept absolute)."""
+    def convert(value, label):
+        path = Path(value)
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            require(allow_external, label + " is outside the environment (" + value + "); install it under "
+                    + str(root) + " or pass --allow-external-paths")
+            return value
+    for key in ("compilerPath", "runtimeResourcePath", "evidence", "assemblyReceiptPath"):
+        profile[key] = convert(profile[key], key)
+    for check, record in profile["provenance"].items():
+        for kind in ("log", "artifact"):
+            record[kind]["path"] = convert(record[kind]["path"], "provenance " + check + "." + kind)
+    return profile
+
+
 def publish(root, profile):
     """Flush a new file, atomically hard-link without replacement, flush directory."""
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
@@ -346,6 +371,8 @@ def main(argv=None):
     parser.add_argument("--environment-root", required=True)
     parser.add_argument("--toolchain", required=True)
     parser.add_argument("--evidence", required=True)
+    parser.add_argument("--allow-external-paths", action="store_true",
+                        help="keep absolute paths to files outside the environment (not relocatable)")
     parser.add_argument("--validate-only", action="store_true",
                         help="Check evidence only; no external tools and no profile write")
     args = parser.parse_args(argv)
@@ -399,7 +426,7 @@ def main(argv=None):
                                     "Static qualification is not proof of device compatibility.",
                                    "Device execution: " + evidence["deviceExecution"] + ".",
                                    "No environment receipt, global installation or selection modified."]}
-        publish(root, profile)
+        publish(root, portable_paths(root, profile, args.allow_external_paths))
         print("Published static-qualified profile: " + str(root / PROFILE))
         print("Device execution: " + evidence["deviceExecution"] + "; no installation/selection performed.")
         return 0
