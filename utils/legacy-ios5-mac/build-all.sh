@@ -163,7 +163,23 @@ crt515() { export LEGACY_515_ROOT="$ROOT/b515"; bash "$LEGACY_515_ROOT/src/swift
   B515="$ROOT/b515"; D="$B515/build/macos/llvm-macosx-x86_64/lib/clang/7.0.0/lib/darwin"; mkdir -p "$D"
   cp "$B515/build/crt-armv7-ios50/lib/darwin/libclang_rt.ios.a" "$D/"; }
 runtime515() { export LEGACY_515_ROOT="$ROOT/b515"; M="$LEGACY_515_ROOT/src/swift/utils/legacy-ios5-mac"
-  bash "$M/configure-ios-runtime.sh" ios5 -k 0; bash "$M/configure-ios-runtime.sh" default -k 0; }
+  # The iOS 5 configuration cannot build the 5.1.5 `os` overlay (os_log is iOS 10) or the 5.1.5
+  # Foundation overlay that imports it; the toolchain ships neither (its Foundation overlay is rebuilt
+  # by the legacy stages). Tolerate exactly those failures, require the runtime libraries assembly
+  # uses, and fail on anything else. (Before stages ran under errexit, this failure went unnoticed.)
+  local log="$L/runtime-515-ios5.log" status unexpected lib
+  set +e; bash "$M/configure-ios-runtime.sh" ios5 -k 0 > "$log" 2>&1; status=$?; set -e
+  cat "$log"
+  if [ "$status" -ne 0 ]; then
+    unexpected="$(grep -oE '^FAILED: [^ ]+' "$log" | grep -vE '^FAILED: (stdlib/public/Darwin/(os|Foundation)/IOS/armv7/(os|Foundation)\.o|lib/swift/iphoneos/(os|Foundation)\.swiftmodule/armv7\.swiftmodule)$' || true)"
+    [ -z "$unexpected" ] || { echo "Unexpected iOS 5 runtime build failures:" >&2; echo "$unexpected" >&2; return 1; }
+    echo "iOS 5 runtime: only the known os/Foundation overlay failures; continuing."
+  fi
+  for lib in Core Darwin ObjectiveC CoreFoundation Dispatch CoreGraphics SwiftOnoneSupport; do
+    [ -s "$LEGACY_515_ROOT/build/runtime-ios5/lib/swift/iphoneos/libswift$lib.dylib" ] \
+      || { echo "iOS 5 runtime is missing libswift$lib.dylib" >&2; return 1; }
+  done
+  bash "$M/configure-ios-runtime.sh" default -k 0; }
 runtime515package() { # runtime-only 5.1.5 .xctoolchain for the iOS 6 guide route (compiler-rt atomics inside)
   bash "$HERE/package-runtime-515.sh"
 }
