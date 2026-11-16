@@ -200,6 +200,7 @@ final class LegacyLayoutEngine {
     internal static func resetPersistentState() {
         solverCache.removeAll()
         cacheTick = 0
+        lastPruneTick = 0
     }
 
     /// The number of live persistent solvers (diagnostics/tests).
@@ -309,11 +310,17 @@ final class LegacyLayoutEngine {
         }
     }
 
+    private static var lastPruneTick = 0
+
     private static func pruneCacheIfNeeded() {
-        // Cheap: only walk the (bounded) cache occasionally.
-        if cacheTick % 8 == 0 {
-            solverCache = solverCache.filter { $0.value.root != nil }
-        }
+        // Walk the cache at most once per `count` passes (and never more often than every 64), so
+        // dropping entries whose root died costs O(1) per pass however many roots are cached. The
+        // walk removes dead keys in place instead of rebuilding the dictionary.
+        guard cacheTick - lastPruneTick >= max(64, solverCache.count) else { return }
+        lastPruneTick = cacheTick
+        var dead: [ObjectIdentifier] = []
+        for (key, entry) in solverCache where entry.root == nil { dead.append(key) }
+        for key in dead { solverCache.removeValue(forKey: key) }
     }
 
     private static func evictOldest() {

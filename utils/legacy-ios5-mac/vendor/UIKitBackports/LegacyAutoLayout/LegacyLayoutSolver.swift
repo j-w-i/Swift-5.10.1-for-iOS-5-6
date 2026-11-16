@@ -184,6 +184,12 @@ private typealias RelationalOperator = Cassowary.RelationalOperator
 
 /// Builds and solves the constraint system for one root item.
 internal final class LegacyLayoutSolver {
+    /// Diagnostic switches, read once with libc. `ProcessInfo.environment` bridges the whole
+    /// environment into a Swift dictionary on every call, and these checks sit on the per-solve
+    /// (residual) and per-item (frame) paths, where that cost about 5% of scrolling time on an iPod.
+    private static let residualDebug = getenv("LEGACY_LAYOUT_RESIDUAL_DEBUG") != nil
+    private static let frameDebug = getenv("LEGACY_LAYOUT_FRAME_DEBUG") != nil
+
 
     // MARK: Item variables
 
@@ -530,7 +536,7 @@ internal final class LegacyLayoutSolver {
     private func finishSolve(writingFrames: Bool) -> LegacyLayoutResult {
         recordInstalledStructure()
         solver.updateVariables()
-        if ProcessInfo.processInfo.environment["LEGACY_LAYOUT_RESIDUAL_DEBUG"] != nil {
+        if Self.residualDebug {
             var out = ""
             let rootClass = String(describing: type(of: root as AnyObject))
             let firstItemClass = items.first.map { String(describing: type(of: $0 as AnyObject)) } ?? "none"
@@ -2208,7 +2214,7 @@ internal final class LegacyLayoutSolver {
                                    y: snap(parentAbsolute.y + Double(candidate.minY)) - parentFinal.y,
                                    width: max(0, snap(Double(candidate.width))),
                                    height: max(0, snap(Double(candidate.height))))
-                if ProcessInfo.processInfo.environment["LEGACY_LAYOUT_FRAME_DEBUG"] != nil, let v = item as? UIView {
+                if Self.frameDebug, let v = item as? UIView {
                     FileHandle.standardError.write(Data(String(
                         format: "FRAMEDEBUG %d %s pre=%.4f %.4f %.4f %.4f post=%.4f %.4f %.4f %.4f\n",
                         ObjectIdentifier(v).hashValue,
