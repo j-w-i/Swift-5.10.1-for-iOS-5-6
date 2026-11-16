@@ -5,6 +5,8 @@
 #   XCODE_13_4_1_DEVELOPER_DIR=/path/to/Xcode-13.4.1.app/Contents/Developer \
 #   ./build-all.sh [--from STAGE] [--only STAGE]
 #
+# EXTRA_ARCHS (default "armv7s arm64") adds those slices to the legacy runtime via the multiarch stage,
+# matching the published toolchain. Set EXTRA_ARCHS= (empty) for an armv7-only toolchain.
 # Output: $LEGACY_BUILD_ROOT/out/swift-5.10.1-ios5.xctoolchain
 # Stages are idempotent and resumable: a finished stage leaves $ROOT/.stamps/<stage>; delete it to redo a stage.
 # Everything is fetched from GitHub/swift.org at pinned refs; nothing is read from $HOME or prebuilt directories.
@@ -20,6 +22,7 @@ mkdir -p "$ROOT"/{src,build,logs,out,downloads,tools,.stamps}
 S="$ROOT/src"; L="$ROOT/logs"
 export PATH="$ROOT/tools:$ROOT/tools/cmake/CMake.app/Contents/bin:$PATH"
 X86() { /usr/bin/arch -x86_64 "$@"; }
+EXTRA_ARCHS="${EXTRA_ARCHS-armv7s arm64}"; export EXTRA_ARCHS
 
 # ---- pinned inputs --------------------------------------------------------------------------------
 CMAKE_URL=https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-macos-universal.tar.gz
@@ -27,8 +30,10 @@ NINJA_URL=https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-m
 SWIFT510_PKG_URL=https://download.swift.org/swift-5.10.1-release/xcode/swift-5.10.1-RELEASE/swift-5.10.1-RELEASE-osx.pkg
 THEOS_SDKS_URL=https://github.com/theos/sdks.git
 THEOS_SDKS_REF=0222fd5413cf4b9af096f37b4621afa2688572f7
-SWIFT515_REPO=https://github.com/j-w-i/Swift-5.1.5-for-iOS-6.git; SWIFT515_BRANCH=ios5-mac
-LLVM515_REPO=https://github.com/j-w-i/llvm-project.git;            LLVM515_REF=swift/swift-5.1-branch
+# The two j-w-i forks are pinned to exact commits (branch tips move): ios5-mac and swift/swift-5.1-branch
+# as used for the published toolchain.
+SWIFT515_REPO=https://github.com/j-w-i/Swift-5.1.5-for-iOS-6.git; SWIFT515_COMMIT=956cab123e94c64f9fbd9a625c6e438ed51cdbf9
+LLVM515_REPO=https://github.com/j-w-i/llvm-project.git;            LLVM515_COMMIT=c54b169c4c22746b08617b6d96cf3de0a1b9812e
 CMARK515_REPO=https://github.com/apple/swift-cmark.git;           CMARK515_REF=swift-5.1.5-RELEASE
 
 fetch() { # url destination - resumable download with retries; never leaves a partial file in place
@@ -64,6 +69,15 @@ stage() { # name  command...
 }
 while [ $# -gt 0 ]; do case "$1" in --from) FROM=$2; shift 2;; --only) ONLY=$2; shift 2;; *) echo "bad arg $1"; exit 64;; esac; done
 clone() { [ -d "$S/$1/.git" ] || git clone -q --depth 1 --branch "$3" "$2" "$S/$1"; }
+clone_commit() { # url commit destination - exact commit; an existing checkout must already be at it
+  if [ ! -d "$3/.git" ]; then
+    rm -rf "$3.partial"; git init -q "$3.partial"
+    git -C "$3.partial" fetch -q --depth 1 "$1" "$2"
+    git -C "$3.partial" checkout -q --detach FETCH_HEAD
+    mv "$3.partial" "$3"
+  fi
+  [ "$(git -C "$3" rev-parse HEAD)" = "$2" ] || { echo "$3 is not at pinned commit $2; remove it to refetch" >&2; return 1; }
+}
 
 # ---- stages -----------------------------------------------------------------------------------------
 tools() {
@@ -105,7 +119,7 @@ driver510() { cd "$S/swift-driver" && X86 env DEVELOPER_DIR="$XC" PATH="$ROOT/ho
 fetch515() {
   export LEGACY_515_ROOT="$ROOT/b515"; mkdir -p "$LEGACY_515_ROOT/src" "$LEGACY_515_ROOT/build" "$LEGACY_515_ROOT/tools"
   P="$LEGACY_515_ROOT/src"
-  [ -d "$P/swift/.git" ] || git clone -q --depth 1 --branch "$SWIFT515_BRANCH" "$SWIFT515_REPO" "$P/swift"
+  clone_commit "$SWIFT515_REPO" "$SWIFT515_COMMIT" "$P/swift"
   # The legacy class marker is separate from the real deployment target. Never
   # ship a runtime compiled for 7 merely because it uses the iOS 5 class marker.
   RUNTIME515_PATCH="$HERE/runtime515-target5.patch"
@@ -117,7 +131,7 @@ fetch515() {
     echo 'Runtime target-5 source patch conflicts; review the pinned source.' >&2
     return 1
   fi
-  [ -d "$P/llvm-project/.git" ] || git clone -q --depth 1 --branch "$LLVM515_REF" "$LLVM515_REPO" "$P/llvm-project"
+  clone_commit "$LLVM515_REPO" "$LLVM515_COMMIT" "$P/llvm-project"
   [ -d "$P/cmark/.git" ] || git clone -q --depth 1 --branch "$CMARK515_REF" "$CMARK515_REPO" "$P/cmark"
   for d in llvm clang compiler-rt; do :; done
   ln -sfn llvm-project/llvm "$P/llvm"; ln -sfn llvm-project/clang "$P/clang"; ln -sfn llvm-project/compiler-rt "$P/compiler-rt"
@@ -290,7 +304,7 @@ stage runtime-515 runtime515
 stage runtime-package-515 runtime515package
 stage legacy-core-510 legacycore510
 stage overlays overlays
-if [ -n "${EXTRA_ARCHS:-}" ]; then stage multiarch multiarch; fi
+if [ -n "$EXTRA_ARCHS" ]; then stage multiarch multiarch; fi
 stage assemble assemble
 stage sanitize sanitize
 stage qualify-ios5 qualify515

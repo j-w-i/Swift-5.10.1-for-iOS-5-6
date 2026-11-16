@@ -43,6 +43,10 @@ runtime for the iOS 6 guide route, refusing any runtime whose dylibs still impor
 kit environment and the final stage publishes the iOS 5 profile into it; otherwise it leaves the evidence in
 `out/ios5-qualification` and the same one command publishes later:
 `LEGACY_BUILD_ROOT=<root> utils/legacy-ios5-mac/qualify-ios5.sh --environment-root "<env>"`.
+The legacy runtime is built for armv7, armv7s and arm64 by default (`EXTRA_ARCHS="armv7s arm64"`, the
+multiarch stage), which is what the published toolchain contains; set `EXTRA_ARCHS=` for armv7 only. The two
+j-w-i forks the 5.1.5 stages use are fetched at exact commits (`SWIFT515_COMMIT`, `LLVM515_COMMIT` in
+`build-all.sh`), not branch tips, and every upstream dependency at its `swift-5.10.1-RELEASE` tag.
 Inputs that are NOT source: the swift.org 5.10.1 bootstrap compiler (Swift is self-hosted), Xcode 13.4.1
 (the SDKs, host clang and the `python3` the build uses), the pinned theos iPhoneOS13.7 SDK (the armv7-capable
 platform SDK; only its libc++ headers are borrowed from Xcode), and `crt1.3.1.o` from an iPhoneOS 9.3 SDK
