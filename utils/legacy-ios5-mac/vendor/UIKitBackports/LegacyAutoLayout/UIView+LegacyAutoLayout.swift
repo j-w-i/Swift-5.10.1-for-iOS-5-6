@@ -417,7 +417,9 @@ extension UIView {
         func deliver(_ view: UIView) {
             if let state = LegacyViewState.existing(of: view), state.pendingLayoutSubviews {
                 state.pendingLayoutSubviews = false
-                if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames {
+                // UIKit flags a view whose bounds size changed and lays it out itself in the same layout pass;
+                // delivering it here as well called -layoutSubviews twice (native calls it once).
+                if !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && !view.layer.needsLayout() {
                     view.layoutSubviews()
                 }
             }
@@ -748,6 +750,13 @@ extension UIView: LegacyLayoutItem {
         if abs(bounds.size.width - size.width) >= 0.0001
             || abs(bounds.size.height - size.height) >= 0.0001 {
             legacyMutableState(self).pendingLayoutSubviews = true
+        }
+        // Native UIKit also lays out the superview of any view whose frame the engine changes (the superview
+        // applies its subviews' engine frames in its own -layoutSubviews).
+        if let superview = superview,
+           abs(frame.minX - self.frame.minX) >= 0.0001 || abs(frame.minY - self.frame.minY) >= 0.0001
+            || abs(bounds.size.width - size.width) >= 0.0001 || abs(bounds.size.height - size.height) >= 0.0001 {
+            legacyMutableState(superview).pendingLayoutSubviews = true
         }
 
         // Skip no-op writes: each write can schedule UIKit layout work, so a converged engine pass

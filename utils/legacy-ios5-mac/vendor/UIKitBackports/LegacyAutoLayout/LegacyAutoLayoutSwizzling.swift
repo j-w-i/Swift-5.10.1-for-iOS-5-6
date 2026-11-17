@@ -205,6 +205,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
+        if before.size == after.size && before.origin != after.origin { legacyNoteTranslation(of: view) }
     }
 
     /// RRAutoLayout `rr_r_setBounds:`: apply the value, then invalidate constraints.
@@ -243,6 +244,20 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
         }
+        if before != view.center { legacyNoteTranslation(of: view) }
+    }
+
+    /// Native UIKit lays out a frame-positioned view once after the app moves it, when the view takes part in
+    /// Auto Layout: moving it rewrites its autoresizing constraints in the engine, which marks it for layout.
+    /// Only UIKit's own flag is set (on the layer, so the setNeedsLayout hook adds no constraint invalidation):
+    /// the next layout pass calls -layoutSubviews once and the engine's no-change fast path answers it. A view
+    /// the engine positions (translatesAutoresizingMaskIntoConstraints == false) gets no pass, as in UIKit.
+    /// Checked against native by the move-* cases in Tests/autolayout_native_parity.swift.
+    private func legacyNoteTranslation(of view: UIView) {
+        guard !LegacyAutoLayoutRuntime.isApplyingLayoutFrames,
+              view.legacyTranslatesAutoresizingMaskIntoConstraints,
+              view.legacyGeometryAffectsConstraints else { return }
+        view.layer.setNeedsLayout()
     }
 
     /// RRAutoLayout `rr_r_setTransform:`: apply the value, then invalidate constraints.

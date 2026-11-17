@@ -26,19 +26,28 @@ struct Scene {
         else { v.translatesAutoresizingMaskIntoConstraints = false }
         return v
     }
+    @discardableResult
     func pin(_ a: UIView, _ x: NSLayoutConstraint.Attribute, _ b: UIView?, _ y: NSLayoutConstraint.Attribute,
-             _ m: CGFloat = 1, _ c: CGFloat = 0, _ r: NSLayoutConstraint.Relation = .equal, priority: Float = 1000) {
+             _ m: CGFloat = 1, _ c: CGFloat = 0, _ r: NSLayoutConstraint.Relation = .equal, priority: Float = 1000) -> AnyObject {
         if legacyMode {
             let k = RRLayoutConstraint(item: a, attribute: RRLayoutAttribute(rawValue: x.rawValue)!,
                                        relatedBy: RRLayoutRelation(rawValue: r.rawValue)!, toItem: b,
                                        attribute: RRLayoutAttribute(rawValue: y.rawValue)!, multiplier: m, constant: c)
             k.priority = RRLayoutPriority(priority)
             a.legacyAddConstraint(k)
+            return k
         } else {
             let k = NSLayoutConstraint(item: a, attribute: x, relatedBy: r, toItem: b, attribute: y, multiplier: m, constant: c)
             k.priority = UILayoutPriority(priority)
             k.isActive = true
+            return k
         }
+    }
+    func setConstant(_ k: AnyObject, _ c: CGFloat) {
+        // Legacy: what the iOS 5 public setter does (NativeAPIBridge.constant): update the model, then mark
+        // the first view's constraints as needing an update.
+        if let k = k as? RRLayoutConstraint { k.constant = c; (k.firstItem as? UIView)?.legacySetNeedsUpdateConstraints() }
+        else if let k = k as? NSLayoutConstraint { k.constant = c }
     }
     func solve() {
         if legacyMode { root.layoutSubviews(); for v in allSubviews(root) { v.layoutSubviews() } }
@@ -357,5 +366,29 @@ func dynamic() {
     scene("framed-activated-origin", crossLevel: true, constrainedContainer: false, activated: true) { $0.frame.origin.x += 23 }
     scene("framed-activated-center", crossLevel: true, constrainedContainer: false, activated: true) { $0.center.x += 23 }
 }
-@MainActor func runNativeParitySuite() { run(); dynamic(); textViewport(); nativeOwnedControls(); geometrySetterParity(); positionMoveParity() }
+/// The engine moves or resizes a view (a constraint constant changes): which views get -layoutSubviews?
+@MainActor func engineChangeParity() {
+    for (name, attribute, value) in [("engine-move", NSLayoutConstraint.Attribute.left, CGFloat(20)),
+                                     ("engine-resize", NSLayoutConstraint.Attribute.width, CGFloat(60))] {
+        let s = Scene()
+        let window = UIWindow(frame: s.root.frame); window.addSubview(s.root)
+        let container = s.add(LayoutCounter())
+        s.pin(container, .left, s.root, .left, 1, 10); s.pin(container, .top, s.root, .top, 1, 40)
+        s.pin(container, .width, nil, .notAnAttribute, 1, 200); s.pin(container, .height, nil, .notAnAttribute, 1, 120)
+        let child = s.add(LayoutCounter(), to: container)
+        let left = s.pin(child, .left, container, .left, 1, 8); s.pin(child, .top, container, .top, 1, 8)
+        let width = s.pin(child, .width, nil, .notAnAttribute, 1, 40); s.pin(child, .height, nil, .notAnAttribute, 1, 30)
+        let grand = s.add(LayoutCounter(), to: child)
+        s.pin(grand, .left, child, .left, 1, 4); s.pin(grand, .top, child, .top, 1, 4)
+        s.pin(grand, .width, nil, .notAnAttribute, 1, 10); s.pin(grand, .height, nil, .notAnAttribute, 1, 10)
+        s.root.setNeedsLayout(); s.root.layoutIfNeeded(); s.solve(); s.root.layoutIfNeeded()
+        container.passes = 0; child.passes = 0; grand.passes = 0
+        s.setConstant(attribute == .left ? left : width, value)
+        s.root.layoutIfNeeded()
+        report("\(name)-after", [("container", container), ("child", child), ("grand", grand)])
+        print("\(name)-passes\tcontainer=\(container.passes) child=\(child.passes) grand=\(grand.passes)")
+        window.isHidden = true
+    }
+}
+@MainActor func runNativeParitySuite() { run(); dynamic(); textViewport(); nativeOwnedControls(); geometrySetterParity(); positionMoveParity(); engineChangeParity() }
 MainActor.assumeIsolated { runNativeParitySuite() }
