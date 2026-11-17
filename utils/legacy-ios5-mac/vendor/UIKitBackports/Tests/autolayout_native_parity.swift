@@ -320,11 +320,16 @@ func dynamic() {
         s.pin(child, .right, container, .right, 1, -8); s.pin(child, .height, nil, .notAnAttribute, 1, 30)
         let grand = s.add(LayoutCounter(), to: child)
         if crossLevel && activated {
-            // The modern API: an activated constraint is installed on no view (native puts it on the
-            // nearest common ancestor; the backport keeps it in its activation registry).
+            // The modern API. Native installs an activated constraint on the nearest common ancestor. On
+            // iOS 5 the public `isActive` / `activate(_:)` (APIShims/NSLayoutConstraint.swift and the
+            // runtime bridge in NativeAPIBridge.swift) set the model's `legacyIsActive` and install it on
+            // its first view, which retains it; do exactly that here. (`legacyIsActive` alone is internal
+            // and only registers the constraint weakly, so an inline constraint would be freed at once.)
             if legacyMode {
-                RRLayoutConstraint(item: grand, attribute: .left, relatedBy: .equal, toItem: s.root,
-                                   attribute: .left, multiplier: 1, constant: 30).legacyIsActive = true
+                let k = RRLayoutConstraint(item: grand, attribute: .left, relatedBy: .equal, toItem: s.root,
+                                           attribute: .left, multiplier: 1, constant: 30)
+                k.legacyIsActive = true
+                grand.legacyAddConstraint(k)
             } else {
                 grand.leftAnchor.constraint(equalTo: s.root.leftAnchor, constant: 30).isActive = true
             }
