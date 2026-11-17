@@ -1,0 +1,18 @@
+# Known, deliberate differences between native UIKit and the backport in run-native-parity.sh output.
+# Each pair is checked exactly: native line, then backport line. Any other difference still fails.
+#
+# Native runs -layoutSubviews once on a frame-positioned view that takes part in Auto Layout after the app
+# moves it (container=1). The backport does not: doing so made every recycled collection-view cell solve on its
+# own, and Neocord2's Friends list on an iPod touch 3 fell from ~13 to ~4.5 fps. Frames are identical.
+native	move-framed-local-center-passes	container=1 child=0 grand=0
+legacy	move-framed-local-center-passes	container=0 child=0 grand=0
+native	move-framed-local-origin-passes	container=1 child=0 grand=0
+legacy	move-framed-local-origin-passes	container=0 child=0 grand=0
+native	move-framed-cross-center-passes	container=1 child=0 grand=0
+legacy	move-framed-cross-center-passes	container=0 child=0 grand=0
+native	move-framed-cross-origin-passes	container=1 child=1 grand=0
+legacy	move-framed-cross-origin-passes	container=0 child=1 grand=0
+native	move-framed-activated-origin-passes	container=1 child=1 grand=0
+legacy	move-framed-activated-origin-passes	container=0 child=1 grand=0
+native	move-framed-activated-center-passes	container=1 child=1 grand=0
+legacy	move-framed-activated-center-passes	container=0 child=1 grand=0

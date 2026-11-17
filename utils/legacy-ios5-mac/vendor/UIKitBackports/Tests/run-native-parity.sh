@@ -18,8 +18,26 @@ UDID=$(xcrun simctl list devices available | grep -m1 "$DEVICE" | sed -E 's/.*\(
 xcrun simctl boot "$UDID" 2>/dev/null || true; xcrun simctl bootstatus "$UDID" -b >/dev/null
 xcrun simctl spawn "$UDID" "$WORK/simrun" native > "$WORK/native.txt"
 xcrun simctl spawn "$UDID" "$WORK/simrun" legacy > "$WORK/legacy.txt"
-if diff -u "$WORK/native.txt" "$WORK/legacy.txt" > "$WORK/diff.txt"; then
-  echo "PASS: native and backport frames identical ($(wc -l < "$WORK/native.txt") frames)"
+# Deliberate differences (see native-parity-known-differences.txt) are checked exactly, then excluded.
+python3 - "$HERE/native-parity-known-differences.txt" "$WORK" <<'PY'
+import sys
+known, work = sys.argv[1], sys.argv[2]
+outputs = {side: open('%s/%s.txt' % (work, side)).read().splitlines() for side in ('native', 'legacy')}
+problems = 0
+for line in open(known):
+    if line.startswith('#') or not line.strip(): continue
+    side, expected = line.rstrip('\n').split('\t', 1)
+    if expected in outputs[side]:
+        outputs[side].remove(expected)
+        if side == 'legacy': print('KNOWN DIFFERENCE: ' + expected.split('\t')[0])
+    else:
+        print('KNOWN DIFFERENCE CHANGED (%s no longer prints): %s' % (side, expected)); problems += 1
+for side, lines in outputs.items():
+    open('%s/%s.compared.txt' % (work, side), 'w').write('\n'.join(lines) + '\n')
+sys.exit(1 if problems else 0)
+PY
+if diff -u "$WORK/native.compared.txt" "$WORK/legacy.compared.txt" > "$WORK/diff.txt"; then
+  echo "PASS: native and backport identical ($(wc -l < "$WORK/native.compared.txt") lines; known differences above)"
 else
   echo "FAIL: backport differs from native UIKit:"; cat "$WORK/diff.txt"; exit 1
 fi
