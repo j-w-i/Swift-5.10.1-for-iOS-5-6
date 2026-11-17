@@ -580,13 +580,14 @@ extension UIView {
 
     /// Whether moving this view (same size, new position) can change any constraint solution.
     ///
-    /// Constraints inside the view are solved relative to its own bounds, so a translation leaves them alone. The
-    /// position matters only where it is an input or output of a constraint system: the engine positions the view
-    /// (`translatesAutoresizingMaskIntoConstraints == false`), or a constraint installed on an ancestor names it or
-    /// something inside it, such as a layout-guide proxy (a constraint is installed on the nearest common ancestor
-    /// of its items, so one relating this subtree to the outside lives on an ancestor and the walk finds it). A
-    /// frame-managed cell in a collection view is neither, which is what keeps scrolling - the collection view
-    /// re-centres recycled cells - from invalidating every layout root.
+    /// Constraints among views inside this one are solved relative to its own bounds, so a translation leaves them
+    /// alone. The position matters only where it is an input or output of a constraint system: the engine positions
+    /// the view (`translatesAutoresizingMaskIntoConstraints == false`), or some constraint relates this subtree to a
+    /// view outside it. Such a constraint can be installed on an ancestor (where Apple's API puts it: the nearest
+    /// common ancestor) or, because the backport accepts any installing view, on this view or a descendant, so both
+    /// are searched. A frame-managed cell in a collection view whose constraints stay inside it is neither, which
+    /// is what keeps scrolling - the collection view re-centres recycled cells - from invalidating every layout root.
+    /// Checked against native UIKit by the `move-*` cases in Tests/autolayout_native_parity.swift.
     internal var legacyPositionAffectsConstraints: Bool {
         guard legacyGeometryAffectsConstraints else { return false }
         if let state = LegacyViewState.existing(of: self), state.translatesAutoresizingMaskIntoConstraints == false {
@@ -604,6 +605,17 @@ extension UIView {
                 }
             }
             ancestor = current.superview
+        }
+        // Constraints installed inside the subtree that reach outside it. A non-view item is treated as outside.
+        func outside(_ item: Any?) -> Bool { item != nil && !inside(item) }
+        var pending: [UIView] = [self]
+        while let view = pending.popLast() {
+            if let state = LegacyViewState.existing(of: view) {
+                for constraint in state.constraints where outside(constraint.firstItem) || outside(constraint.secondItem) {
+                    return true
+                }
+            }
+            pending.append(contentsOf: view.subviews)
         }
         return false
     }

@@ -294,5 +294,63 @@ func dynamic() {
     report("geometry-setters", [("probe", probe)])
     print("geometry-setter-calls\t\(probe.frameWrites),\(probe.boundsWrites),\(probe.centerWrites)")
 }
-@MainActor func runNativeParitySuite() { run(); dynamic(); textViewport(); nativeOwnedControls(); geometrySetterParity() }
+@MainActor private final class LayoutCounter: UIView {
+    var passes = 0
+    override func layoutSubviews() { passes += 1; super.layoutSubviews() }
+}
+/// Moving a view (origin only) after layout, observed through the ordinary `layoutIfNeeded()` path
+/// (no forced `layoutSubviews`), so a missing or extra invalidation shows up as a frame or pass-count
+/// difference against native UIKit.
+@MainActor func positionMoveParity() {
+    func scene(_ name: String, crossLevel: Bool, constrainedContainer: Bool, activated: Bool = false,
+               move: (UIView) -> Void) {
+        let s = Scene()
+        let window = UIWindow(frame: s.root.frame); window.addSubview(s.root)
+        let container = LayoutCounter()
+        if constrainedContainer {
+            _ = s.add(container)
+            s.pin(container, .left, s.root, .left, 1, 10); s.pin(container, .top, s.root, .top, 1, 40)
+            s.pin(container, .width, nil, .notAnAttribute, 1, 200); s.pin(container, .height, nil, .notAnAttribute, 1, 120)
+        } else {
+            container.frame = CGRect(x: 10, y: 40, width: 200, height: 120)   // frame-positioned, like a cell
+            s.root.addSubview(container)
+        }
+        let child = s.add(LayoutCounter(), to: container)
+        s.pin(child, .left, container, .left, 1, 8); s.pin(child, .top, container, .top, 1, 8)
+        s.pin(child, .right, container, .right, 1, -8); s.pin(child, .height, nil, .notAnAttribute, 1, 30)
+        let grand = s.add(LayoutCounter(), to: child)
+        if crossLevel && activated {
+            // The modern API: an activated constraint is installed on no view (native puts it on the
+            // nearest common ancestor; the backport keeps it in its activation registry).
+            if legacyMode {
+                RRLayoutConstraint(item: grand, attribute: .left, relatedBy: .equal, toItem: s.root,
+                                   attribute: .left, multiplier: 1, constant: 30).legacyIsActive = true
+            } else {
+                grand.leftAnchor.constraint(equalTo: s.root.leftAnchor, constant: 30).isActive = true
+            }
+        } else if crossLevel {
+            s.pin(grand, .left, s.root, .left, 1, 30)            // reaches past the moved container
+        } else {
+            s.pin(grand, .left, child, .left, 1, 4)
+        }
+        s.pin(grand, .top, child, .top, 1, 4); s.pin(grand, .width, nil, .notAnAttribute, 1, 40)
+        s.pin(grand, .height, nil, .notAnAttribute, 1, 20)
+        s.root.setNeedsLayout(); s.root.layoutIfNeeded(); s.solve(); s.root.layoutIfNeeded()
+        report("move-\(name)-before", [("container", container), ("child", child), ("grand", grand)])
+        container.passes = 0; child.passes = 0; grand.passes = 0
+        move(container)
+        s.root.layoutIfNeeded()
+        report("move-\(name)-after", [("container", container), ("child", child), ("grand", grand)])
+        print("move-\(name)-passes\tcontainer=\(container.passes) child=\(child.passes) grand=\(grand.passes)")
+        window.isHidden = true
+    }
+    for (crossLevel, constrained) in [(false, false), (true, false), (false, true), (true, true)] {
+        let base = "\(constrained ? "constrained" : "framed")-\(crossLevel ? "cross" : "local")"
+        scene(base + "-center", crossLevel: crossLevel, constrainedContainer: constrained) { $0.center.y += 37 }
+        scene(base + "-origin", crossLevel: crossLevel, constrainedContainer: constrained) { $0.frame.origin.x += 23 }
+    }
+    scene("framed-activated-origin", crossLevel: true, constrainedContainer: false, activated: true) { $0.frame.origin.x += 23 }
+    scene("framed-activated-center", crossLevel: true, constrainedContainer: false, activated: true) { $0.center.x += 23 }
+}
+@MainActor func runNativeParitySuite() { run(); dynamic(); textViewport(); nativeOwnedControls(); geometrySetterParity(); positionMoveParity() }
 MainActor.assumeIsolated { runNativeParitySuite() }
