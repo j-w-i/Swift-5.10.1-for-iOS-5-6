@@ -5,6 +5,7 @@
 void FBPInstallCalendarExtras(void);
 void FBPInstallStringExtras(void);
 void FBPInstallCharacterSetExtras(void);
+void FBPInstallSubscriptExtras(void);
 
 // Test hooks: install the selectors on an arbitrary class so host tests can
 // verify the class_addMethod-only-when-absent behaviour even though macOS
@@ -12,3 +13,5 @@ void FBPInstallCharacterSetExtras(void);
 void FBPInstallCalendarExtrasOnClass(Class target);
 void FBPInstallStringExtrasOnClass(Class target);
 void FBPInstallCharacterSetExtrasOnClass(Class target);
+void FBPInstallSubscriptExtrasOnClasses(Class array, Class mutableArray, Class dictionary,
+                                        Class mutableDictionary, Class orderedSet, Class mutableOrderedSet);

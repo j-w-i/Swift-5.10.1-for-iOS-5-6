@@ -7,6 +7,9 @@
 //   * NSString -stringByAddingPercentEncodingWithAllowedCharacters: and
 //     -stringByRemovingPercentEncoding (iOS 7)
 //   * NSCharacterSet +URL*AllowedCharacterSet (iOS 7)
+//   * Object subscripting on NSArray/NSMutableArray, NSDictionary/NSMutableDictionary and
+//     NSOrderedSet/NSMutableOrderedSet (iOS 6): -objectAtIndexedSubscript:, -setObject:atIndexedSubscript:,
+//     -objectForKeyedSubscript:, -setObject:forKeyedSubscript:
 //
 // Implementations live on distinct FBP-named classes/functions so host
 // differential tests can call them directly and compare with native Foundation.
@@ -41,5 +44,15 @@ FOUNDATION_EXPORT NSCharacterSet *FBPURLHostAllowedCharacterSet(void);
 FOUNDATION_EXPORT NSCharacterSet *FBPURLPathAllowedCharacterSet(void);
 FOUNDATION_EXPORT NSCharacterSet *FBPURLQueryAllowedCharacterSet(void);
 FOUNDATION_EXPORT NSCharacterSet *FBPURLFragmentAllowedCharacterSet(void);
+
+// MARK: - Object subscripting (iOS 6 selectors; same semantics as the native methods)
+
+FOUNDATION_EXPORT id FBPNSArrayObjectAtIndexedSubscript(NSArray *array, NSUInteger index);
+FOUNDATION_EXPORT void FBPNSMutableArraySetObjectAtIndexedSubscript(NSMutableArray *array, id object, NSUInteger index);
+FOUNDATION_EXPORT id _Nullable FBPNSDictionaryObjectForKeyedSubscript(NSDictionary *dictionary, id key);
+/// A nil object removes the key (current Foundation behaviour; iOS 6-10 raised).
+FOUNDATION_EXPORT void FBPNSMutableDictionarySetObjectForKeyedSubscript(NSMutableDictionary *dictionary, id _Nullable object, id key);
+FOUNDATION_EXPORT id FBPNSOrderedSetObjectAtIndexedSubscript(NSOrderedSet *set, NSUInteger index);
+FOUNDATION_EXPORT void FBPNSMutableOrderedSetSetObjectAtIndexedSubscript(NSMutableOrderedSet *set, id object, NSUInteger index);
 
 NS_ASSUME_NONNULL_END

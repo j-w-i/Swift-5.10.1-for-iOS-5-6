@@ -532,6 +532,16 @@ static unsigned legacyFoundationDeclarationCeiling(const clang::Decl *decl) {
       return llvm::StringSwitch<unsigned>(member)
           .Cases("stringByAddingPercentEncodingWithAllowedCharacters:",
                  "stringByRemovingPercentEncoding", 7).Default(0);
+    // Object subscripting (iOS 6): FBPSubscriptExtras.m installs these selectors on iOS 5, where Swift's
+    // NSArray/NSMutableArray/NSOrderedSet subscripts would otherwise be unavailable.
+    if (owner == "NSArray" || owner == "NSOrderedSet")
+      return member == "objectAtIndexedSubscript:" ? 6 : 0;
+    if (owner == "NSMutableArray" || owner == "NSMutableOrderedSet")
+      return member == "setObject:atIndexedSubscript:" ? 6 : 0;
+    if (owner == "NSDictionary")
+      return member == "objectForKeyedSubscript:" ? 6 : 0;
+    if (owner == "NSMutableDictionary")
+      return member == "setObject:forKeyedSubscript:" ? 6 : 0;
     if (owner == "NSCharacterSet")
       return llvm::StringSwitch<unsigned>(member)
           .Cases("URLUserAllowedCharacterSet", "URLPasswordAllowedCharacterSet", 7)

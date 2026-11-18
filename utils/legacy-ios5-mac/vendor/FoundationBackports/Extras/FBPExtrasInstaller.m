@@ -15,4 +15,5 @@ void FBPInstallFoundationExtras(void) {
     FBPInstallCalendarExtras();
     FBPInstallStringExtras();
     FBPInstallCharacterSetExtras();
+    FBPInstallSubscriptExtras();
 }
