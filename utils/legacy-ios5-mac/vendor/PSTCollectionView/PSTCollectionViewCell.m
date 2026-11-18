@@ -14,6 +14,9 @@
     __unsafe_unretained PSTCollectionView *_collectionView;
     struct {
         unsigned int inUpdateAnimation : 1;
+        unsigned int hiddenForReuse : 1;
+        unsigned int hiddenBeforeReuse : 1;
+        unsigned int layoutDeferredForReuse : 1;
     }_reusableViewFlags;
     char filler[50]; // [HACK] Our class needs to be larger than Apple's class for the superclass change to work.
 }
@@ -56,7 +59,13 @@
     self.bounds = bounds;
 }
 
+// UIKit 6.1's base -applyLayoutAttributes: is empty: the collection view applies geometry through the private
+// -_setLayoutAttributes:, which then calls the public method. A subclass that overrides it without calling super
+// is still positioned.
 - (void)applyLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
+}
+
+- (void)pstSetLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {
     if (layoutAttributes != _layoutAttributes) {
         // A layout may mutate/reuse its attributes object after application.
         // Keep an independent snapshot, as UIKit does, so equality checks and
@@ -72,7 +81,9 @@
         if (!CGPointEqualToPoint(self.center, layoutAttributes.center)) {
             self.center = layoutAttributes.center;
         }
-        if (self.hidden != layoutAttributes.hidden) {
+        // Compare with the view's own hidden state, not the reuse hiding (see -pstSetHiddenForReuse:).
+        BOOL hidden = _reusableViewFlags.hiddenForReuse ? _reusableViewFlags.hiddenBeforeReuse : self.hidden;
+        if (hidden != layoutAttributes.hidden) {
             self.hidden = layoutAttributes.hidden;
         }
         CALayer *layer = self.layer;
@@ -85,7 +96,56 @@
         if (layer.opacity != layoutAttributes.alpha) {
             layer.opacity = layoutAttributes.alpha;
         }
+        [self applyLayoutAttributes:layoutAttributes];
     }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////
+#pragma mark - Hidden for reuse (UIKit 6.1 -[UIView _setHiddenForReuse:])
+
+// A view in a reuse queue stays in the hierarchy but is hidden at the layer, with a flag of its own:
+//  * the app's own hidden state is kept separately and restored when the view is reused;
+//  * -setHidden:NO while queued does not reveal it;
+//  * its -layoutSubviews is held back while queued and replayed once (setNeedsLayout) when it is shown.
+// UIKit shows it again when the collection view adds it to the visible set, after the data source configured it.
+- (void)pstSetHiddenForReuse:(BOOL)hidden {
+    if ((BOOL)_reusableViewFlags.hiddenForReuse == hidden) return;
+    CALayer *layer = self.layer;
+    if (hidden) {
+        _reusableViewFlags.hiddenForReuse = 1;
+        if (layer.hidden) _reusableViewFlags.hiddenBeforeReuse = 1;
+        else layer.hidden = YES;
+    } else {
+        if (!_reusableViewFlags.hiddenBeforeReuse) layer.hidden = NO;
+        _reusableViewFlags.hiddenBeforeReuse = 0;
+        _reusableViewFlags.hiddenForReuse = 0;
+        if (_reusableViewFlags.layoutDeferredForReuse) {
+            _reusableViewFlags.layoutDeferredForReuse = 0;
+            [self setNeedsLayout];
+        }
+    }
+}
+
+- (BOOL)pstIsHiddenForReuse {
+    return _reusableViewFlags.hiddenForReuse;
+}
+
+- (void)setHidden:(BOOL)hidden {
+    if (_reusableViewFlags.hiddenForReuse) {
+        // Record the app's state; only hiding reaches the (already hidden) layer.
+        if (hidden) [super setHidden:YES];
+        _reusableViewFlags.hiddenBeforeReuse = hidden;
+        return;
+    }
+    [super setHidden:hidden];
+}
+
+- (void)layoutSublayersOfLayer:(CALayer *)layer {
+    if (_reusableViewFlags.hiddenForReuse) {
+        _reusableViewFlags.layoutDeferredForReuse = 1;
+        return;
+    }
+    [super layoutSublayersOfLayer:layer];
 }
 
 - (PSTCollectionViewLayoutAttributes *)preferredLayoutAttributesFittingAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes {

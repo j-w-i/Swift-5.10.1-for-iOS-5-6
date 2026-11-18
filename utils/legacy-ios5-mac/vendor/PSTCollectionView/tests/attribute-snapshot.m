@@ -16,11 +16,11 @@ int main(void) { @autoreleasepool {
     require(CGRectEqualToRect([snapshot frame],CGRectMake(10,20,80,30)),"native snapshot survives input mutation");
     PSTCollectionReusableView *pst=[[PSTCollectionReusableView alloc]initWithFrame:CGRectZero];
     PSTCollectionViewLayoutAttributes *p=[PSTCollectionViewLayoutAttributes layoutAttributesForCellWithIndexPath:[NSIndexPath indexPathForItem:0 inSection:0]];
-    p.frame=CGRectMake(10,20,80,30); [pst applyLayoutAttributes:p];
+    p.frame=CGRectMake(10,20,80,30); [pst pstSetLayoutAttributes:p];
     require(pst.layoutAttributes!=p,"PST stores distinct attributes");
     p.frame=CGRectMake(100,200,90,40);
     require(CGRectEqualToRect(pst.layoutAttributes.frame,CGRectMake(10,20,80,30)),"PST snapshot survives input mutation");
-    [pst applyLayoutAttributes:p];
+    [pst pstSetLayoutAttributes:p];
     require(CGRectEqualToRect(pst.frame,p.frame),"PST reapplies mutated source attributes");
     puts("PASS: native/PST store independent attribute snapshots; mutated source reapplies");
     NSIndexPath *path=[NSIndexPath indexPathForItem:3 inSection:2];
@@ -32,7 +32,7 @@ int main(void) { @autoreleasepool {
     na.alpha=0.4; pa.alpha=0.4; na.zIndex=9; pa.zIndex=9; na.hidden=YES; pa.hidden=YES;
     native.bounds=CGRectMake(4,6,1,1); pst.bounds=CGRectMake(4,6,1,1);
     ((void(*)(id,SEL,id))objc_msgSend)(native,set,na);
-    [pst applyLayoutAttributes:pa];
+    [pst pstSetLayoutAttributes:pa];
     UICollectionViewLayoutAttributes *ns=((id(*)(id,SEL))objc_msgSend)(native,get);
     PSTCollectionViewLayoutAttributes *ps=pst.layoutAttributes;
     require([ps.indexPath isEqual:ns.indexPath] && [ps.representedElementKind isEqual:ns.representedElementKind],"copy preserves supplementary identity");

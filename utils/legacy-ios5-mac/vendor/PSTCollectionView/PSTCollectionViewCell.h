@@ -32,6 +32,11 @@ __attribute__((swift_name("UICollectionReusableView")))
 @property (nonatomic, unsafe_unretained) PSTCollectionView *collectionView;
 @property (nonatomic, copy) NSString *reuseIdentifier;
 @property (nonatomic, strong, readonly) PSTCollectionViewLayoutAttributes *layoutAttributes;
+// UIKit's private -_setLayoutAttributes:: applies the geometry, then calls the public -applyLayoutAttributes:.
+- (void)pstSetLayoutAttributes:(PSTCollectionViewLayoutAttributes *)layoutAttributes;
+// UIKit's private -_setHiddenForReuse: (see PSTCollectionViewCell.m).
+- (void)pstSetHiddenForReuse:(BOOL)hidden;
+- (BOOL)pstIsHiddenForReuse;
 @end
 
 

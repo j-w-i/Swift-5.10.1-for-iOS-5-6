@@ -189,7 +189,13 @@ const char kPSTColletionViewExt;
 // already stores an attribute set with the same visible geometry and every view
 // property applyLayoutAttributes: writes already has those values.  This lets a
 // scroll pass skip CoreAnimation property writes for the cells that stay put.
+static BOOL PSTLayoutAttributesAppliedIgnoringViewHidden(PSTCollectionViewLayoutAttributes *attributes, PSTCollectionReusableView *view, BOOL ignoreViewHidden);
 static BOOL PSTLayoutAttributesAlreadyApplied(PSTCollectionViewLayoutAttributes *attributes, PSTCollectionReusableView *view) {
+    return PSTLayoutAttributesAppliedIgnoringViewHidden(attributes, view, NO);
+}
+// ignoreViewHidden: a view just configured by the data source may have been hidden by the app; UIKit applies a
+// new cell's attributes once, at dequeue, and does not reset that afterwards.
+static BOOL PSTLayoutAttributesAppliedIgnoringViewHidden(PSTCollectionViewLayoutAttributes *attributes, PSTCollectionReusableView *view, BOOL ignoreViewHidden) {
     PSTCollectionViewLayoutAttributes *current = view.layoutAttributes;
     if (!current) return NO;
     if (current == attributes) return YES;
@@ -206,7 +212,7 @@ static BOOL PSTLayoutAttributesAlreadyApplied(PSTCollectionViewLayoutAttributes 
     // The view itself must still match as well; otherwise re-apply (and repair).
     if (!CGSizeEqualToSize(view.bounds.size, attributes.size)) return NO;
     if (!CGPointEqualToPoint(view.center, attributes.center)) return NO;
-    if (view.hidden != attributes.hidden) return NO;
+    if (!ignoreViewHidden && view.hidden != attributes.hidden) return NO;
     if (view.layer.opacity != attributes.alpha) return NO;
     if (view.layer.zPosition != attributes.zIndex) return NO;
     if (!CATransform3DEqualToTransform(view.layer.transform, attributes.transform3D)) return NO;
@@ -552,7 +558,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         // when it stops displaying. Keep delegate-observable state until then.
         [cell prepareForReuse];
         [reusableCells removeObjectAtIndex:reusableCells.count - 1];
-        cell.hidden = NO;
     }else {
         if ([_cellNibDict objectForKey:identifier]) {
             // Cell was registered via registerNib:forCellWithReuseIdentifier:
@@ -583,7 +588,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         cell.reuseIdentifier = identifier;
     }
 
-    [cell applyLayoutAttributes:attributes];
+    [cell pstSetLayoutAttributes:attributes];
 
     return cell;
 }
@@ -595,7 +600,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (view) {
         [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
-        view.hidden = NO;
     }else {
         if ([_supplementaryViewNibDict objectForKey:kindAndIdentifier]) {
             // supplementary view was registered via registerNib:forCellWithReuseIdentifier:
@@ -649,7 +653,6 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
     if (view) {
         [view prepareForReuse];
         [reusableViews removeObjectAtIndex:reusableViews.count - 1];
-        view.hidden = NO;
     }else {
         NSDictionary *decorationViewNibDict = collectionViewLayout.decorationViewNibDict;
         NSDictionary *decorationViewExternalObjects = collectionViewLayout.decorationViewExternalObjectsTables;
@@ -682,7 +685,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         view.reuseIdentifier = elementKind;
     }
 
-    [view applyLayoutAttributes:attributes];
+    [view pstSetLayoutAttributes:attributes];
 
     return view;
 }
@@ -736,7 +739,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
         id obj = [retiring objectForKey:key];
         if (![obj isKindOfClass:UIView.class]) continue;
         PSTCollectionReusableView *view = obj;
-        view.hidden = YES; // stays attached until reused, as under UIKit
+        [view pstSetHiddenForReuse:YES]; // stays attached until reused, as under UIKit
         if (key.type == PSTCollectionViewItemTypeCell) {
             if (_collectionViewFlags.delegateDidEndDisplayingCell)
                 [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)view forItemAtIndexPath:key.indexPath];
@@ -1459,7 +1462,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                     [self addControlledSubview:cell];
                     [self pstNotifyWillDisplayView:cell forKey:key];
                 }
-                else [cell applyLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"previousLayoutInfos"]];
+                else [cell pstSetLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"previousLayoutInfos"]];
             }
             else if (key.type == PSTCollectionViewItemTypeSupplementaryView) {
                 PSTCollectionReusableView *view = [_allVisibleViewsDict objectForKey:key];
@@ -1492,7 +1495,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 // TODO: This is most likely not 100% the same time as in UICollectionView. Needs to be investigated.
                 PSTCollectionViewCell *cell = (PSTCollectionViewCell *)[_allVisibleViewsDict objectForKey:key];
                 [cell willTransitionFromLayout:_layout toLayout:layout];
-                [cell applyLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"newLayoutInfos"]];
+                [cell pstSetLayoutAttributes:[[layoutInterchangeData objectForKey:key] objectForKey:@"newLayoutInfos"]];
                 [cell didTransitionFromLayout:_layout toLayout:layout];
             }
         };
@@ -1679,16 +1682,19 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
                 [_allVisibleViewsDict setObject:view forKey:itemKey];
                 [self addControlledSubview:view];
 
-                // Always apply attributes. Fixes #203.
-                PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
-                [view applyLayoutAttributes:layoutAttributes];
+                // Apply the attributes unless the view already shows them (#203: a view must never keep stale
+                // attributes). The data source's own changes to a fresh view, such as hiding it, are kept.
+                if (!PSTLayoutAttributesAppliedIgnoringViewHidden(layoutAttributes, view, YES)) {
+                    PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
+                    [view pstSetLayoutAttributes:layoutAttributes];
+                }
                 [self pstNotifyWillDisplayView:view forKey:itemKey];
             }
         }else {
             // just update cell - unless it already shows exactly these attributes
             if (!PSTLayoutAttributesAlreadyApplied(layoutAttributes, view)) {
                 PSTCollectionViewStatsCountersStorage[PSTStatVisibleAttributeApplications]++;
-                [view applyLayoutAttributes:layoutAttributes];
+                [view pstSetLayoutAttributes:layoutAttributes];
             }
         }
 }
@@ -1776,7 +1782,7 @@ static void PSTCollectionViewCommonSetup(PSTCollectionView *_self) {
             // this pass has created its arrivals: UIKit does not recycle a view in the
             // pass that retired it.
             [_allVisibleViewsDict removeObjectForKey:itemKey];
-            reusableView.hidden = YES; // delegates see the retiring view already hidden, as under UIKit
+            [reusableView pstSetHiddenForReuse:YES]; // delegates see the retiring view already hidden, as under UIKit
             if (itemKey.type == PSTCollectionViewItemTypeCell) {
                 if (_collectionViewFlags.delegateDidEndDisplayingCell) {
                     [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)reusableView forItemAtIndexPath:itemKey.indexPath];
@@ -2053,8 +2059,8 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
         [(PSTCollectionViewFlowLayout *)_layout pstForgetStableMeasurementForItemAtIndexPath:indexPath];
     }
 
-    // Apply attributes
-    [cell applyLayoutAttributes:layoutAttributes];
+    // Apply attributes (dequeue normally already did, with these very values; the data source's own changes stay).
+    if (!PSTLayoutAttributesAppliedIgnoringViewHidden(layoutAttributes, cell, YES)) [cell pstSetLayoutAttributes:layoutAttributes];
 
     // reset selected/highlight state
     // UIKit does not call the setters when nothing changes; a fresh or reused
@@ -2080,7 +2086,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
                 viewForSupplementaryElementOfKind:kind
                 atIndexPath:indexPath];
         _pstLayoutAttributesBeingApplied = previousAttributes;
-        [view applyLayoutAttributes:layoutAttributes];
+        [view pstSetLayoutAttributes:layoutAttributes];
         return view;
     }
     return nil;
@@ -2101,7 +2107,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
     // half a screen's worth of such views; beyond that, or for a duplicate, detach it.
     if (reuseableViews.count < [self pstReuseQueueCapacityForView:reusableView] && ![reuseableViews containsObject:reusableView]) {
         [reuseableViews addObject:reusableView];
-        if (!reusableView.hidden) reusableView.hidden = YES;
+        [reusableView pstSetHiddenForReuse:YES];
     } else if (reusableView.superview) {
         [reusableView removeFromSuperview];
     }
@@ -2153,7 +2159,9 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
     // avoids placing views above the scroll indicator
     // If the collection view is not displaying scrollIndicators then self.subviews.count can be 0.
     // We take the max to ensure we insert at a non negative index because a negative index will silently fail to insert the view
-    // A recycled view is still attached, merely hidden; there is nothing to insert.
+    // A recycled view is still attached, hidden for reuse; UIKit shows it here, once it is configured and joins
+    // the visible set (-[UICollectionView _addControlledSubview:atZIndex:] -> _setHiddenForReuse:NO).
+    [subview pstSetHiddenForReuse:NO];
     if (subview.superview != self) {
         NSInteger insertionIndex = MAX((NSInteger)(self.subviews.count - (self.dragging ? 1 : 0)), 0);
         [self insertSubview:subview atIndex:insertionIndex];
@@ -2490,7 +2498,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
     for (NSDictionary *animation in animations) {
         PSTCollectionReusableView *view = [animation objectForKey:@"view"];
         PSTCollectionViewLayoutAttributes *attr = [animation objectForKey:@"previousLayoutInfos"];
-        [view applyLayoutAttributes:attr];
+        [view pstSetLayoutAttributes:attr];
     };
     [UIView setAnimationsEnabled:animationsWereEnabled];
 
@@ -2515,7 +2523,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
                 NSUInteger removedIndex = [orderedIndex unsignedIntegerValue];
                 PSTCollectionReusableView *view = [views objectAtIndex:removedIndex];
                 PSTCollectionViewItemKey *removedKey = removedIndex < removedKeys.count ? [removedKeys objectAtIndex:removedIndex] : nil;
-                view.hidden = YES; // retiring views are hidden when the delegate hears of it
+                [view pstSetHiddenForReuse:YES]; // retiring views are hidden when the delegate hears of it
                 if (removedKey && type == PSTCollectionViewItemTypeCell && _collectionViewFlags.delegateDidEndDisplayingCell) {
                     [self.delegate collectionView:self didEndDisplayingCell:(PSTCollectionViewCell *)view forItemAtIndexPath:removedKey.indexPath];
                 } else if (removedKey && type != PSTCollectionViewItemTypeCell && _collectionViewFlags.delegateDidEndDisplayingSupplementaryView) {
@@ -2547,7 +2555,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
                              for (NSDictionary *animation in animations) {
                                  PSTCollectionReusableView *view = [animation objectForKey:@"view"];
                                  PSTCollectionViewLayoutAttributes *attrs = [animation objectForKey:@"newLayoutInfos"];
-                                 [view applyLayoutAttributes:attrs];
+                                 [view pstSetLayoutAttributes:attrs];
                              }
                          }
                          completion:^(BOOL finished) { finishUpdate(); }];
@@ -2555,7 +2563,7 @@ enum { PSTSelfSizingAttemptsPerCell = 6, PSTSelfSizingMaxPasses = 256 };
         for (NSDictionary *animation in animations) {
             PSTCollectionReusableView *view = [animation objectForKey:@"view"];
             PSTCollectionViewLayoutAttributes *attrs = [animation objectForKey:@"newLayoutInfos"];
-            [view applyLayoutAttributes:attrs];
+            [view pstSetLayoutAttributes:attrs];
         }
         finishUpdate();
     }
