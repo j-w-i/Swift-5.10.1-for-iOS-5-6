@@ -177,6 +177,108 @@ if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-libr
   echo 'FAIL: appearance(for:whenContainedInInstancesOf:) (iOS 9) must stay unavailable at iOS 5' >&2
   exit 1
 fi
+# APIs deprecated in iOS 7 or earlier are the current API on legacy targets: stock Swift makes
+# them unavailable; here they are available on every slice, with no deprecation warning below
+# their deprecating version and the usual warning from it on.
+cat > "$OUT/LegacyDeprecated.swift" <<'SWIFT'
+import UIKit
+import AudioToolbox
+func legacyText(_ s: NSString, _ font: UIFont) -> CGSize {
+    s.draw(in: .zero, with: font)
+    return s.size(with: font, constrainedTo: CGSize(width: 100, height: 100), lineBreakMode: .byWordWrapping)
+}
+func legacyPopover(_ c: UIViewController) { c.contentSizeForViewInPopover = .zero }
+func legacyStatusBar() { UIApplication.shared.setStatusBarHidden(true, animated: false) }
+func legacyAudioSession() -> OSStatus {
+    var category = UInt32(kAudioSessionCategory_AmbientSound)
+    return AudioSessionSetProperty(AudioSessionPropertyID(kAudioSessionProperty_AudioCategory),
+                                   UInt32(MemoryLayout<UInt32>.size), &category)
+}
+SWIFT
+for slice in armv7-apple-ios5.0 armv7-apple-ios6.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
+  mkdir -p "$OUT/deprecated-$slice"
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -parse-as-library -typecheck \
+    "$OUT/LegacyDeprecated.swift" > "$OUT/deprecated-$slice/build.log" 2>&1 \
+    || { echo "FAIL: APIs deprecated in iOS 7 or earlier must be available for $slice" >&2; exit 1; }
+done
+# (Logs can contain NUL bytes from clang's scratch-space notes: grep -a.)
+grep -aq "was deprecated in iOS [67]" "$OUT/deprecated-armv7-apple-ios5.0/build.log" \
+  && { echo 'FAIL: no iOS 6/7 deprecation warning expected below the deprecating version (iOS 5)' >&2; exit 1; }
+[ "$(grep -ac "was deprecated in iOS 7.0" "$OUT/deprecated-arm64-apple-ios7.0/build.log")" -ge 4 ] \
+  || { echo 'FAIL: iOS 7.0 deprecation warnings expected at an iOS 7 deployment target' >&2; exit 1; }
+
+# iOS 6 renamed UITextAlignment, UILineBreakMode and UITextWritingDirection (same raw values); the
+# SDK types the pre-iOS 6 UIKit API with the new names, so they are usable at iOS 5. The two
+# alignments iOS 6 added stay iOS 6.
+cat > "$OUT/TextEnums.swift" <<'SWIFT'
+import UIKit
+func textStyle(_ a: NSTextAlignment, _ b: NSLineBreakMode, _ c: NSWritingDirection) -> NSTextAlignment {
+    return a == .left ? .center : .right
+}
+func styleLabel(_ l: UILabel) { l.textAlignment = textStyle(.left, .byTruncatingTail, .natural); l.lineBreakMode = .byTruncatingTail }
+SWIFT
+cat > "$OUT/TextEnumsIOS6.swift" <<'SWIFT'
+import UIKit
+func justify(_ l: UILabel) { l.textAlignment = .justified; l.textAlignment = .natural }
+SWIFT
+for target in 5.0 6.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+    "$OUT/TextEnums.swift" >> "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: NSTextAlignment/NSLineBreakMode/NSWritingDirection must typecheck at iOS $target" >&2; exit 1; }
+done
+"$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios6.0 -parse-as-library -typecheck \
+  "$OUT/TextEnumsIOS6.swift" >> "$OUT/ios6.0/build.log" 2>&1 \
+  || { echo 'FAIL: NSTextAlignment.justified/.natural must typecheck at iOS 6' >&2; exit 1; }
+mkdir -p "$OUT/ios5.0-justified"
+if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-library -typecheck \
+     "$OUT/TextEnumsIOS6.swift" > "$OUT/ios5.0-justified/build.log" 2>&1; then
+  echo 'FAIL: NSTextAlignment.justified/.natural (iOS 6) must stay unavailable at iOS 5' >&2
+  exit 1
+fi
+[ "$(grep -c "only available in iOS 6.0 or newer" "$OUT/ios5.0-justified/build.log")" -ge 2 ] \
+  || { echo 'FAIL: both iOS 6 alignments must be gated at iOS 5' >&2; exit 1; }
+
+# A @_cdecl function and an imported C declaration of the same symbol with a different Swift
+# type (BOOL is Bool on arm64, ObjCBool in the Swift definition) crashed SILGen or IRGen in 5.10.
+# Both declaration orders, single file and whole module, every slice, with the SIL verifier.
+mkdir -p "$OUT/cdecl"
+cat > "$OUT/cdecl/Header.h" <<'H'
+#import <Foundation/Foundation.h>
+BOOL LegacyFlagEnabled(void);
+void LegacySetFlagEnabled(BOOL enabled);
+H
+cat > "$OUT/cdecl/Definitions.swift" <<'SWIFT'
+import Foundation
+@_cdecl("LegacyFlagEnabled") func legacyFlagExport() -> ObjCBool { ObjCBool(true) }
+@_cdecl("LegacySetFlagEnabled") func legacySetFlagExport(_ enabled: ObjCBool) { _ = enabled.boolValue }
+SWIFT
+cat > "$OUT/cdecl/Uses.swift" <<'SWIFT'
+import Foundation
+func legacyFlagUse() -> Bool { LegacySetFlagEnabled(true); return LegacyFlagEnabled() }
+let legacyFlagPointer: @convention(c) () -> ObjCBool = legacyFlagExport
+SWIFT
+cat "$OUT/cdecl/Uses.swift" "$OUT/cdecl/Definitions.swift" > "$OUT/cdecl/UsesFirst.swift"
+cat "$OUT/cdecl/Definitions.swift" "$OUT/cdecl/Uses.swift" | grep -v '^import' | sed '1i\
+import Foundation
+' > "$OUT/cdecl/DefinitionsFirst.swift"
+for slice in armv7-apple-ios5.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
+  for form in UsesFirst DefinitionsFirst; do
+    "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -parse-as-library -c -Xfrontend -sil-verify-all \
+      -import-objc-header "$OUT/cdecl/Header.h" "$OUT/cdecl/$form.swift" -o "$OUT/cdecl/$form-$slice.o" \
+      >> "$OUT/cdecl/build.log" 2>&1 \
+      || { echo "FAIL: @_cdecl and imported declaration of one C symbol ($form, $slice)" >&2; exit 1; }
+  done
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -parse-as-library -c -wmo -Xfrontend -sil-verify-all \
+    -module-name LegacyCDecl -import-objc-header "$OUT/cdecl/Header.h" \
+    "$OUT/cdecl/Uses.swift" "$OUT/cdecl/Definitions.swift" -o "$OUT/cdecl/wmo-$slice.o" \
+    >> "$OUT/cdecl/build.log" 2>&1 \
+    || { echo "FAIL: @_cdecl and imported declaration of one C symbol (whole module, $slice)" >&2; exit 1; }
+  # Exactly one definition of each symbol.
+  [ "$(nm "$OUT/cdecl/wmo-$slice.o" | grep -c ' T _LegacyFlagEnabled$')" = 1 ] \
+    || { echo "FAIL: LegacyFlagEnabled must be defined once ($slice)" >&2; exit 1; }
+done
+echo 'PASS: legacy deprecated APIs, iOS 6 text enums and @_cdecl/imported C symbols'
+
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit
 func useLaterFamily(_ v: UIView) { _ = v.keyboardLayoutGuide }

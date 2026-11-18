@@ -35,6 +35,12 @@ warnings are expected in this configuration and must not be confused with a pass
 `appearance(whenContainedInInstancesOf:)` below iOS 9: the proxies must be UIKit's own for the same
 container path, for `UIView` and `UIBarItem` subclasses.
 
+`SWIFT_EXTRA="-import-objc-header $PWD/LegacyInteropFixes.h" EXTRA_LIBS=UIKit bash run-on-ipod.sh
+LegacyInteropFixes.swift TOOLCHAIN` checks pre-iOS 7 deprecated APIs (AudioSession, popover size), the
+iOS 6 text enum raw values, and C calls into `@_cdecl` functions through their bridging-header
+declarations. Text measuring and drawing need a launched app (UIFont traps in CoreFoundation
+otherwise) and are covered by `check-backports-api.sh` instead.
+
 `EXTRA_LIBS=UIKit bash run-on-ipod.sh UIKitSemanticColors.swift TOOLCHAIN` checks the semantic
 background selectors used by the photo app. These are light-appearance fallbacks only on systems
 missing the native selectors.

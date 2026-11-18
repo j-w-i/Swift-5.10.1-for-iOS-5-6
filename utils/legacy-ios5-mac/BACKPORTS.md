@@ -14,6 +14,25 @@ version gating works.
 | Compositional layout | iOS 13 | `UICollectionViewCompositionalLayout`(+`Configuration`), `NSCollectionLayout*` types, `NSDirectionalEdgeInsets`, orthogonal scrolling behaviour |
 | Appearance containment | iOS 9 (`+appearanceWhenContainedInInstancesOfClasses:`) | the array form on `UIView` and `UIBarItem`, forwarded to UIKit's own variadic `+appearanceWhenContainedIn:` (iOS 5), which Swift cannot call: same proxy objects, same validation. Up to 15 container classes. The trait-collection forms stay native |
 
+## Older API on legacy targets
+
+On a legacy target (`-enable-legacy-ios5-runtime`, iOS 5..10, every slice):
+
+* APIs deprecated in iOS 7 or earlier are available. Stock Swift makes them unavailable
+  ("APIs deprecated as of iOS 7 and earlier are unavailable in Swift"), but on these systems they
+  are the current API: `sizeWithFont:`, `drawInRect:withFont:`, `contentSizeForViewInPopover`,
+  `AudioSessionSetProperty`, `useApplicationAudioSession` and the rest. They warn only from their
+  deprecating version on (e.g. on the iOS 7 arm64 slice, not on the iOS 5 armv7 slice). Swift names
+  of other declarations do not change.
+* `NSTextAlignment`, `NSLineBreakMode` and `NSWritingDirection` (iOS 6 names of `UITextAlignment`,
+  `UILineBreakMode` and `UITextWritingDirection`, same raw values) can be used in Swift signatures
+  at iOS 5. `NSTextAlignment.justified` and `.natural` stay iOS 6.
+
+Swift 5.10 crashed (SILGen or IRGen; also upstream 5.10.1) when a module both defines a C symbol
+with `@_cdecl` and calls it through a bridging-header declaration whose Swift type differs, as with
+`BOOL` (`Bool` on arm64) against an `ObjCBool` definition. The call now references the module's
+definition and uses the header's signature, as Swift 6 does.
+
 ## Excluded
 
 * `UIFont` weight helpers and `UIFont.systemFont(ofSize:weight:)` — excluded by the user.
