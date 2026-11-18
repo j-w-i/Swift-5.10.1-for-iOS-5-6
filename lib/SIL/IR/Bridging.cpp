@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #define DEBUG_TYPE "libsil"
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
 #include "swift/SIL/SILType.h"
 #include "swift/SIL/SILModule.h"
 #include "swift/AST/Decl.h"
@@ -127,6 +128,11 @@ Type TypeConverter::getLoweredCBridgedType(AbstractionPattern pattern,
                                            SILFunctionTypeRepresentation rep,
                                            BridgedTypePurpose purpose) {
   auto clangTy = pattern.isClangType() ? pattern.getClangType() : nullptr;
+
+  // Legacy toolchain: Dispatch overlay classes imported for libdispatch handle
+  // typedefs lower back to the slice's raw handle type.
+  if (auto raw = legacyDispatchLoweredRawType(Context, t, clangTy))
+    return raw;
 
   // Bridge Bool back to ObjC bool, unless the original Clang type was _Bool
   // or the Darwin Boolean type.

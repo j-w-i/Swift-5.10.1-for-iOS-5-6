@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
 #include "CFTypeInfo.h"
 #include "ClangAdapter.h"
 #include "ImportName.h"
@@ -198,6 +199,17 @@ OmissionTypeName importer::getClangTypeNameForOmission(clang::ASTContext &ctx,
       // If we have NS(U)Integer or CGFloat, return it.
       if (name == "NSInteger" || name == "NSUInteger" || name == "CGFloat")
         return name;
+
+      // libdispatch handles: name them as their Swift classes on every slice.
+      // With Objective-C dispatch objects (iOS 6+) the class name already
+      // does this; the plain C handles of iOS 5 would otherwise keep labels
+      // such as onQueue: that the other slices omit.
+      auto dispatchClass = legacyDispatchClassNameForTypedef(name);
+      if (!dispatchClass.empty()) {
+        auto module = typedefType->getDecl()->getOwningModule();
+        if (module && module->getTopLevelModule()->Name == "Dispatch")
+          return dispatchClass;
+      }
 
       // If it's a collection name and of pointer type, call it an
       // array of the pointee type.

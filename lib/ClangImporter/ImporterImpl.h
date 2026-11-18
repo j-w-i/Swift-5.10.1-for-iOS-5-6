@@ -458,6 +458,11 @@ public:
   bool IsReadingBridgingPCH;
   llvm::SmallVector<clang::serialization::SubmoduleID, 2> PCHImportedSubmodules;
 
+  /// Set while importing libdispatch's own C functions: they keep their raw
+  /// handle types, which the legacy Dispatch overlay wraps itself
+  /// (see swift/ClangImporter/LegacyDispatchBridging.h).
+  bool SuppressLegacyDispatchBridging = false;
+
   const Version CurrentVersion;
 
   constexpr static const char * const moduleImportBufferName =

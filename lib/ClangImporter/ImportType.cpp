@@ -37,6 +37,8 @@
 #include "swift/AST/Types.h"
 #include "swift/ClangImporter/ClangImporterRequests.h"
 #include "swift/ClangImporter/ClangModule.h"
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "swift/Parse/Token.h"
 #include "swift/Strings.h"
 #include "clang/AST/ASTContext.h"
@@ -101,6 +103,10 @@ namespace {
       /// type.
       ObjCBridged,
 
+      /// The source type is a libdispatch handle typedef bridged to a legacy
+      /// Dispatch overlay class (LegacyDispatchBridging.h).
+      DispatchBridged,
+
       /// The source type is an Objective-C object pointer type.
       ObjCPointer,
 
@@ -127,13 +133,15 @@ namespace {
     operator ImportHintKind() const { return Kind; }
 
     ImportHint(ImportHintKind kind) : Kind(kind) {
-      assert(kind != ObjCBridged &&
+      assert(kind != ObjCBridged && kind != DispatchBridged &&
              "Bridged entry point requires a bridged type");
     }
 
     ImportHint(ImportHintKind kind, Type bridgedType)
         : Kind(kind), BridgedType(bridgedType) {
-      assert(kind == ImportHint::ObjCBridged && "Wrong kind for bridged type");
+      assert((kind == ImportHint::ObjCBridged ||
+              kind == ImportHint::DispatchBridged) &&
+             "Wrong kind for bridged type");
     }
   };
 
@@ -149,6 +157,7 @@ namespace {
     case ImportHint::Block:
     case ImportHint::CFPointer:
     case ImportHint::ObjCBridged:
+    case ImportHint::DispatchBridged:
     case ImportHint::ObjCPointer:
     case ImportHint::CFunctionPointer:
     case ImportHint::OtherPointer:
@@ -838,8 +847,44 @@ namespace {
       return ImportResult(decl->getDeclaredInterfaceType());
     }
 
+    /// libdispatch handle typedefs (dispatch_queue_t, ...) of the SDK's Dispatch
+    /// module: the raw handle type, hinted with the legacy overlay class it
+    /// bridges to where bridging is allowed (LegacyDispatchBridging.h).
+    llvm::Optional<ImportResult>
+    importLegacyDispatchHandle(const clang::TypedefType *type) {
+      auto &ctx = Impl.SwiftContext;
+      if (!ctx.LangOpts.LegacyIOS5Backports ||
+          Impl.SuppressLegacyDispatchBridging)
+        return llvm::None;
+      auto decl = type->getDecl();
+      auto className = legacyDispatchClassNameForTypedef(decl->getName());
+      if (className.empty())
+        return llvm::None;
+      auto module = decl->getOwningModule();
+      if (!module || module->getTopLevelModule()->Name != "Dispatch")
+        return llvm::None;
+      // The overlay itself works on the raw handles.
+      if (ctx.MainModule && ctx.MainModule->getName().str() == "Dispatch")
+        return llvm::None;
+      // Load the overlay if nothing has yet, then take its own class (the
+      // SDK's Objective-C class can carry the same Swift name).
+      (void)Impl.getNamedSwiftType("Dispatch", className);
+      auto cls = legacyDispatchOverlayClass(ctx, className);
+      if (!cls || !legacyDispatchBridgingFunction(cls, /*toRaw=*/true) ||
+          !legacyDispatchBridgingFunction(cls, /*toRaw=*/false))
+        return llvm::None;
+      auto raw = Visit(type->desugar());
+      if (!raw.AbstractType)
+        return llvm::None;
+      return ImportResult(raw.AbstractType,
+                          ImportHint(ImportHint::DispatchBridged,
+                                     cls->getDeclaredInterfaceType()));
+    }
+
     ImportResult VisitTypedefType(const clang::TypedefType *type) {
       if (auto result = importLegacyUIKitLineBreakMode(type->getDecl()))
+        return *result;
+      if (auto result = importLegacyDispatchHandle(type))
         return *result;
       // If the underlying declaration is an Objective-C type parameter,
       // pull the corresponding generic type parameter from the imported class.
@@ -883,6 +928,9 @@ namespace {
           // only useful in bridged cases. Exit early.
           return { underlying.AbstractType,
                    ImportHint(ImportHint::ObjCBridged, mappedType) };
+
+        case ImportHint::DispatchBridged:
+          return underlying;
         }
       }
 
@@ -943,6 +991,7 @@ namespace {
       switch (underlyingResult.Hint) {
       case ImportHint::Block:
       case ImportHint::ObjCBridged:
+      case ImportHint::DispatchBridged:
         // Bridging is fine for Objective-C and blocks.
         break;
       case ImportHint::NSUInteger:
@@ -1540,6 +1589,18 @@ static ImportedType adjustTypeForConcreteImport(
     }
     break;
 
+  case ImportHint::DispatchBridged:
+    // Everywhere the ObjC bridging above applies, plus assign/weak properties
+    // (the usual iOS 5 declaration of a dispatch handle property), where the
+    // bridged class is still the only usable spelling. Struct fields keep the
+    // raw handle.
+    if (canBridgeTypes(importKind) &&
+        importKind != ImportTypeKind::RecordField &&
+        !(importKind == ImportTypeKind::Typedef &&
+          bridging == Bridgeability::None))
+      importedType = hint.BridgedType;
+    break;
+
   case ImportHint::Block: {
     // SwiftTypeConverter turns block pointers into @convention(block) types.
     // In some contexts, we bridge them to use the Swift function type
@@ -2130,9 +2191,19 @@ applyImportTypeAttrs(ImportTypeAttrs attrs, Type type,
   return type;
 }
 
+/// libdispatch's own C API, which the legacy Dispatch overlay wraps with the raw
+/// handle types (LegacyDispatchBridging.h).
+static bool isLibdispatchFunction(const clang::Decl *decl) {
+  auto module = decl ? decl->getOwningModule() : nullptr;
+  return module && module->getTopLevelModule()->Name == "Dispatch";
+}
+
 ImportedType ClangImporter::Implementation::importFunctionReturnType(
     DeclContext *dc, const clang::FunctionDecl *clangDecl,
     bool allowNSUIntegerAsInt) {
+  llvm::SaveAndRestore<bool> keepRawDispatch(
+      SuppressLegacyDispatchBridging,
+      SuppressLegacyDispatchBridging || isLibdispatchFunction(clangDecl));
 
   // Hardcode handling of certain result types for builtins.
   if (auto builtinID = clangDecl->getBuiltinID()) {
@@ -2256,6 +2327,9 @@ ImportedType ClangImporter::Implementation::importFunctionParamsAndReturnType(
     ArrayRef<const clang::ParmVarDecl *> params, bool isVariadic,
     bool isFromSystemModule, DeclName name, ParameterList *&parameterList,
     ArrayRef<GenericTypeParamDecl *> genericParams) {
+  llvm::SaveAndRestore<bool> keepRawDispatch(
+      SuppressLegacyDispatchBridging,
+      SuppressLegacyDispatchBridging || isLibdispatchFunction(clangDecl));
 
   bool allowNSUIntegerAsInt =
       shouldAllowNSUIntegerAsInt(isFromSystemModule, clangDecl);

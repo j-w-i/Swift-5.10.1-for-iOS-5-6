@@ -23,3 +23,9 @@ Deliberate deviations from upstream bytes:
   pointer, so size, alignment and ABI are unchanged.
 The shared shim header `stdlib/public/SwiftShims/DispatchOverlayShims.h` includes `<cdispatch/dispatch.h>` only when
 `SWIFT_LEGACY_IOS5_CDISPATCH` is defined (set only for this overlay).
+* `Wrapper.swift` adds internal `init(__raw:)` initializers to `DispatchGroup`, `DispatchSemaphore` and
+  `DispatchIO`, and public `_convert<Class>ToRaw` / `_convertRawTo<Class>` functions at the end. The
+  compiler calls these to bridge libdispatch handles in C and Objective-C signatures
+  (`include/swift/ClangImporter/LegacyDispatchBridging.h`). On armv7s/arm64 their raw side is
+  `AnyObject`: the SDK names the dispatch classes `DispatchQueue` and so on for Swift, so a signature
+  naming corelibs' `OS_dispatch_queue` would not deserialize in clients.

@@ -41,6 +41,12 @@ iOS 6 text enum raw values, and C calls into `@_cdecl` functions through their b
 declarations. Text measuring and drawing need a launched app (UIFont traps in CoreFoundation
 otherwise) and are covered by `check-backports-api.sh` instead.
 
+`SWIFT_EXTRA="-import-objc-header $PWD/LegacyDispatchBridging.h" EXTRA_OBJC=$PWD/LegacyDispatchBridging.m
+bash run-on-ipod.sh LegacyDispatchBridging.swift TOOLCHAIN` checks dispatch handles in Objective-C and C
+signatures against a real (MRC) Objective-C implementation: properties, parameters, block parameters,
+results, NULL, and that wrappers neither over-release nor leak (a libdispatch finalizer reports when the
+queue is disposed). `EXTRA_OBJC` links one Objective-C file into the test.
+
 `EXTRA_LIBS=UIKit bash run-on-ipod.sh UIKitSemanticColors.swift TOOLCHAIN` checks the semantic
 background selectors used by the photo app. These are light-appearance fallbacks only on systems
 missing the native selectors.

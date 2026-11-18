@@ -75,6 +75,11 @@ public class DispatchGroup : DispatchObject {
 		__wrapped = dispatch_group_create()
 	}
 
+	// Legacy bridging: wraps a handle without taking a reference (see _convertRawToDispatchGroup).
+	internal init(__raw: dispatch_group_t) {
+		__wrapped = __raw
+	}
+
 	deinit {
 		_legacyDispatchRelease(wrapped())
 	}
@@ -91,6 +96,11 @@ public class DispatchGroup : DispatchObject {
 public class DispatchSemaphore : DispatchObject {
 	internal let __wrapped: dispatch_semaphore_t;
 
+	// Legacy bridging: wraps a handle without taking a reference (see _convertRawToDispatchSemaphore).
+	internal init(__raw: dispatch_semaphore_t) {
+		__wrapped = __raw
+	}
+
 	final internal override func wrapped() -> dispatch_object_t {
 		return unsafeBitCast(__wrapped, to: dispatch_object_t.self)
 	}
@@ -106,6 +116,11 @@ public class DispatchSemaphore : DispatchObject {
 
 public class DispatchIO : DispatchObject {
 	internal let __wrapped:dispatch_io_t
+
+	// Legacy bridging: wraps a handle without taking a reference (see _convertRawToDispatchIO).
+	internal init(__raw: dispatch_io_t) {
+		__wrapped = __raw
+	}
 
 	final internal override func wrapped() -> dispatch_object_t {
 		return unsafeBitCast(__wrapped, to: dispatch_object_t.self)
@@ -368,3 +383,97 @@ internal enum _OSQoSClass : UInt32  {
 		}
 	}
 }
+
+// Legacy toolchain bridging entry points. With -enable-legacy-ios5-runtime the compiler imports the
+// SDK's dispatch_{queue,group,semaphore,source,io}_t in C and Objective-C signatures as these classes
+// and calls these functions at the boundary (include/swift/ClangImporter/LegacyDispatchBridging.h).
+// The raw type is this slice's: an OpaquePointer on armv7 (iOS 5 has plain C handles), the ARC-managed
+// OS_dispatch_* class on armv7s/arm64.
+//
+// On armv7s/arm64 the raw side is typed AnyObject: the overlay sees the dispatch classes through
+// corelibs' headers (OS_dispatch_queue), clients through the SDK's, which name the same classes
+// DispatchQueue and so on for Swift, so a signature naming OS_dispatch_queue would not deserialize
+// in a client. AnyObject is the same object pointer and keeps ARC ownership.
+//
+// To raw: the handle the object owns, borrowed for the call (the object outlives the call).
+// From raw: a new wrapper holding its own reference (retained here on armv7, by ARC elsewhere), so
+// it stays valid after the Objective-C side lets go. Wrappers are not unique per handle: compare the
+// handles, not the wrappers, for identity.
+#if LEGACY_ARC_DISPATCH_OBJECTS
+public func _convertDispatchQueueToRaw(_ object: DispatchQueue) -> AnyObject {
+	return object.__wrapped
+}
+public func _convertRawToDispatchQueue(_ handle: AnyObject) -> DispatchQueue {
+	let raw = unsafeDowncast(handle, to: dispatch_queue_t.self)
+	return DispatchQueue(queue: raw)
+}
+public func _convertDispatchGroupToRaw(_ object: DispatchGroup) -> AnyObject {
+	return object.__wrapped
+}
+public func _convertRawToDispatchGroup(_ handle: AnyObject) -> DispatchGroup {
+	let raw = unsafeDowncast(handle, to: dispatch_group_t.self)
+	return DispatchGroup(__raw: raw)
+}
+public func _convertDispatchSemaphoreToRaw(_ object: DispatchSemaphore) -> AnyObject {
+	return object.__wrapped
+}
+public func _convertRawToDispatchSemaphore(_ handle: AnyObject) -> DispatchSemaphore {
+	let raw = unsafeDowncast(handle, to: dispatch_semaphore_t.self)
+	return DispatchSemaphore(__raw: raw)
+}
+public func _convertDispatchSourceToRaw(_ object: DispatchSource) -> AnyObject {
+	return object.__wrapped
+}
+public func _convertRawToDispatchSource(_ handle: AnyObject) -> DispatchSource {
+	let raw = unsafeDowncast(handle, to: dispatch_source_t.self)
+	return DispatchSource(source: raw)
+}
+public func _convertDispatchIOToRaw(_ object: DispatchIO) -> AnyObject {
+	return object.__wrapped
+}
+public func _convertRawToDispatchIO(_ handle: AnyObject) -> DispatchIO {
+	let raw = unsafeDowncast(handle, to: dispatch_io_t.self)
+	return DispatchIO(__raw: raw)
+}
+#else
+public func _convertDispatchQueueToRaw(_ object: DispatchQueue) -> dispatch_queue_t {
+	return object.__wrapped
+}
+public func _convertRawToDispatchQueue(_ raw: dispatch_queue_t) -> DispatchQueue {
+	let object = DispatchQueue(queue: raw)
+	_legacyDispatchRetain(object.wrapped())
+	return object
+}
+public func _convertDispatchGroupToRaw(_ object: DispatchGroup) -> dispatch_group_t {
+	return object.__wrapped
+}
+public func _convertRawToDispatchGroup(_ raw: dispatch_group_t) -> DispatchGroup {
+	let object = DispatchGroup(__raw: raw)
+	_legacyDispatchRetain(object.wrapped())
+	return object
+}
+public func _convertDispatchSemaphoreToRaw(_ object: DispatchSemaphore) -> dispatch_semaphore_t {
+	return object.__wrapped
+}
+public func _convertRawToDispatchSemaphore(_ raw: dispatch_semaphore_t) -> DispatchSemaphore {
+	let object = DispatchSemaphore(__raw: raw)
+	_legacyDispatchRetain(object.wrapped())
+	return object
+}
+public func _convertDispatchSourceToRaw(_ object: DispatchSource) -> dispatch_source_t {
+	return object.__wrapped
+}
+public func _convertRawToDispatchSource(_ raw: dispatch_source_t) -> DispatchSource {
+	let object = DispatchSource(source: raw)
+	_legacyDispatchRetain(object.wrapped())
+	return object
+}
+public func _convertDispatchIOToRaw(_ object: DispatchIO) -> dispatch_io_t {
+	return object.__wrapped
+}
+public func _convertRawToDispatchIO(_ raw: dispatch_io_t) -> DispatchIO {
+	let object = DispatchIO(__raw: raw)
+	_legacyDispatchRetain(object.wrapped())
+	return object
+}
+#endif

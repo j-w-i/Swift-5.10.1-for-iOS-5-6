@@ -279,6 +279,36 @@ for slice in armv7-apple-ios5.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
 done
 echo 'PASS: legacy deprecated APIs, iOS 6 text enums and @_cdecl/imported C symbols'
 
+# libdispatch handles in C/Objective-C signatures import as the Dispatch overlay classes on every
+# slice, with the same Swift names (stock Swift does this through OS_dispatch_queue == DispatchQueue,
+# which the legacy overlay is not). Struct fields keep the raw handle. libdispatch's own C API keeps
+# its raw types (the overlay wraps it), so its Swift names are unchanged.
+HERE_API=$(cd "$(dirname "$0")" && pwd -P)
+mkdir -p "$OUT/dispatch-bridging"
+cat > "$OUT/dispatch-bridging/Raw.h" <<'H'
+#import <Foundation/Foundation.h>
+struct LegacyQueueHolder { dispatch_queue_t queue; };
+H
+cat > "$OUT/dispatch-bridging/RawField.swift" <<'SWIFT'
+import Dispatch
+func holder(_ q: DispatchQueue) -> LegacyQueueHolder { LegacyQueueHolder(queue: q) }
+SWIFT
+for slice in armv7-apple-ios5.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -c -Xfrontend -sil-verify-all \
+    -import-objc-header "$HERE_API/concurrency-tests/LegacyDispatchBridging.h" \
+    "$HERE_API/concurrency-tests/LegacyDispatchBridging.swift" -o "$OUT/dispatch-bridging/$slice.o" \
+    >> "$OUT/dispatch-bridging/build.log" 2>&1 \
+    || { echo "FAIL: dispatch handles must bridge to the Dispatch overlay classes ($slice)" >&2; exit 1; }
+  if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -typecheck -import-objc-header "$OUT/dispatch-bridging/Raw.h" \
+       "$OUT/dispatch-bridging/RawField.swift" >> "$OUT/dispatch-bridging/raw-field.log" 2>&1; then
+    echo "FAIL: a struct field of type dispatch_queue_t must keep the raw handle ($slice)" >&2; exit 1
+  fi
+  # The conversions are the overlay's, not open-coded.
+  nm "$OUT/dispatch-bridging/$slice.o" | grep -q 'convertRawTo.*Queue' \
+    || { echo "FAIL: bridging must call the overlay's conversion functions ($slice)" >&2; exit 1; }
+done
+echo 'PASS: libdispatch handles bridge to DispatchQueue/Group/Semaphore/Source/IO on every slice'
+
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit
 func useLaterFamily(_ v: UIView) { _ = v.keyboardLayoutGuide }

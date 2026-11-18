@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
 #include "ArgumentScope.h"
 #include "Callee.h"
 #include "ExecutorBreadcrumb.h"
@@ -653,6 +654,39 @@ ManagedValue SILGenFunction::emitFuncToBlock(SILLocation loc,
   return emitManagedRValueWithCleanup(heapBlock);
 }
 
+/// Legacy toolchain: call the Dispatch overlay's _convert<Class>ToRaw or
+/// _convertRawTo<Class> (LegacyDispatchBridging.h). The argument is borrowed;
+/// the result is owned (trivial on the iOS 5 slice).
+static llvm::Optional<ManagedValue>
+emitLegacyDispatchConversion(SILGenFunction &SGF, SILLocation loc,
+                             ManagedValue v, CanType nativeType,
+                             SILType expectedResultTy, bool toRaw) {
+  auto cls = legacyDispatchBridgedClass(SGF.getASTContext(), nativeType);
+  if (!cls)
+    return llvm::None;
+  auto fn = legacyDispatchBridgingFunction(cls, toRaw);
+  if (!fn)
+    return llvm::None;
+  SILValue fnRef = SGF.emitGlobalFunctionRef(loc, SILDeclRef(fn));
+  auto fnType = fnRef->getType().castTo<SILFunctionType>();
+  SILFunctionConventions conventions(fnType, SGF.SGM.M);
+  auto paramTy = conventions.getSILArgumentType(0, SGF.getTypeExpansionContext());
+  auto resultTy = conventions.getSILResultType(SGF.getTypeExpansionContext());
+  if (v.getType().getObjectType() != paramTy.getObjectType() ||
+      resultTy.getObjectType() != expectedResultTy.getObjectType())
+    return llvm::None;
+  ManagedValue argument = v;
+  if (fnType->getParameters()[0].isConsumed())
+    argument = argument.ensurePlusOne(SGF, loc);
+  else
+    argument = argument.borrow(SGF, loc);
+  SILValue result = SGF.B.createApply(
+      loc, fnRef, {},
+      fnType->getParameters()[0].isConsumed() ? argument.forward(SGF)
+                                              : argument.getValue());
+  return SGF.emitManagedRValueWithCleanup(result);
+}
+
 static ManagedValue emitNativeToCBridgedNonoptionalValue(SILGenFunction &SGF,
                                                          SILLocation loc,
                                                          ManagedValue v,
@@ -697,6 +731,12 @@ static ManagedValue emitNativeToCBridgedNonoptionalValue(SILGenFunction &SGF,
       return SGF.emitFuncToBlock(loc, v, nativeFTy, bridgedFTy,
                                  loweredBridgedTy.castTo<SILFunctionType>());
   }
+
+  // Legacy Dispatch overlay class to its raw libdispatch handle.
+  if (auto result = emitLegacyDispatchConversion(SGF, loc, v, nativeType,
+                                                 loweredBridgedTy,
+                                                 /*toRaw=*/true))
+    return *result;
 
   // If the native type conforms to _ObjectiveCBridgeable, use its
   // _bridgeToObjectiveC witness.
@@ -1115,6 +1155,13 @@ static ManagedValue emitCBridgedToNativeValue(
                                  loweredNativeTy.castTo<SILFunctionType>());
     }
   }
+
+  // Raw libdispatch handle to the legacy Dispatch overlay class.
+  if (legacyDispatchBridgedClass(SGF.getASTContext(), nativeType))
+    if (auto result = emitLegacyDispatchConversion(
+            SGF, loc, unwrapBridgedOptionals(v), nativeType, loweredNativeTy,
+            /*toRaw=*/false))
+      return *result;
 
   // Bridge via _ObjectiveCBridgeable.
   if (auto conformance =

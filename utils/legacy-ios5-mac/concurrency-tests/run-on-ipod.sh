@@ -11,7 +11,13 @@ NAME=$(basename "$SRC" .swift); OUT="$(dirname "$0")/out"; mkdir -p "$OUT"; cp "
 "$TC/usr/bin/swiftc" -c "$OUT/main.swift" -module-name "$NAME" -target armv7-apple-ios5.0 -sdk "$SDK" -enable-legacy-ios5-runtime -resource-dir "$RES" -Xcc -resource-dir -Xcc "$CLANG_RES" -Xcc -I"$RES/legacy-overlay-shims" -runtime-compatibility-version none -disable-autolinking-runtime-compatibility-dynamic-replacements -Xfrontend -disable-autolink-library -Xfrontend swiftFileProvider ${SWIFT_EXTRA:-} -o "$OUT/main.o"
 LIBS=(); for l in Core Foundation Dispatch ObjectiveC CoreFoundation CoreGraphics Darwin ${EXTRA_LIBS:-}; do LIBS+=("-lswift$l"); done
 cp "$CONC" "$OUT/libswift_Concurrency.dylib"
-"$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -nostartfiles -Wl,-no_new_main -L "$RES/iphoneos" -L "$OUT" "$OUT/main.o" "$RES/iphoneos/crt1.3.1.o" "$RES/iphoneos/libswiftLegacyIOS5Backports.a" "${LIBS[@]}" -lswift_Concurrency -lobjc -lSystem -Wl,-rpath,@executable_path/Frameworks -o "$OUT/$NAME"
+# EXTRA_OBJC: one Objective-C (MRC) source linked in, e.g. the other side of a bridging test.
+EXTRA_OBJECTS=()
+if [ -n "${EXTRA_OBJC:-}" ]; then
+  "$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -fno-objc-arc -c "$EXTRA_OBJC" -o "$OUT/extra-objc.o"
+  EXTRA_OBJECTS=("$OUT/extra-objc.o")
+fi
+"$CLANG" -target armv7-apple-ios5.0 -isysroot "$SDK" -nostartfiles -Wl,-no_new_main -L "$RES/iphoneos" -L "$OUT" "$OUT/main.o" ${EXTRA_OBJECTS[@]+"${EXTRA_OBJECTS[@]}"} "$RES/iphoneos/crt1.3.1.o" "$RES/iphoneos/libswiftLegacyIOS5Backports.a" "${LIBS[@]}" -lswift_Concurrency -lobjc -lSystem -Wl,-rpath,@executable_path/Frameworks -o "$OUT/$NAME"
 ldid -S "$OUT/$NAME"; ldid -S "$OUT/libswift_Concurrency.dylib"
 DEVICE_KEY=${DEVICE_KEY:?set DEVICE_KEY to the device SSH private key}
 ssh_() { ssh -p 2225 -i "$DEVICE_KEY" -o BatchMode=yes -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa -o UserKnownHostsFile=/tmp/legacy-ipod-known-hosts root@127.0.0.1 "$@"; }

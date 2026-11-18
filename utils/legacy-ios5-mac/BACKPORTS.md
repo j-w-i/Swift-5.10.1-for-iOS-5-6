@@ -33,6 +33,28 @@ with `@_cdecl` and calls it through a bridging-header declaration whose Swift ty
 `BOOL` (`Bool` on arm64) against an `ObjCBool` definition. The call now references the module's
 definition and uses the header's signature, as Swift 6 does.
 
+## Dispatch handles in C and Objective-C APIs
+
+Stock Swift imports `dispatch_queue_t` as `DispatchQueue` because, from iOS 6, the Objective-C class
+`OS_dispatch_queue` *is* `DispatchQueue`. The legacy Dispatch overlay wraps the handle in a Swift class
+on every slice (iOS 5 has no dispatch classes), so the toolchain bridges instead. With
+`-enable-legacy-ios5-runtime`, on every slice:
+
+* `dispatch_queue_t`, `dispatch_group_t`, `dispatch_semaphore_t`, `dispatch_source_t` and `dispatch_io_t`
+  in C function and Objective-C method parameters and results, properties (including the iOS 5
+  `assign` form) and block parameters import as `DispatchQueue`, `DispatchGroup`, `DispatchSemaphore`,
+  `DispatchSource` and `DispatchIO`, converted at the call. Argument labels are the same on every slice
+  (`run(on:group:block:)` for `runOnQueue:group:block:`).
+* A handle coming from Objective-C gets a wrapper that holds its own reference, so it stays valid
+  after the Objective-C side releases it. A handle passed to Objective-C is borrowed for the call, as in
+  Objective-C itself: a setter that keeps it must retain it (on iOS 5, `dispatch_retain`).
+* Wrappers are not unique per handle: two reads of the same property give two `DispatchQueue` objects
+  for one queue, so `===` compares wrappers, not queues.
+* Struct fields keep the raw handle. libdispatch's own C functions (`dispatch_sync` and the rest) are
+  unchanged: use the overlay's methods (`queue.sync { }`, `.sync(flags: .barrier)`, and so on).
+* Swift classes cannot yet override Objective-C methods or implement `@objc` protocol requirements
+  whose signatures contain dispatch handles.
+
 ## Excluded
 
 * `UIFont` weight helpers and `UIFont.systemFont(ofSize:weight:)` — excluded by the user.
