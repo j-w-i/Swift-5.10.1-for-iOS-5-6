@@ -92,7 +92,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             }
         }
         LegacyAutoLayoutInstaller.callOriginalVoid(
-            selector: NSSelectorFromString("layoutSubviews"),
+            selector: LegacyHookSelector.layoutSubviews,
             receiver: view
         )
     }
@@ -101,13 +101,13 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// controls invalidate their natural size (iOS 6 does this inside each setter).
     @objc dynamic func rr_r_setNeedsDisplay() {
         let view = bridgedView(self)
-        LegacyAutoLayoutInstaller.callOriginalVoid(selector: NSSelectorFromString("setNeedsDisplay"), receiver: view)
+        LegacyAutoLayoutInstaller.callOriginalVoid(selector: LegacyHookSelector.setNeedsDisplay, receiver: view)
         view.legacyContentMayHaveChanged()
     }
 
     @objc dynamic func rr_r_setNeedsLayout() {
         let view = bridgedView(self)
-        LegacyAutoLayoutInstaller.callOriginalVoid(selector: NSSelectorFromString("setNeedsLayout"), receiver: view)
+        LegacyAutoLayoutInstaller.callOriginalVoid(selector: LegacyHookSelector.setNeedsLayout, receiver: view)
         view.legacyContentMayHaveChanged()
     }
 
@@ -128,7 +128,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
             }
         }
         LegacyAutoLayoutInstaller.callOriginalVoidObject(
-            selector: NSSelectorFromString("layoutSublayersOfLayer:"),
+            selector: LegacyHookSelector.layoutSublayersOfLayer_,
             receiver: view,
             argument: layer
         )
@@ -142,7 +142,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     /// reparenting, which are all implemented through these two primitives.
     @objc dynamic func rr_r_didAddSubview(_ subview: UIView) {
         LegacyAutoLayoutInstaller.callOriginalVoidObject(
-            selector: NSSelectorFromString("didAddSubview:"),
+            selector: LegacyHookSelector.didAddSubview_,
             receiver: self,
             argument: subview
         )
@@ -151,19 +151,19 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
                 bridgedView(self).legacyPropagateGeometryParticipation()
                 bridgedView(self).legacySetNeedsUpdateConstraints()
             }
-            LegacyLayoutMutation.bump()
+            LegacyLayoutMutation.bumpHierarchy()
         }
     }
 
     /// `-[UIView willRemoveSubview:]`: record that the item tree changed.
     @objc dynamic func rr_r_willRemoveSubview(_ subview: UIView) {
         LegacyAutoLayoutInstaller.callOriginalVoidObject(
-            selector: NSSelectorFromString("willRemoveSubview:"),
+            selector: LegacyHookSelector.willRemoveSubview_,
             receiver: self,
             argument: subview
         )
         if LegacyAutoLayout.isActive {
-            LegacyLayoutMutation.bump()
+            LegacyLayoutMutation.bumpHierarchy()
         }
     }
 
@@ -194,13 +194,13 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         let view = bridgedView(self)
         let before = view.frame
         LegacyAutoLayoutInstaller.callOriginalVoidRect(
-            selector: NSSelectorFromString("setFrame:"), receiver: view, argument: frame)
+            selector: LegacyHookSelector.setFrame_, receiver: view, argument: frame)
         let after = view.frame
         // A move that keeps the size is a translation: it can only change a solution when the view's
         // position is itself part of a constraint system (see legacyPositionAffectsConstraints).
-        let relevant = before.size != after.size ? view.legacyGeometryAffectsConstraints
-                                                 : view.legacyPositionAffectsConstraints
-        if before != after && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames && relevant {
+        // Evaluated only for an outside change: the engine's own write-back sets every solved frame through here.
+        if before != after && !LegacyAutoLayoutRuntime.isApplyingLayoutFrames
+            && (before.size != after.size ? view.legacyGeometryAffectsConstraints : view.legacyPositionAffectsConstraints) {
             legacyClearAutoresizingReference(view)
             LegacyLayoutMutation.bump()
             view.legacySetNeedsUpdateConstraints()
@@ -212,7 +212,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         let view = bridgedView(self)
         let before = view.bounds
         LegacyAutoLayoutInstaller.callOriginalVoidRect(
-            selector: NSSelectorFromString("setBounds:"),
+            selector: LegacyHookSelector.setBounds_,
             receiver: view,
             argument: bounds
         )
@@ -231,7 +231,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
         let view = bridgedView(self)
         let before = view.center
         LegacyAutoLayoutInstaller.callOriginalVoidPoint(
-            selector: NSSelectorFromString("setCenter:"),
+            selector: LegacyHookSelector.setCenter_,
             receiver: view,
             argument: center
         )
@@ -253,7 +253,7 @@ private final class LegacyUIViewRuntimeHooks: NSObject {
     @objc dynamic func rr_r_setTransform(_ transform: CGAffineTransform) {
         let view = bridgedView(self)
         LegacyAutoLayoutInstaller.callOriginalVoidTransform(
-            selector: NSSelectorFromString("setTransform:"),
+            selector: LegacyHookSelector.setTransform_,
             receiver: view,
             argument: transform
         )
@@ -514,43 +514,43 @@ internal enum LegacyAutoLayoutInstaller {
         )
 
         // 2. Provide the Auto Layout API surface that iOS 5 does not have.
-        addMethodIfAbsent(selector: NSSelectorFromString("translatesAutoresizingMaskIntoConstraints"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_translatesAutoresizingMaskIntoConstraints))
-        addMethodIfAbsent(selector: NSSelectorFromString("setTranslatesAutoresizingMaskIntoConstraints:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setTranslatesAutoresizingMaskIntoConstraints(_:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("removeConstraint:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_removeConstraint(_:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("removeConstraints:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_removeConstraints(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.translatesAutoresizingMaskIntoConstraints, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_translatesAutoresizingMaskIntoConstraints))
+        addMethodIfAbsent(selector: LegacyHookSelector.setTranslatesAutoresizingMaskIntoConstraints_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setTranslatesAutoresizingMaskIntoConstraints(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.removeConstraint_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_removeConstraint(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.removeConstraints_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_removeConstraints(_:)))
         addMethodIfAbsent(
-            selector: NSSelectorFromString("constraints"),
+            selector: LegacyHookSelector.constraints,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_constraints)
         )
         addMethodIfAbsent(
-            selector: NSSelectorFromString("addConstraint:"),
+            selector: LegacyHookSelector.addConstraint_,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_addConstraint(_:))
         )
         addMethodIfAbsent(
-            selector: NSSelectorFromString("addConstraints:"),
+            selector: LegacyHookSelector.addConstraints_,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_addConstraints(_:))
         )
         addMethodIfAbsent(
-            selector: NSSelectorFromString("updateConstraints"),
+            selector: LegacyHookSelector.updateConstraints,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_updateConstraints)
         )
         addMethodIfAbsent(
-            selector: NSSelectorFromString("updateConstraintsIfNeeded"),
+            selector: LegacyHookSelector.updateConstraintsIfNeeded,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_updateConstraintsIfNeeded)
         )
         addMethodIfAbsent(
-            selector: NSSelectorFromString("setNeedsUpdateConstraints"),
+            selector: LegacyHookSelector.setNeedsUpdateConstraints,
             implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setNeedsUpdateConstraints)
         )
 
-        addMethodIfAbsent(selector: NSSelectorFromString("intrinsicContentSize"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_intrinsicContentSize))
-        addMethodIfAbsent(selector: NSSelectorFromString("systemLayoutSizeFittingSize:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:withHorizontalFittingPriority:verticalFittingPriority:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("invalidateIntrinsicContentSize"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_invalidateIntrinsicContentSize))
-        addMethodIfAbsent(selector: NSSelectorFromString("contentHuggingPriorityForAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentHuggingPriorityForAxis(_:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("setContentHuggingPriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentHuggingPriority(_:forAxis:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("contentCompressionResistancePriorityForAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentCompressionResistancePriorityForAxis(_:)))
-        addMethodIfAbsent(selector: NSSelectorFromString("setContentCompressionResistancePriority:forAxis:"), implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentCompressionResistancePriority(_:forAxis:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.intrinsicContentSize, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_intrinsicContentSize))
+        addMethodIfAbsent(selector: LegacyHookSelector.systemLayoutSizeFittingSize_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.systemLayoutSizeFittingSizeWithHorizontalFittingPriorityVerticalFittingPriority_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_systemLayoutSizeFittingSize(_:withHorizontalFittingPriority:verticalFittingPriority:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.invalidateIntrinsicContentSize, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_invalidateIntrinsicContentSize))
+        addMethodIfAbsent(selector: LegacyHookSelector.contentHuggingPriorityForAxis_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentHuggingPriorityForAxis(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.setContentHuggingPriorityForAxis_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentHuggingPriority(_:forAxis:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.contentCompressionResistancePriorityForAxis_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_contentCompressionResistancePriorityForAxis(_:)))
+        addMethodIfAbsent(selector: LegacyHookSelector.setContentCompressionResistancePriorityForAxis_, implementation: #selector(LegacyUIViewRuntimeHooks.rr_a_setContentCompressionResistancePriority(_:forAxis:)))
         LegacyControllerConstraintUpdates.installIfAbsent()
         installed = true
         auditIssues = auditInstalledSurface()
@@ -582,8 +582,8 @@ internal enum LegacyAutoLayoutInstaller {
     /// dispatching those overrides would silently violate a required height.
     /// Use UIView's native primitives, retaining its layer/autoresizing work.
     internal static func writeLayoutGeometry(to view: UIView, bounds: CGRect, center: CGPoint) {
-        let boundsSelector = NSSelectorFromString("setBounds:")
-        let centerSelector = NSSelectorFromString("setCenter:")
+        let boundsSelector = LegacyHookSelector.setBounds_
+        let centerSelector = LegacyHookSelector.setCenter_
         let boundsIMP = originalImplementations[boundsSelector] ?? class_getMethodImplementation(UIView.self, boundsSelector)!
         let centerIMP = originalImplementations[centerSelector] ?? class_getMethodImplementation(UIView.self, centerSelector)!
         typealias BoundsSetter = @convention(c) (AnyObject, Selector, CGRect) -> Void
@@ -785,4 +785,38 @@ internal enum LegacyAutoLayoutInstaller {
         }
         return issues
     }
+}
+
+/// The selectors the hooks forward to, built once. Each hook used to turn its selector name into a selector on
+/// every call (string bridging plus a lookup in the runtime's selector table), and geometry and layout hooks run
+/// for every view on every frame.
+internal enum LegacyHookSelector {
+    static let addConstraint_ = NSSelectorFromString("addConstraint:")
+    static let addConstraints_ = NSSelectorFromString("addConstraints:")
+    static let constraints = NSSelectorFromString("constraints")
+    static let contentCompressionResistancePriorityForAxis_ = NSSelectorFromString("contentCompressionResistancePriorityForAxis:")
+    static let contentHuggingPriorityForAxis_ = NSSelectorFromString("contentHuggingPriorityForAxis:")
+    static let didAddSubview_ = NSSelectorFromString("didAddSubview:")
+    static let intrinsicContentSize = NSSelectorFromString("intrinsicContentSize")
+    static let invalidateIntrinsicContentSize = NSSelectorFromString("invalidateIntrinsicContentSize")
+    static let layoutSublayersOfLayer_ = NSSelectorFromString("layoutSublayersOfLayer:")
+    static let layoutSubviews = NSSelectorFromString("layoutSubviews")
+    static let removeConstraint_ = NSSelectorFromString("removeConstraint:")
+    static let removeConstraints_ = NSSelectorFromString("removeConstraints:")
+    static let setBounds_ = NSSelectorFromString("setBounds:")
+    static let setCenter_ = NSSelectorFromString("setCenter:")
+    static let setContentCompressionResistancePriorityForAxis_ = NSSelectorFromString("setContentCompressionResistancePriority:forAxis:")
+    static let setContentHuggingPriorityForAxis_ = NSSelectorFromString("setContentHuggingPriority:forAxis:")
+    static let setFrame_ = NSSelectorFromString("setFrame:")
+    static let setNeedsDisplay = NSSelectorFromString("setNeedsDisplay")
+    static let setNeedsLayout = NSSelectorFromString("setNeedsLayout")
+    static let setNeedsUpdateConstraints = NSSelectorFromString("setNeedsUpdateConstraints")
+    static let setTransform_ = NSSelectorFromString("setTransform:")
+    static let setTranslatesAutoresizingMaskIntoConstraints_ = NSSelectorFromString("setTranslatesAutoresizingMaskIntoConstraints:")
+    static let systemLayoutSizeFittingSizeWithHorizontalFittingPriorityVerticalFittingPriority_ = NSSelectorFromString("systemLayoutSizeFittingSize:withHorizontalFittingPriority:verticalFittingPriority:")
+    static let systemLayoutSizeFittingSize_ = NSSelectorFromString("systemLayoutSizeFittingSize:")
+    static let translatesAutoresizingMaskIntoConstraints = NSSelectorFromString("translatesAutoresizingMaskIntoConstraints")
+    static let updateConstraints = NSSelectorFromString("updateConstraints")
+    static let updateConstraintsIfNeeded = NSSelectorFromString("updateConstraintsIfNeeded")
+    static let willRemoveSubview_ = NSSelectorFromString("willRemoveSubview:")
 }

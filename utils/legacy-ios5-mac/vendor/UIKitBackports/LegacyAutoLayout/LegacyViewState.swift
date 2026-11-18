@@ -84,23 +84,59 @@ internal final class LegacyViewState: NSObject {
     /// Content inputs the cached system intrinsic size was measured from. iOS 6 invalidates the
     /// cache from the setters that change them; iOS 5 does not, so the read path compares this
     /// key and re-measures when the content changed.
-    internal var intrinsicMeasurementKey: String?
+    internal var intrinsicMeasurementKey: LegacyLabelMeasurementKey?
     /// The engine has consumed this system control's intrinsic size, so a later content
     /// change must invalidate it (views the engine never measured need no bookkeeping).
     internal var systemIntrinsicObserved = false
 
     /// Last global invalidation counter consumed by this view's constraint walk.
     internal var handledInvalidation = -1
+
+    /// `legacyPositionAffectsConstraints`' subtree/ancestor scan, valid while the key matches.
+    internal var positionScanKey: LegacyPositionScanKey?
+    internal var positionScanResult = false
 }
 
-private var legacyViewStateKey: UInt8 = 0
+/// The label content a cached system intrinsic size was measured from.
+internal struct LegacyLabelMeasurementKey: Equatable {
+    var textHash: Int
+    var attributedLength: Int
+    var fontName: String
+    var pointSize: CGFloat
+    var numberOfLines: Int
+    var lineBreakMode: Int
+}
+
+/// The constraint and hierarchy generations a cached position scan was computed at.
+internal struct LegacyPositionScanKey: Equatable {
+    var constraints: Int
+    var hierarchy: Int
+}
+
+/// A process-lifetime key address. Passing `&someGlobalVar` instead costs a dynamic exclusivity check
+/// (`swift_beginAccess`, a thread-local lookup) on every call, and this lookup runs several times per view
+/// per layout pass.
+private let legacyViewStateKey = UnsafeRawPointer(UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1))
+
+/// `objc_getAssociatedObject` with Objective-C types. The Swift import takes and returns `Any`, so every
+/// lookup boxed the view, bridged it back, and ran a dynamic cast on the result (`tryCast` in device
+/// profiles). The association is RETAIN_NONATOMIC, so the getter returns the stored object at +0.
+private typealias LegacyGetAssociatedObject = @convention(c) (AnyObject, UnsafeRawPointer) -> Unmanaged<AnyObject>?
+private let legacyGetAssociatedObject: LegacyGetAssociatedObject = {
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "objc_getAssociatedObject") else {   // RTLD_DEFAULT
+        fatalError("objc_getAssociatedObject is missing")
+    }
+    return unsafeBitCast(symbol, to: LegacyGetAssociatedObject.self)
+}()
 
 internal extension LegacyViewState {
 
     /// The view's state, or nil when nothing was ever stored for it.
     @MainActor
     static func existing(of view: UIView) -> LegacyViewState? {
-        objc_getAssociatedObject(view, &legacyViewStateKey) as? LegacyViewState
+        // Only `of(_:)` stores under this key, and always a LegacyViewState.
+        guard let stored = legacyGetAssociatedObject(view, legacyViewStateKey) else { return nil }
+        return unsafeDowncast(stored.takeUnretainedValue(), to: LegacyViewState.self)
     }
 
     /// The view's state, creating it on first use.
@@ -108,7 +144,7 @@ internal extension LegacyViewState {
     static func of(_ view: UIView) -> LegacyViewState {
         if let state = existing(of: view) { return state }
         let state = LegacyViewState()
-        objc_setAssociatedObject(view, &legacyViewStateKey, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        objc_setAssociatedObject(view, legacyViewStateKey, state, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         return state
     }
 }

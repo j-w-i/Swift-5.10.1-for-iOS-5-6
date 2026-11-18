@@ -459,12 +459,16 @@ internal final class LegacyActiveConstraintRegistry {
 
     private final class Entry {
         weak var constraint: RRLayoutConstraint?
-        /// Activation order, so `activeConstraints()` keeps the deterministic
-        /// order the engine's constraint collection relied on.
+        /// Activation order, so lookups keep the deterministic order the engine's
+        /// constraint collection relies on.
         let sequence: UInt64
-        init(constraint: RRLayoutConstraint, sequence: UInt64) {
+        /// The items at registration. A constraint's items never change (they can only become nil), so these
+        /// are the only index buckets the entry can be found through.
+        let itemIdentifiers: [ObjectIdentifier]
+        init(constraint: RRLayoutConstraint, sequence: UInt64, itemIdentifiers: [ObjectIdentifier]) {
             self.constraint = constraint
             self.sequence = sequence
+            self.itemIdentifiers = itemIdentifiers
         }
     }
 
@@ -473,57 +477,107 @@ internal final class LegacyActiveConstraintRegistry {
     /// array of weak entries made activation and teardown O(n^2) (linear scan +
     /// weak loads per constraint), which dominated the device churn profile.
     private var entries: [ObjectIdentifier: Entry] = [:]
+    /// Item -> active constraints naming it as first or second item. Every layout pass used to snapshot and
+    /// sort the whole app's active constraints to find the few that touch the subtree being solved
+    /// (O(N log N) in the app's constraint count, per pass, per cell). A pass now visits only its own items'
+    /// buckets. A bucket may hold a dead or reused-address entry; callers re-check the live items.
+    private var byItem: [ObjectIdentifier: [ObjectIdentifier]] = [:]
     private var nextSequence: UInt64 = 0
     private var registrationCount = 0
 
     private init() {}
 
+    /// True when no constraint was ever registered or all were unregistered (dead entries may remain until
+    /// pruned). The engine only needs this to skip de-duplication on the common build path.
+    internal var isEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.isEmpty
+    }
+
     internal func register(_ constraint: RRLayoutConstraint) {
         lock.lock()
         defer { lock.unlock() }
         let identifier = ObjectIdentifier(constraint)
-        if let existing = entries[identifier], existing.constraint === constraint {
-            return
+        if let existing = entries[identifier] {
+            if existing.constraint === constraint { return }
+            removeLocked(identifier)              // a dead constraint whose address was reused
         }
         // Reclaim dead slots occasionally instead of on every registration.
         registrationCount += 1
         if registrationCount % 64 == 0 {
             pruneLocked()
         }
-        entries[identifier] = Entry(constraint: constraint, sequence: nextSequence)
+        var items: [ObjectIdentifier] = []
+        if let first = constraint.firstItem as AnyObject? { items.append(ObjectIdentifier(first)) }
+        if let second = constraint.secondItem as AnyObject?, !items.contains(ObjectIdentifier(second)) {
+            items.append(ObjectIdentifier(second))
+        }
+        entries[identifier] = Entry(constraint: constraint, sequence: nextSequence, itemIdentifiers: items)
+        for item in items { byItem[item, default: []].append(identifier) }
         nextSequence += 1
     }
 
     internal func unregister(_ constraint: RRLayoutConstraint) {
         lock.lock()
         defer { lock.unlock() }
-        entries.removeValue(forKey: ObjectIdentifier(constraint))
+        removeLocked(ObjectIdentifier(constraint))
     }
 
-    /// A snapshot of all live activated constraints, in activation order.
+    /// Live activated constraints that name one of `items` as an item, in activation order. Same set and
+    /// order as filtering a sorted snapshot of every active constraint by "references one of `items`",
+    /// provided the caller applies its own live-item check (an entry is found through the identifiers its
+    /// items had at registration).
+    internal func activeConstraints(touching items: Set<ObjectIdentifier>) -> [RRLayoutConstraint] {
+        lock.lock()
+        defer { lock.unlock() }
+        if entries.isEmpty { return [] }
+        var found: [(UInt64, RRLayoutConstraint)] = []
+        var seen = Set<ObjectIdentifier>()
+        var dead: [ObjectIdentifier] = []
+        // Visit whichever side is smaller: the subtree's items, or the items that have active constraints.
+        if items.count <= byItem.count {
+            for item in items {
+                guard let bucket = byItem[item] else { continue }
+                for identifier in bucket where seen.insert(identifier).inserted {
+                    guard let entry = entries[identifier] else { continue }
+                    if let constraint = entry.constraint { found.append((entry.sequence, constraint)) } else { dead.append(identifier) }
+                }
+            }
+        } else {
+            for (item, bucket) in byItem where items.contains(item) {
+                for identifier in bucket where seen.insert(identifier).inserted {
+                    guard let entry = entries[identifier] else { continue }
+                    if let constraint = entry.constraint { found.append((entry.sequence, constraint)) } else { dead.append(identifier) }
+                }
+            }
+        }
+        for identifier in dead { removeLocked(identifier) }
+        if found.count > 1 { found.sort { $0.0 < $1.0 } }
+        return found.map { $0.1 }
+    }
+
+    /// A snapshot of all live activated constraints, in activation order (tests and diagnostics).
     internal func activeConstraints() -> [RRLayoutConstraint] {
         lock.lock()
         defer { lock.unlock() }
         pruneLocked()
-        var result: [RRLayoutConstraint] = []
-        result.reserveCapacity(entries.count)
-        for entry in entries.values {
-            if let constraint = entry.constraint { result.append(constraint) }
+        return entries.values.compactMap { entry in entry.constraint.map { (entry.sequence, $0) } }
+            .sorted { $0.0 < $1.0 }.map { $0.1 }
+    }
+
+    private func removeLocked(_ identifier: ObjectIdentifier) {
+        guard let entry = entries.removeValue(forKey: identifier) else { return }
+        for item in entry.itemIdentifiers {
+            guard var bucket = byItem[item] else { continue }
+            bucket.removeAll { $0 == identifier }
+            byItem[item] = bucket.isEmpty ? nil : bucket
         }
-        // Activation order is the engine's documented deterministic order.
-        result.sort { lhs, rhs in
-            let lhsIdentifier = ObjectIdentifier(lhs)
-            let rhsIdentifier = ObjectIdentifier(rhs)
-            let lhsSequence = entries[lhsIdentifier]?.sequence ?? 0
-            let rhsSequence = entries[rhsIdentifier]?.sequence ?? 0
-            return lhsSequence < rhsSequence
-        }
-        return result
     }
 
     private func pruneLocked() {
-        if entries.contains(where: { $0.value.constraint == nil }) {
-            entries = entries.filter { $0.value.constraint != nil }
-        }
+        var dead: [ObjectIdentifier] = []
+        for (identifier, entry) in entries where entry.constraint == nil { dead.append(identifier) }
+        for identifier in dead { removeLocked(identifier) }
     }
 }

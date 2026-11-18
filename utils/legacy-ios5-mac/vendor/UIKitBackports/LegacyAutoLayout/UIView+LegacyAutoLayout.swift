@@ -197,9 +197,15 @@ extension UIView {
     var legacyIntrinsicContentSize: CGSize {
         get {
             if let label = self as? UILabel {
-                let key = "\(label.text?.hashValue ?? 0):\(label.attributedText?.length ?? 0):"
-                    + "\(label.font?.fontName ?? ""):\(label.font?.pointSize ?? 0):"
-                    + "\(label.numberOfLines):\(label.lineBreakMode.rawValue)"
+                // Same inputs as before, compared as fields: this getter runs for every label on every solver
+                // pass, and building one interpolated string per call dominated it on device.
+                let font = label.font
+                let key = LegacyLabelMeasurementKey(textHash: label.text?.hashValue ?? 0,
+                                                    attributedLength: label.attributedText?.length ?? 0,
+                                                    fontName: font?.fontName ?? "",
+                                                    pointSize: font?.pointSize ?? 0,
+                                                    numberOfLines: label.numberOfLines,
+                                                    lineBreakMode: label.lineBreakMode.rawValue)
                 let state = legacyMutableState(label)
                 if state.intrinsicMeasurementKey != key {
                     state.intrinsicMeasurementKey = key
@@ -359,14 +365,20 @@ extension UIView {
         // near-zero instead of the incumbent geometry (differential: children of aspect-sized
         // containers drifted 0.125–0.5pt off the native solution on every subtree pass — round 117).
         let passRoot = legacyAutomaticLayoutRoot()
-        engine.layout(passRoot)
-        // UIKit's second measuring step: multi-line labels the app gave no preferredMaxLayoutWidth are re-measured at the
-        // width layout just gave them, then layout runs again. Bounded: a label settles in one or two rounds.
-        var rounds = 0
-        while rounds < 3, LegacyIntrinsicOverride.remeasureEnabled, legacyRemeasureWrappingLabels() {
-            legacyUpdateConstraintsIfNeeded()
+        // A root with no subitems has nothing to solve: the root's own frame is fixed during its pass, so the engine
+        // would build (or diff) an empty system and write nothing. Leaf views (a label or image view laid out as its
+        // own root after a content change), collection views and direct stacks all land here several times per
+        // recycled cell.
+        if !passRoot.layoutSubitems.isEmpty {
             engine.layout(passRoot)
-            rounds += 1
+            // UIKit's second measuring step: multi-line labels the app gave no preferredMaxLayoutWidth are re-measured at the
+            // width layout just gave them, then layout runs again. Bounded: a label settles in one or two rounds.
+            var rounds = 0
+            while rounds < 3, LegacyIntrinsicOverride.remeasureEnabled, legacyRemeasureWrappingLabels() {
+                legacyUpdateConstraintsIfNeeded()
+                engine.layout(passRoot)
+                rounds += 1
+            }
         }
         LegacyAutoLayoutRuntime.isApplyingLayoutFrames = wasApplyingLayoutFrames
 
@@ -571,13 +583,12 @@ extension UIView {
     /// constraint graph for every frame assignment made non-Auto Layout containers (collection-view
     /// cells, overlay views) re-solve and re-invalidate on each layout pass.
     internal var legacyGeometryAffectsConstraints: Bool {
-        if let state = LegacyViewState.existing(of: self) {
-            if !state.constraints.isEmpty { return true }
-            if state.translatesAutoresizingMaskIntoConstraints == false { return true }
-            if state.intrinsicContentSize != nil { return true }
-        }
+        guard let state = LegacyViewState.existing(of: self) else { return false }
+        if !state.constraints.isEmpty { return true }
+        if state.translatesAutoresizingMaskIntoConstraints == false { return true }
+        if state.intrinsicContentSize != nil { return true }
         if LegacyLayoutEngine.diagnosticDisableGeometryPropagation { return false }
-        return LegacyViewState.existing(of: self)?.geometryAnchorsLayout ?? false
+        return state.geometryAnchorsLayout
     }
 
     /// Whether moving this view (same size, new position) can change any constraint solution.
@@ -591,10 +602,24 @@ extension UIView {
     /// is what keeps scrolling - the collection view re-centres recycled cells - from invalidating every layout root.
     /// Checked against native UIKit by the `move-*` cases in Tests/autolayout_native_parity.swift.
     internal var legacyPositionAffectsConstraints: Bool {
-        guard legacyGeometryAffectsConstraints else { return false }
-        if let state = LegacyViewState.existing(of: self), state.translatesAutoresizingMaskIntoConstraints == false {
-            return true
-        }
+        guard legacyGeometryAffectsConstraints, let state = LegacyViewState.existing(of: self) else { return false }
+        if state.translatesAutoresizingMaskIntoConstraints == false { return true }
+        // The scans below depend only on which constraints exist and on the view tree, so their answer is kept
+        // until a constraint or the hierarchy changes. Collection views re-centre every visible cell on every
+        // scrolled frame; rescanning each cell's ancestors and subtree each time was the top backport cost in
+        // the Friends list profile. A constraint item that deallocates without leaving the tree can only turn
+        // a cached `true` stale (one extra invalidation), never hide a needed one.
+        let key = LegacyPositionScanKey(constraints: LegacyLayoutMutation.constraintGeneration,
+                                        hierarchy: LegacyLayoutMutation.hierarchyGeneration)
+        if state.positionScanKey == key { return state.positionScanResult }
+        let result = legacyPositionScanReachesOutside()
+        state.positionScanKey = key
+        state.positionScanResult = result
+        return result
+    }
+
+    /// Whether a constraint relates this subtree to a view outside it (see `legacyPositionAffectsConstraints`).
+    private func legacyPositionScanReachesOutside() -> Bool {
         func inside(_ item: Any?) -> Bool {
             guard let view = item as? UIView else { return false }
             return view === self || view.isDescendant(of: self)
@@ -839,6 +864,22 @@ extension UIView: LegacyLayoutItem {
 
 /// Detects the collection view backport without linking against it (the runtime is a separate archive).
 @MainActor
+internal enum LegacyDirectStackGetter {
+    typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
+    nonisolated(unsafe) static let selector = NSSelectorFromString("uic_usesDirectStackLayout")
+    private struct Lookup { let getter: Getter? }
+    nonisolated(unsafe) private static var cache: [ObjectIdentifier: Lookup] = [:]
+
+    static func getter(for cls: AnyClass?) -> Getter? {
+        guard let cls = cls else { return nil }
+        let key = ObjectIdentifier(cls)
+        if let hit = cache[key] { return hit.getter }
+        let getter = class_getInstanceMethod(cls, selector).map { unsafeBitCast(method_getImplementation($0), to: Getter.self) }
+        cache[key] = Lookup(getter: getter)
+        return getter
+    }
+}
+
 internal enum LegacyCollectionViewClass {
     private static let classes: [AnyClass] = ["PSTCollectionView", "UICollectionView"].compactMap { NSClassFromString($0) }
     @inline(__always)
@@ -851,10 +892,11 @@ internal enum LegacyCollectionViewClass {
 
 extension UIView {
     internal var legacyUsesDirectStackLayout: Bool {
-        let sel = NSSelectorFromString("uic_usesDirectStackLayout")
-        guard let method = class_getInstanceMethod(type(of: self), sel) else { return false }
-        typealias Getter = @convention(c) (AnyObject, Selector) -> Bool
-        return unsafeBitCast(method_getImplementation(method), to: Getter.self)(self, sel)
+        // Asked of most views on every pass. The selector and the per-class method lookup are cached (classes
+        // are not given this method after first use: OAStackView defines it statically), so a view that is not
+        // a stack answers with one dictionary lookup instead of a string-to-selector call and a method search.
+        guard let getter = LegacyDirectStackGetter.getter(for: object_getClass(self)) else { return false }
+        return getter(self, LegacyDirectStackGetter.selector)
     }
 
     /// Lets a container that writes its children's frames itself (OAStackView's direct layout) mark those writes as

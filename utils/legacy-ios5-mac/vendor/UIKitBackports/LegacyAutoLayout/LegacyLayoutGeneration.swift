@@ -42,6 +42,12 @@ internal enum LegacyLayoutMutation {
     nonisolated(unsafe) internal static var constraintGeneration: Int = 0
     internal static func bumpConstraints() { constraintGeneration &+= 1; bump() }
 
+    /// Bumped when any view is added to or removed from a superview (the didAddSubview:/willRemoveSubview:
+    /// hooks). Together with `constraintGeneration` it keys facts about which constraints reach across a
+    /// view's subtree boundary.
+    nonisolated(unsafe) internal static var hierarchyGeneration: Int = 0
+    internal static func bumpHierarchy() { hierarchyGeneration &+= 1; bump() }
+
     /// Records a mutation that can affect a constraint system.
     internal static func bump() {
         guard suppressionDepth == 0 else { return }

@@ -316,7 +316,10 @@ internal enum LegacyLayoutDebug {
     nonisolated(unsafe) static var lastRejected = ""
     nonisolated(unsafe) static var bails: [String: Int] = [:]
     nonisolated(unsafe) static var fitHits = 0, fitMisses = 0, fitMissInvalidated = 0, fitMissProposal = 0, fitMissFirst = 0
-    nonisolated(unsafe) static var rebuildRoots: [String: (count: Int, rows: Int)] = [:]
+    /// Keyed by class identity, not by a formatted string: rebuilds are on the layout path, and turning a type
+    /// into its name costs far more than the count. The summary formats the name.
+    struct RebuildRootKey: Hashable { let rootClass: ObjectIdentifier; let bail: String; let zeroSize: Bool }
+    nonisolated(unsafe) static var rebuildRoots: [RebuildRootKey: (count: Int, rows: Int, type: AnyObject.Type)] = [:]
     nonisolated(unsafe) static var pendingBail = "first-pass"
 
     static func noteRejected(name: String?, op: String, strengthIsRequired: Bool, terms: Int, constant: Double, error: String) {
@@ -343,6 +346,8 @@ public func UICLegacyLayoutDebugSummary() -> UnsafeMutablePointer<CChar>? {
     out += "bails:\n"
     for (k, v) in LegacyLayoutDebug.bails.sorted(by: { $0.value > $1.value }) { out += "  \(v)x \(k)\n" }
     out += "rebuild roots (count, total rows):\n"
-    for (k, v) in LegacyLayoutDebug.rebuildRoots.sorted(by: { $0.value.rows > $1.value.rows }).prefix(12) { out += "  \(v.count)x \(k) rows=\(v.rows)\n" }
+    for (k, v) in LegacyLayoutDebug.rebuildRoots.sorted(by: { $0.value.rows > $1.value.rows }).prefix(12) {
+        out += "  \(v.count)x \(v.type) [\(k.bail)] \(k.zeroSize ? "zero-size" : "sized") rows=\(v.rows)\n"
+    }
     return strdup(out)
 }

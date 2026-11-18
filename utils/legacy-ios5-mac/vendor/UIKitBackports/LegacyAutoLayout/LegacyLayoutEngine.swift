@@ -167,11 +167,20 @@ final class LegacyLayoutEngine {
 
     /// One solver per layout root. The root is held weakly; entries whose root
     /// was deallocated are pruned on the next pass.
-    private struct CacheEntry {
+    /// A class, updated in place: as a struct holding a `weak` reference, every pass copied it out of the
+    /// cache and back, and each copy registered and unregistered a weak reference in the Objective-C weak
+    /// table (`outlined init with copy of CacheEntry` in device profiles).
+    private final class CacheEntry {
         weak var root: AnyObject?
-        var solver: LegacyLayoutSolver
+        let solver: LegacyLayoutSolver
         var direction: RRLayoutDirection
         var lastUsed: Int
+        init(root: AnyObject, solver: LegacyLayoutSolver, direction: RRLayoutDirection, lastUsed: Int) {
+            self.root = root
+            self.solver = solver
+            self.direction = direction
+            self.lastUsed = lastUsed
+        }
     }
 
     /// Diagnostic/strict compatibility mode: `LEGACY_AUTOLAYOUT_FORCE_REBUILD=1`
@@ -225,7 +234,7 @@ final class LegacyLayoutEngine {
 
         if usesPersistentSolver {
             Self.pruneCacheIfNeeded()
-            if var entry = Self.solverCache[identifier], entry.root === rootObject,
+            if let entry = Self.solverCache[identifier], entry.root === rootObject,
                !Self.strictRebuildMode {
                 // O(1) no-change path: nothing that can affect the constraint
                 // system has mutated since this solver's last pass, so return its
@@ -235,7 +244,6 @@ final class LegacyLayoutEngine {
                    let cached = entry.solver.cachedLayoutResult {
                     Self.cacheTick += 1
                     entry.lastUsed = Self.cacheTick
-                    Self.solverCache[identifier] = entry
                     LegacyLayoutStats.noteFastPass(
                         microseconds: Double(DispatchTime.now().uptimeNanoseconds - start) / 1000.0)
                     return cached
@@ -246,7 +254,6 @@ final class LegacyLayoutEngine {
                     Self.cacheTick += 1
                     entry.lastUsed = Self.cacheTick
                     entry.direction = direction
-                    Self.solverCache[identifier] = entry
                     Self.notePass(start: start,
                                   solver: entry.solver,
                                   cached: entry.solver.lastUpdateWasCached,
@@ -267,9 +274,12 @@ final class LegacyLayoutEngine {
         let result = solver.solve(writingFrames: true)
         do {
             let size = root.layoutFrame.size
-            let key = "\(type(of: rootObject)) [\(LegacyLayoutDebug.pendingBail)] \(size.width <= 0 || size.height <= 0 ? "zero-size" : "sized")"
-            let old = LegacyLayoutDebug.rebuildRoots[key] ?? (0, 0)
-            LegacyLayoutDebug.rebuildRoots[key] = (old.count + 1, old.rows + solver.tableauConstraintCount)
+            let rootType: AnyObject.Type = type(of: rootObject)
+            let key = LegacyLayoutDebug.RebuildRootKey(rootClass: ObjectIdentifier(rootType),
+                                                       bail: LegacyLayoutDebug.pendingBail,
+                                                       zeroSize: size.width <= 0 || size.height <= 0)
+            let old = LegacyLayoutDebug.rebuildRoots[key] ?? (0, 0, rootType)
+            LegacyLayoutDebug.rebuildRoots[key] = (old.count + 1, old.rows + solver.tableauConstraintCount, rootType)
             LegacyLayoutDebug.pendingBail = "first-pass"
         }
         if usesPersistentSolver {

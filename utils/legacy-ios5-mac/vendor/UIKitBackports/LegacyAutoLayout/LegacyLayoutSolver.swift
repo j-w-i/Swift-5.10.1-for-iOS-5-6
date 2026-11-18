@@ -1595,10 +1595,10 @@ internal final class LegacyLayoutSolver {
     }
 
     private func collectConstraintsUncached() -> [RRLayoutConstraint] {
-        let activated = LegacyActiveConstraintRegistry.shared.activeConstraints()
+        let registry = LegacyActiveConstraintRegistry.shared
         var result: [RRLayoutConstraint] = []
         result.reserveCapacity(items.count * 4)
-        if activated.isEmpty {
+        if registry.isEmpty {
             // Common build path: constraints are owned by exactly one view, so no
             // de-duplication set is needed (it was an allocation + n hashes per
             // build).
@@ -1616,7 +1616,9 @@ internal final class LegacyLayoutSolver {
                 }
             }
         }
-        for constraint in activated {
+        // Only activated constraints that name a subtree item can pass the check below; the registry finds
+        // those through its item index instead of the whole app's active set.
+        for constraint in registry.activeConstraints(touching: itemIdentifiers) {
             if seen.contains(ObjectIdentifier(constraint)) { continue }
             if constraintReferencesSubtreeItem(constraint) {
                 seen.insert(ObjectIdentifier(constraint))
@@ -2110,6 +2112,10 @@ internal final class LegacyLayoutSolver {
         var absoluteOrigins: [ObjectIdentifier: CGPoint] = [:]
         var solvedSizes: [ObjectIdentifier: CGSize] = [:]
         var currentFrames: [ObjectIdentifier: CGRect] = [:]
+        // Sized once: growing these per item was a measurable share of every pass on device.
+        absoluteOrigins.reserveCapacity(items.count)
+        solvedSizes.reserveCapacity(items.count)
+        currentFrames.reserveCapacity(items.count)
 
         for item in items {
             let identifier = ObjectIdentifier(item as AnyObject)
@@ -2189,6 +2195,7 @@ internal final class LegacyLayoutSolver {
             // pixel grid; subtracting the unsolved parent leaves 0.125–0.25pt local drift on
             // 2x displays (differential round 117: children of aspect-sized containers).
             var finalAbsolute: [ObjectIdentifier: CGPoint] = [:]
+            finalAbsolute.reserveCapacity(items.count)
             finalAbsolute[rootIdentifier] = absoluteOrigins[rootIdentifier] ?? root.layoutFrame.origin
             for item in items {
                 let identifier = ObjectIdentifier(item as AnyObject)
@@ -2243,18 +2250,19 @@ internal final class LegacyLayoutSolver {
             }
         }
 
-        var frames: [ObjectIdentifier: CGRect] = [:]
+        // Every item has an entry in currentFrames, so it already is the per-item frame map. The resolved
+        // attributes (debugging/tests only; nothing on the layout path reads them) query each view's baselines,
+        // so a real layout pass skips them and only the dry-run `solve` fills them in.
         var resolved: [ObjectIdentifier: LegacyResolvedFrame] = [:]
-        for item in items {
-            let identifier = ObjectIdentifier(item as AnyObject)
-            guard let frame = currentFrames[identifier] else {
-                continue
+        if !writingFrames {
+            for item in items {
+                let identifier = ObjectIdentifier(item as AnyObject)
+                guard let frame = currentFrames[identifier] else { continue }
+                resolved[identifier] = resolvedFrame(from: frame, item: item)
             }
-            frames[identifier] = frame
-            resolved[identifier] = resolvedFrame(from: frame, item: item)
         }
 
-        return LegacyLayoutResult(frames: frames,
+        return LegacyLayoutResult(frames: currentFrames,
                                   brokenConstraints: brokenConstraints,
                                   resolvedAttributes: resolved)
     }
