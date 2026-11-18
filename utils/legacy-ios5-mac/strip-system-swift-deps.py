@@ -34,8 +34,10 @@ UNAVAILABLE = b"/.unavailable"
 
 
 def unavailable_at(index):
-    """Distinct unusable rpath per neutralised entry: dyld aborts on a duplicate LC_RPATH."""
+    """The index-th unusable path: /.unavailable, /.unavailable2, /.unavailable3, ..."""
     return UNAVAILABLE if index == 0 else UNAVAILABLE + str(index + 1).encode()
+
+
 FAT_MAGIC = 0xCAFEBABE
 FAT_CIGAM = 0xBEBAFECA
 FAT_MAGIC_64 = 0xCAFEBABF
@@ -89,6 +91,42 @@ def slices(data):
     return out
 
 
+def fresh_unavailable(taken):
+    """The first unusable path not in `taken`.
+
+    Every neutralised entry needs a path of its own: dyld on current iOS aborts a launch whose
+    image lists the same LC_RPATH twice ("duplicate LC_RPATH"), and likewise the same weak dylib
+    path twice (observed on iOS 27 with libswiftQuickLook and libswiftsimd both neutralised).
+    """
+    index = 0
+    while unavailable_at(index) in taken:
+        index += 1
+    return unavailable_at(index)
+
+
+def repoint(data, cursor, cmdsize, path_off, replacement):
+    """Overwrite a load command's path in place. False when the old path's space is too small."""
+    room = cmdsize - path_off
+    if room <= len(replacement):
+        return False
+    data[cursor + path_off:cursor + cmdsize] = b"\0" * room
+    data[cursor + path_off:cursor + path_off + len(replacement)] = replacement
+    return True
+
+
+def command_path(data, cursor, cmd, cmdsize, endian):
+    """(offset, path) of an LC_RPATH or dylib load command's path, or None."""
+    if cmd == LC_RPATH and cmdsize >= 12:
+        path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
+    elif cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB) and cmdsize >= 24:
+        path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
+    else:
+        return None
+    if path_off >= cmdsize:
+        return None
+    return path_off, bytes(cstr(data, cursor + path_off, cmdsize - path_off))
+
+
 def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False, linked_sdk=None):
     le = struct.unpack("<I", data[offset:offset + 4])[0]
     be = struct.unpack(">I", data[offset:offset + 4])[0]
@@ -107,15 +145,9 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
     stop = start + sizeofcmds
     if stop > offset + size or ncmds > 4096:
         return None
-    stripped = 0
-    strong = []
-    stripped_names = []
-    has_symtab = False
-    reexported = 0
-    dropped_rpaths = 0
-    seen_rpaths = set()
-    neutralised_paths = set()
-    sdk_retagged = 0
+    # Unusable paths already in the image (from an earlier run of this tool). New ones avoid all
+    # of them, so a path handed out here never collides with an entry further down.
+    taken = set()
     cursor = start
     for _ in range(ncmds):
         if cursor + 8 > stop:
@@ -123,59 +155,69 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
         cmd, cmdsize = struct.unpack(endian + "II", data[cursor:cursor + 8])
         if cmdsize < 8 or cursor + cmdsize > stop:
             return None
+        found = command_path(data, cursor, cmd, cmdsize, endian)
+        if found and found[1].startswith(UNAVAILABLE):
+            taken.add(found[1])
+        cursor += cmdsize
+    claimed = set()
+
+    def neutralise(cursor, cmdsize, path_off):
+        replacement = fresh_unavailable(taken)
+        if not repoint(data, cursor, cmdsize, path_off, replacement):
+            return False
+        taken.add(replacement)
+        claimed.add(replacement)
+        return True
+
+    stripped = 0
+    strong = []
+    stripped_names = []
+    has_symtab = False
+    reexported = 0
+    dropped_rpaths = 0
+    seen_rpaths = set()
+    sdk_retagged = 0
+    deduplicated = 0
+    cursor = start
+    for _ in range(ncmds):
+        cmd, cmdsize = struct.unpack(endian + "II", data[cursor:cursor + 8])
+        found = command_path(data, cursor, cmd, cmdsize, endian)
+        # An entry an earlier run of this tool neutralised. Older versions gave every weak dylib
+        # the same path, which dyld on current iOS rejects, so a repeat gets a path of its own.
+        if found and found[1].startswith(UNAVAILABLE):
+            if found[1] in claimed:
+                if neutralise(cursor, cmdsize, found[0]):
+                    deduplicated += 1
+            else:
+                claimed.add(found[1])
+            cursor += cmdsize
+            continue
         # Apple's overlay stubs declare libswiftCore as a *re-export*. A shipped
         # overlay that merely loads Core makes dyld's two-level lookup fail for
         # symbols the linker attributed to the overlay (observed on iOS 27 as
         # "Symbol not found: _$s15_ObjectiveCTypes01_A11CBridgeablePTl").
-        if reexport_core and filetype == 6 and cmd == LC_LOAD_DYLIB and cmdsize >= 24:
-            name_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
-            if name_off < cmdsize:
-                name = cstr(data, cursor + name_off, cmdsize - name_off)
-                if name == SWIFT_CORE:
-                    data[cursor:cursor + 4] = struct.pack(endian + "I", LC_REEXPORT_DYLIB)
-                    reexported += 1
-        # The Swift driver emits `-rpath /usr/lib/swift`. On iOS 12+ that path holds
-        # the system Swift runtime, which shadows the stdlib embedded in this app and
-        # breaks five-year-old ABI (observed on iOS 27: protocol descriptor missing).
-        # Neutralise the entry so @rpath resolves only to the app's Frameworks.
-        # dyld on current iOS aborts a launch whose image lists the same LC_RPATH twice
-        # ("duplicate LC_RPATH"). Both the driver and the project's runpath setting add
-        # @executable_path/Frameworks, so repoint every repeat at an unusable path.
-        if cmd == LC_RPATH and cmdsize >= 12:
-            dup_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
-            if dup_off < cmdsize:
-                dup_path = bytes(cstr(data, cursor + dup_off, cmdsize - dup_off))
-                if dup_path.startswith(UNAVAILABLE):
-                    neutralised_paths.add(dup_path)
-                    continue
-                if dup_path in seen_rpaths:
-                    room = cmdsize - dup_off
-                    if room > len(UNAVAILABLE):
-                        data[cursor + dup_off:cursor + cmdsize] = b"\0" * room
-                        replacement = unavailable_at(len(neutralised_paths))
-                        while replacement in neutralised_paths:
-                            replacement += b"_"
-                        neutralised_paths.add(replacement)
-                        data[cursor + dup_off:cursor + dup_off + len(replacement)] = replacement
-                        dropped_rpaths += 1
-                else:
-                    seen_rpaths.add(dup_path)
-        if drop_system_rpath and cmd == LC_RPATH and cmdsize >= 12:
-            path_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
-            if path_off < cmdsize:
-                path = cstr(data, cursor + path_off, cmdsize - path_off)
-                if path == SYSTEM_SWIFT_RPATH:
+        if reexport_core and filetype == 6 and cmd == LC_LOAD_DYLIB and found:
+            if found[1] == SWIFT_CORE:
+                data[cursor:cursor + 4] = struct.pack(endian + "I", LC_REEXPORT_DYLIB)
+                reexported += 1
+        if cmd == LC_RPATH and found:
+            path_off, path = found
+            # dyld on current iOS aborts a launch whose image lists the same LC_RPATH twice
+            # ("duplicate LC_RPATH"). Both the driver and the project's runpath setting add
+            # @executable_path/Frameworks, so repoint every repeat at an unusable path.
+            if path in seen_rpaths:
+                if neutralise(cursor, cmdsize, path_off):
+                    dropped_rpaths += 1
+            else:
+                seen_rpaths.add(path)
+                # The Swift driver emits `-rpath /usr/lib/swift`. On iOS 12+ that path holds
+                # the system Swift runtime, which shadows the stdlib embedded in this app and
+                # breaks five-year-old ABI (observed on iOS 27: protocol descriptor missing).
+                # Neutralise the entry so @rpath resolves only to the app's Frameworks.
+                if drop_system_rpath and path == SYSTEM_SWIFT_RPATH:
                     # Keep a *valid* LC_RPATH (pointing nowhere) rather than retyping the command:
                     # a retyped command makes install_name_tool/lipo-style tools reject the image.
-                    room = cmdsize - path_off
-                    if room > len(UNAVAILABLE):
-                        replacement = unavailable_at(len(neutralised_paths))
-                        while replacement in neutralised_paths:
-                            replacement += b"_"
-                        neutralised_paths.add(replacement)
-                        data[cursor + path_off:cursor + cmdsize] = b"\0" * room
-                        data[cursor + path_off:cursor + path_off + len(replacement)] = replacement
-                    else:
+                    if not neutralise(cursor, cmdsize, path_off):
                         data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
                     dropped_rpaths += 1
         # UIKit chooses between its compatibility layout and the current one from the SDK the
@@ -196,32 +238,28 @@ def patch_slice(data, offset, size, reexport_core=False, drop_system_rpath=False
         if cmd == LC_SYMTAB and cmdsize >= 24:
             if struct.unpack(endian + "I", data[cursor + 12:cursor + 16])[0] > 0:
                 has_symtab = True
-        if cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB):
-            name_off = struct.unpack(endian + "I", data[cursor + 8:cursor + 12])[0]
-            if name_off < cmdsize:
-                name = cstr(data, cursor + name_off, cmdsize - name_off)
-                wanted = name.startswith(SYSTEM_SWIFT) or (
-                    name.startswith(b"@rpath/") and
-                    name.rsplit(b"/", 1)[-1].decode() in SYSTEM_SWIFT_NAMES)
-                if wanted:
-                    if cmd == LC_LOAD_DYLIB:
-                        strong.append(name.decode("utf-8", "replace"))
-                    else:
-                        # Keep the command a *weak* dylib so its two-level-namespace ordinal slot
-                        # survives (retyping it removed the slot, and binds past the end of the list
-                        # make dyld reject the image: "library ordinal (28) too big (max 27)" on
-                        # iOS 10). Pointing it at a path that cannot exist makes the weak load a no-op
-                        # on every OS, including those that ship the real system overlay.
-                        room = cmdsize - name_off
-                        if room > len(UNAVAILABLE):
-                            data[cursor + name_off:cursor + cmdsize] = b"\0" * room
-                            data[cursor + name_off:cursor + name_off + len(UNAVAILABLE)] = UNAVAILABLE
-                        else:
-                            data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
-                        stripped += 1
-                        stripped_names.append(name)
+        if cmd in (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB) and found:
+            path_off, name = found
+            wanted = name.startswith(SYSTEM_SWIFT) or (
+                name.startswith(b"@rpath/") and
+                name.rsplit(b"/", 1)[-1].decode() in SYSTEM_SWIFT_NAMES)
+            if wanted:
+                if cmd == LC_LOAD_DYLIB:
+                    strong.append(name.decode("utf-8", "replace"))
+                else:
+                    # Keep the command a *weak* dylib so its two-level-namespace ordinal slot
+                    # survives (retyping it removed the slot, and binds past the end of the list
+                    # make dyld reject the image: "library ordinal (28) too big (max 27)" on
+                    # iOS 10). Pointing it at a path that cannot exist makes the weak load a no-op
+                    # on every OS, including those that ship the real system overlay. Each entry
+                    # gets its own path (see fresh_unavailable).
+                    if not neutralise(cursor, cmdsize, path_off):
+                        data[cursor:cursor + 4] = struct.pack(endian + "I", UNUSED_CMD)
+                    stripped += 1
+                    stripped_names.append(name)
         cursor += cmdsize
-    return stripped, strong, stripped_names, has_symtab, reexported, dropped_rpaths, sdk_retagged
+    return (stripped, strong, stripped_names, has_symtab, reexported, dropped_rpaths, sdk_retagged,
+            deduplicated)
 
 
 FORCE_LOAD_PREFIX = b"__swift_FORCE_LOAD_$_"
@@ -301,6 +339,7 @@ def main(argv):
         reexported = 0
         dropped_rpaths = 0
         retagged = 0
+        deduplicated = 0
         for offset, size in table:
             result = patch_slice(data, offset, size, reexport_core=reexport_core, drop_system_rpath=drop_rpath, linked_sdk=linked_sdk)
             if result is None:
@@ -314,6 +353,7 @@ def main(argv):
             reexported += result[4]
             dropped_rpaths += result[5]
             retagged += result[6]
+            deduplicated += result[7]
         if strong_all:
             for name in strong_all:
                 print(f"{path}: strong system Swift dependency cannot be shipped: {name}", file=sys.stderr)
@@ -341,7 +381,7 @@ def main(argv):
                     break
             if status:
                 continue
-        if total or reexported or dropped_rpaths or retagged:
+        if total or reexported or dropped_rpaths or retagged or deduplicated:
             with open(path, "wb") as handle:
                 handle.write(data)
             if total:
@@ -352,6 +392,8 @@ def main(argv):
                 print(f"{path}: dropped /usr/lib/swift from the rpath search order ({dropped_rpaths} slice(s))")
             if retagged:
                 print(f"{path}: linked-SDK tag raised for {retagged} executable slice(s)")
+            if deduplicated:
+                print(f"{path}: gave {deduplicated} repeated neutralised path(s) a distinct one")
     return status
 
 
