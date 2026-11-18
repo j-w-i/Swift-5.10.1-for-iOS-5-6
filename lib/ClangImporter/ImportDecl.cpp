@@ -265,6 +265,13 @@ static unsigned legacyUIKitDeclarationCeiling(const clang::Decl *decl) {
       owner = category->getClassInterface()->getName();
     else if (auto named = dyn_cast<clang::NamedDecl>(dc))
       if (named->getIdentifier()) owner = named->getName();
+    // iOS 9 array form of +appearanceWhenContainedIn:. The backports runtime forwards it to the
+    // variadic iOS 5 method (UICAppearanceContainment.m); the trait-collection forms stay native.
+    if (owner == "UIAppearance") {
+      auto method = dyn_cast<clang::ObjCMethodDecl>(decl);
+      return method && method->getSelector().getAsString() ==
+                           "appearanceWhenContainedInInstancesOfClasses:" ? 9 : 0;
+    }
     if (owner == "UIView" && member == "systemLayoutSizeFittingSize") {
       // Engine fitting measurement: the one-argument form is iOS 6, the priority form iOS 8.
       if (auto method = dyn_cast<clang::ObjCMethodDecl>(decl))

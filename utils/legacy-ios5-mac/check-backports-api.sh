@@ -157,6 +157,26 @@ for target in 5.0 6.0 7.0 8.0 9.0 10.0; do
     "$OUT/SafeArea.swift" >> "$OUT/ios$target/build.log" 2>&1 \
     || { echo "FAIL: view.safeAreaLayoutGuide anchors must typecheck at iOS $target" >&2; exit 1; }
 done
+# The iOS 9 array form of +appearanceWhenContainedIn: is implemented below iOS 9 (the variadic
+# Objective-C method is not importable); its trait-collection form is not, and stays gated.
+cat > "$OUT/AppearanceContainment.swift" <<'SWIFT'
+import UIKit
+func styleBarButtons() { UIButton.appearance(whenContainedInInstancesOf: [UINavigationBar.self]).tintColor = .red }
+SWIFT
+cat > "$OUT/AppearanceTraitContainment.swift" <<'SWIFT'
+import UIKit
+func styleCompact(_ traits: UITraitCollection) { _ = UIButton.appearance(for: traits, whenContainedInInstancesOf: [UINavigationBar.self]) }
+SWIFT
+for target in 5.0 6.0 7.0 8.0 9.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios$target -parse-as-library -typecheck \
+    "$OUT/AppearanceContainment.swift" >> "$OUT/ios$target/build.log" 2>&1 \
+    || { echo "FAIL: appearance(whenContainedInInstancesOf:) must typecheck at iOS $target" >&2; exit 1; }
+done
+if "$TC/usr/bin/swiftc" "${COMMON[@]}" -target armv7-apple-ios5.0 -parse-as-library -typecheck \
+     "$OUT/AppearanceTraitContainment.swift" >> "$OUT/ios5.0/build.log" 2>&1; then
+  echo 'FAIL: appearance(for:whenContainedInInstancesOf:) (iOS 9) must stay unavailable at iOS 5' >&2
+  exit 1
+fi
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit
 func useLaterFamily(_ v: UIView) { _ = v.keyboardLayoutGuide }

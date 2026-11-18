@@ -24,7 +24,7 @@ mkdir "$OUT"
 OUT=$(CDPATH= cd -- "$OUT" && pwd -P)
 mkdir "$OUT/objects" "$OUT/logs"
 export ZERO_AR_DATE=1
-for required in "$HERE/native-foundation-runtime/HashTable/FBPHashTable.m" Core/FBPTimer.m Core/FBPURLComponents.m Core/FBPISO8601DateFormatter.m Extras/FBPExtrasInstaller.m Extras/FBPCharacterSetExtras.m Extras/FBPCalendarExtras.m Extras/FBPStringExtras.m Extras/FBPSubscriptExtras.m Networking/FBPURLSession.m; do
+for required in "$HERE/native-foundation-runtime/HashTable/FBPHashTable.m" Core/FBPTimer.m Core/FBPURLComponents.m Core/FBPISO8601DateFormatter.m Extras/FBPExtrasInstaller.m Extras/FBPCharacterSetExtras.m Extras/FBPCalendarExtras.m Extras/FBPStringExtras.m Extras/FBPSubscriptExtras.m Extras/FBPClassLookupCache.m Networking/FBPURLSession.m; do
   [ -f "$SRC/$required" ] || [ -f "$required" ] || fail "Missing required source: $required"
 done
 OBJECTS=()

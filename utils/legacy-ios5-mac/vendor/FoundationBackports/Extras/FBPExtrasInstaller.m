@@ -16,4 +16,5 @@ void FBPInstallFoundationExtras(void) {
     FBPInstallStringExtras();
     FBPInstallCharacterSetExtras();
     FBPInstallSubscriptExtras();
+    FBPScheduleClassLookupCache();
 }

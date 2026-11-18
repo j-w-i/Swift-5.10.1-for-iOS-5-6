@@ -33,7 +33,7 @@ mkdir -p "$OUT/logs" "$OUT/build"
 echo "=== host differential tests"
 clang -fobjc-arc -fblocks -O2 -Wall -Wextra -Wno-unused-parameter \
   "$EXTRAS/FBPCalendarExtras.m" "$EXTRAS/FBPStringExtras.m" \
-  "$EXTRAS/FBPCharacterSetExtras.m" "$EXTRAS/FBPSubscriptExtras.m" "$EXTRAS/FBPExtrasInstaller.m" \
+  "$EXTRAS/FBPCharacterSetExtras.m" "$EXTRAS/FBPSubscriptExtras.m" "$EXTRAS/FBPClassLookupCache.m" "$EXTRAS/FBPExtrasInstaller.m" \
   "$HERE/fbp_extras_tests.m" -framework Foundation \
   -o "$OUT/build/fbp-extras-tests" > "$OUT/logs/compile-host.log" 2>&1 || {
   tail -40 "$OUT/logs/compile-host.log" >&2; exit 1;
@@ -47,6 +47,22 @@ clang -fobjc-arc -fblocks -O2 -Wall -Wextra -Wno-unused-parameter \
   tail -40 "$OUT/logs/compile-subscripts.log" >&2; exit 1;
 }
 "$OUT/build/fbp-subscript-tests" | tee "$OUT/logs/subscripts.log"
+
+echo "=== objc_lookUpClass cache tests"
+clang -fobjc-arc -fblocks -O2 -Wall -Wextra -Wno-unused-parameter \
+  "$EXTRAS/FBPClassLookupCache.m" "$HERE/fbp_lookup_cache_tests.m" -framework Foundation \
+  -o "$OUT/build/fbp-lookup-cache-tests" > "$OUT/logs/compile-lookup-cache.log" 2>&1 || {
+  tail -40 "$OUT/logs/compile-lookup-cache.log" >&2; exit 1;
+}
+"$OUT/build/fbp-lookup-cache-tests" | tee "$OUT/logs/lookup-cache.log"
+if clang -fobjc-arc -fblocks -O1 -g -fsanitize=thread \
+     "$EXTRAS/FBPClassLookupCache.m" "$HERE/fbp_lookup_cache_tests.m" -framework Foundation \
+     -o "$OUT/build/fbp-lookup-cache-tsan" > "$OUT/logs/compile-lookup-cache-tsan.log" 2>&1; then
+  TSAN_OPTIONS="halt_on_error=1:exitcode=66" "$OUT/build/fbp-lookup-cache-tsan" --concurrency-only \
+    > "$OUT/logs/lookup-cache-tsan.log" 2>&1 && grep -q "PASS: lookup cache concurrency-only" "$OUT/logs/lookup-cache-tsan.log" || {
+    echo 'FAIL: ThreadSanitizer lookup cache run' >&2; cat "$OUT/logs/lookup-cache-tsan.log" >&2; exit 1; }
+  echo 'PASS: ThreadSanitizer lookup cache (no data races reported)'
+fi
 
 echo "=== overlay literal cross-check"
 python3 - "$EXTRAS" <<'PY' | tee "$OUT/logs/overlay-literals.log"
@@ -92,7 +108,7 @@ PY
 echo "=== thread sanitizer (concurrent first use)"
 if clang -fobjc-arc -fblocks -O1 -g -fsanitize=thread \
      "$EXTRAS/FBPCalendarExtras.m" "$EXTRAS/FBPStringExtras.m" \
-     "$EXTRAS/FBPCharacterSetExtras.m" "$EXTRAS/FBPSubscriptExtras.m" "$EXTRAS/FBPExtrasInstaller.m" \
+     "$EXTRAS/FBPCharacterSetExtras.m" "$EXTRAS/FBPSubscriptExtras.m" "$EXTRAS/FBPClassLookupCache.m" "$EXTRAS/FBPExtrasInstaller.m" \
      "$HERE/fbp_extras_tests.m" -framework Foundation \
      -o "$OUT/build/fbp-extras-tsan" > "$OUT/logs/compile-tsan.log" 2>&1; then
   if TSAN_OPTIONS="halt_on_error=1:exitcode=66" "$OUT/build/fbp-extras-tsan" --concurrency-only \
@@ -112,7 +128,7 @@ fi
 if [ -n "${DEVICE_SDK:-}" ] && [ -n "${DEVICE_CLANG:-}" ]; then
   echo "=== device compile (armv7-apple-ios5.0, builder flags)"
   for source in "$EXTRAS"/FBPCalendarExtras.m "$EXTRAS"/FBPStringExtras.m \
-                "$EXTRAS"/FBPCharacterSetExtras.m "$EXTRAS"/FBPSubscriptExtras.m "$EXTRAS"/FBPExtrasInstaller.m; do
+                "$EXTRAS"/FBPCharacterSetExtras.m "$EXTRAS"/FBPSubscriptExtras.m "$EXTRAS"/FBPClassLookupCache.m "$EXTRAS"/FBPExtrasInstaller.m; do
     name=$(basename "$source" .m)
     "$DEVICE_CLANG" -target armv7-apple-ios5.0 -marm -isysroot "$DEVICE_SDK" -O2 -g0 \
       -fobjc-arc -fblocks -fno-modules -fvisibility=default \
