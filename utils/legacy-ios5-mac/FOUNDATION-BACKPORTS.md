@@ -37,6 +37,7 @@ with availability warnings treated as errors.
 | Calendar | Same-day, today, yesterday and tomorrow predicates using calendar day intervals/arithmetic |
 | String/CharacterSet | Percent encoding/decoding and six URL allowed-character sets using the actual Foundation types |
 | Object subscripting | iOS 6 `-objectAtIndexedSubscript:` / `-setObject:atIndexedSubscript:` (NSArray, NSMutableArray, NSOrderedSet, NSMutableOrderedSet) and `-objectForKeyedSubscript:` / `-setObject:forKeyedSubscript:` (NSDictionary, NSMutableDictionary), installed when absent. Covers Objective-C `a[i]`/`d[k]` (the toolchain does not link ARCLite) and Swift's NSArray/NSMutableArray/NSOrderedSet subscripts, which the importer lowers to iOS 5. `d[k] = nil` removes the key, as current Foundation does |
+| Class lookup speed | Not an API: on iOS 5-7 a name cache sits in front of every image's `objc_lookUpClass` lazy pointer, in front of ARCLite's Swift-name wrapper when an ARC Objective-C target links it. iOS 5.1.1 Foundation looks a class up on every `NSString` comparison (about 690 ns, plus about 350 ns through ARCLite on an iPod touch 3G). Only non-nil results for classes loaded from an image are cached; installed from the main queue after launch |
 | Data base64 | Existing upstream-derived legacy decoder/encoder and native options, now available through implemented Swift methods |
 | URLSession | Foreground default-configuration data, in-memory upload and download tasks, ordered delegate/completion queue, task registry, cancellation and invalidation |
 

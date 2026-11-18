@@ -12,6 +12,7 @@ version gating works.
 | `UIStackView` | iOS 9 | stack view implementation with the documented iOS 9 API |
 | Refresh control | iOS 6 | `UIRefreshControl` and `UIScrollView.refreshControl` |
 | Compositional layout | iOS 13 | `UICollectionViewCompositionalLayout`(+`Configuration`), `NSCollectionLayout*` types, `NSDirectionalEdgeInsets`, orthogonal scrolling behaviour |
+| Appearance containment | iOS 9 (`+appearanceWhenContainedInInstancesOfClasses:`) | the array form on `UIView` and `UIBarItem`, forwarded to UIKit's own variadic `+appearanceWhenContainedIn:` (iOS 5), which Swift cannot call: same proxy objects, same validation. Up to 15 container classes. The trait-collection forms stay native |
 
 ## Excluded
 

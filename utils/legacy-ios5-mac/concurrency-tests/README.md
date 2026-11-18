@@ -31,6 +31,10 @@ private runtime copies for the simulator. It keeps its temporary evidence direct
 modifies the toolchain. Apple's frameworks may also load their own Swift runtime; duplicate-class
 warnings are expected in this configuration and must not be confused with a passing test result.
 
+`EXTRA_LIBS=UIKit bash run-on-ipod.sh UIKitAppearanceContainment.swift TOOLCHAIN` checks
+`appearance(whenContainedInInstancesOf:)` below iOS 9: the proxies must be UIKit's own for the same
+container path, for `UIView` and `UIBarItem` subclasses.
+
 `EXTRA_LIBS=UIKit bash run-on-ipod.sh UIKitSemanticColors.swift TOOLCHAIN` checks the semantic
 background selectors used by the photo app. These are light-appearance fallbacks only on systems
 missing the native selectors.
