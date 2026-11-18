@@ -31,12 +31,14 @@
 #include "swift/AST/ForeignAsyncConvention.h"
 #include "swift/AST/ForeignErrorConvention.h"
 #include "swift/AST/GenericEnvironment.h"
+#include "swift/AST/SourceFile.h"
 #include "swift/SIL/FormalLinkage.h"
 #include "swift/SIL/PrettyStackTrace.h"
 #include "swift/SIL/SILArgument.h"
 #include "swift/SIL/TypeLowering.h"
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Decl.h"
 
 using namespace swift;
 using namespace Lowering;
@@ -143,6 +145,25 @@ SILGenFunction::emitGlobalFunctionRef(SILLocation loc, SILDeclRef constant,
     }
   }
 
+  // A C function imported from a header and a @_cdecl function of this module
+  // can name the same symbol with different Swift types: BOOL imports as Bool on
+  // arm64, while the @_cdecl function is written with ObjCBool. Both lower to
+  // one SIL function (Swift 6 separates them with [asmname]); referencing the
+  // imported declaration found the definition with the other type and crashed
+  // SILGen or IRGen. Reference the definition, emitting it first so its own
+  // type wins, and call it through the imported signature as checked by Sema.
+  if (auto *definition = SGM.getCDeclDefinitionOfImportedFunction(constant)) {
+    auto thunk = SILDeclRef(definition).asForeign();
+    if (!SGM.hasFunction(thunk))
+      SGM.emitNativeToForeignThunk(thunk);
+    SILValue ref = B.createFunctionRefFor(loc, SGM.getFunction(thunk, NotForDefinition));
+    auto expected = SGM.Types.getLoweredType(constantInfo.SILFnType,
+                                             B.getTypeExpansionContext());
+    if (ref->getType() != expected)
+      ref = B.createUncheckedBitwiseCast(loc, ref, expected);
+    return ref;
+  }
+
   auto f = SGM.getFunction(constant, NotForDefinition);
 #ifndef NDEBUG
   auto constantFnTypeInContext =
@@ -156,6 +177,39 @@ SILGenFunction::emitGlobalFunctionRef(SILLocation loc, SILDeclRef constant,
     return B.createPreviousDynamicFunctionRef(loc, f);
   else
     return B.createFunctionRefFor(loc, f);
+}
+
+AbstractFunctionDecl *
+SILGenModule::getCDeclDefinitionOfImportedFunction(SILDeclRef constant) {
+  if (!constant.isForeign || constant.isNativeToForeignThunk() ||
+      !constant.hasDecl() ||
+      !isa_and_nonnull<clang::FunctionDecl>(constant.getDecl()->getClangDecl()))
+    return nullptr;
+  if (!CDeclDefinitions) {
+    CDeclDefinitions.emplace();
+    auto scan = [&](const FileUnit *file) {
+      auto *source = dyn_cast<SourceFile>(file);
+      if (!source)
+        return;
+      for (auto *decl : source->getTopLevelDecls())
+        if (auto *function = dyn_cast<AbstractFunctionDecl>(decl))
+          if (auto *attr = function->getAttrs().getAttribute<CDeclAttr>())
+            CDeclDefinitions->try_emplace(attr->Name, function);
+    };
+    // Only definitions emitted into this SIL module collide. In a per-file
+    // compile, a @_cdecl function in another file is defined in another
+    // object and the imported declaration links to it as usual.
+    auto *context = M.getAssociatedContext();
+    if (auto *file = dyn_cast_or_null<FileUnit>(context))
+      scan(file);
+    else
+      for (auto *file : M.getSwiftModule()->getFiles())
+        scan(file);
+  }
+  if (CDeclDefinitions->empty())
+    return nullptr;
+  auto found = CDeclDefinitions->find(constant.mangle());
+  return found == CDeclDefinitions->end() ? nullptr : found->second;
 }
 
 static const clang::Type *prependParameterType(

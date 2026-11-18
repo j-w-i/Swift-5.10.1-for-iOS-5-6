@@ -176,6 +176,12 @@ public:
   /// True if a function has been emitted for a given SILDeclRef.
   bool hasFunction(SILDeclRef constant);
 
+  /// The @_cdecl function of this SIL module that defines the C symbol an
+  /// imported C function names, or null. Both lower to one SIL function, so a
+  /// call to the imported declaration must reference the definition.
+  AbstractFunctionDecl *getCDeclDefinitionOfImportedFunction(SILDeclRef constant);
+  llvm::Optional<llvm::StringMap<AbstractFunctionDecl *>> CDeclDefinitions;
+
   /// Get or create the declaration of a reabstraction thunk with the
   /// given signature.
   SILFunction *getOrCreateReabstractionThunk(

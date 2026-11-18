@@ -117,6 +117,12 @@ static unsigned legacyUIKitFamilyCeiling(StringRef name) {
       .Cases("NSLayoutConstraint", "NSLayoutRelation", "NSLayoutAttribute", 6)
       .Cases("NSLayoutFormatOptions", "UILayoutConstraintAxis", "UILayoutPriority", 6)
       .Case("UIRefreshControl", 6)
+      // iOS 6 renames of iOS 2-3.2 enums with the same raw values: UITextAlignment,
+      // UILineBreakMode and UITextWritingDirection. Pre-iOS 6 UIKit API takes
+      // them under the new names in today's SDK (textAlignment, lineBreakMode,
+      // baseWritingDirection), so they are usable at iOS 5. The iOS 6 alignments
+      // (justified, natural) are kept at iOS 6 in importDeclAttrs.
+      .Cases("NSTextAlignment", "NSLineBreakMode", "NSWritingDirection", 6)
       // Model objects registered by the backports runtime; their inline text
       // layout needs the iOS 7 text system, which iOS 5 does not have.
       .Cases("NSTextAttachment", "NSTextContainer", 7)
@@ -8692,7 +8698,15 @@ void ClangImporter::Implementation::importAttributes(
 
       llvm::VersionTuple deprecated = avail->getDeprecated();
 
-      if (!deprecated.empty()) {
+      // Swift's iOS rule makes APIs deprecated in iOS 7 or earlier
+      // unavailable. On a legacy iOS 5..10 target they are the current API
+      // (sizeWithFont:, contentSizeForViewInPopover, AudioSessionSetProperty),
+      // so they import as merely deprecated: no diagnostic below the
+      // deprecating version, the usual warning at or above it. Naming and
+      // enum-prefix decisions keep the stock rule, so no other name changes.
+      bool legacyKeepsDeprecated =
+          !isAsync && usesLegacyUIKitBackportDeclarations(C);
+      if (!deprecated.empty() && !legacyKeepsDeprecated) {
         if (platformAvailability.treatDeprecatedAsUnavailable(
                 ClangDecl, deprecated, isAsync)) {
           AnyUnavailable = true;
@@ -8800,6 +8814,21 @@ void ClangImporter::Implementation::importAttributes(
     // __attribute__((swift_attr("attribute"))) are handled by
     // importSwiftAttrAttributes(). Other attributes are ignored.
   }
+
+  // NSTextAlignment is usable at iOS 5 (it is UITextAlignment's values), but its
+  // two iOS 6 values are not, and their constants carry no availability of
+  // their own.
+  if (legacyUIKitDecl && legacyDeploymentMajor(C) < 6)
+    if (auto constant = dyn_cast<clang::EnumConstantDecl>(ClangDecl))
+      if (constant->getName() == "NSTextAlignmentJustified" ||
+          constant->getName() == "NSTextAlignmentNatural")
+        MappedDecl->getAttrs().add(new (C) AvailableAttr(
+            SourceLoc(), SourceRange(), PlatformKind::iOS, /*Message=*/"",
+            /*Rename=*/"", /*RenameDecl=*/nullptr, llvm::VersionTuple(6, 0),
+            SourceRange(), llvm::VersionTuple(), SourceRange(),
+            llvm::VersionTuple(), SourceRange(),
+            PlatformAgnosticAvailabilityKind::None, /*Implicit=*/false,
+            /*SPI=*/false));
 
   if (auto method = dyn_cast<clang::ObjCMethodDecl>(ClangDecl)) {
     if (method->isDirectMethod() && !AnyUnavailable) {
