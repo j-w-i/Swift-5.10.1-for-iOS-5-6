@@ -304,10 +304,56 @@ for slice in armv7-apple-ios5.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
     echo "FAIL: a struct field of type dispatch_queue_t must keep the raw handle ($slice)" >&2; exit 1
   fi
   # The conversions are the overlay's, not open-coded.
-  nm "$OUT/dispatch-bridging/$slice.o" | grep -q 'convertRawTo.*Queue' \
+  # (Saved first: under pipefail, grep -q closing the pipe early can fail nm with SIGPIPE.)
+  nm "$OUT/dispatch-bridging/$slice.o" > "$OUT/dispatch-bridging/$slice.nm"
+  grep -q 'convertRawTo.*Queue' "$OUT/dispatch-bridging/$slice.nm" \
     || { echo "FAIL: bridging must call the overlay's conversion functions ($slice)" >&2; exit 1; }
 done
 echo 'PASS: libdispatch handles bridge to DispatchQueue/Group/Semaphore/Source/IO on every slice'
+# Swift @objc members with dispatch handles: allowed, and declared with the libdispatch typedefs
+# in the generated header, which clang accepts as Objective-C for the slice.
+cat > "$OUT/dispatch-bridging/ObjCMembers.swift" <<'SWIFT'
+import Foundation
+import Dispatch
+@objc public final class LegacySwiftQueues: NSObject {
+    @objc public var queue: DispatchQueue?
+    @objc public func run(on queue: DispatchQueue, group: DispatchGroup?) -> DispatchSemaphore? { return nil }
+}
+SWIFT
+cat > "$OUT/dispatch-bridging/UseHeader.m" <<'M'
+#import <Foundation/Foundation.h>
+#import "LegacyQueues-Swift.h"
+void LegacyUseSwiftQueues(LegacySwiftQueues *q) {
+  dispatch_queue_t queue = q.queue;
+  dispatch_semaphore_t s = [q runOn:queue group:NULL];
+  (void)s;
+}
+M
+CLANG_SLICE=$(xcrun -f clang 2>/dev/null || echo clang)
+for slice in armv7-apple-ios5.0 armv7s-apple-ios7.0 arm64-apple-ios7.0; do
+  mkdir -p "$OUT/dispatch-bridging/header-$slice"
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -parse-as-library -c -Xfrontend -sil-verify-all \
+    -module-name LegacyQueues "$OUT/dispatch-bridging/ObjCMembers.swift" \
+    -emit-objc-header-path "$OUT/dispatch-bridging/header-$slice/LegacyQueues-Swift.h" \
+    -o "$OUT/dispatch-bridging/header-$slice/ObjCMembers.o" >> "$OUT/dispatch-bridging/header.log" 2>&1 \
+    || { echo "FAIL: @objc members with dispatch handles must compile ($slice)" >&2; exit 1; }
+  H="$OUT/dispatch-bridging/header-$slice/LegacyQueues-Swift.h"
+  grep -q 'dispatch_queue_t _Nullable queue' "$H" && grep -q '(dispatch_semaphore_t _Nullable)runOn:(dispatch_queue_t _Nonnull)queue group:(dispatch_group_t _Nullable)group' "$H" \
+    || { echo "FAIL: the generated header must declare dispatch handles with their typedefs ($slice)" >&2; exit 1; }
+  "$CLANG_SLICE" -target $slice -isysroot "$SDK" -fsyntax-only -fmodules -I "$OUT/dispatch-bridging/header-$slice" \
+    "$OUT/dispatch-bridging/UseHeader.m" >> "$OUT/dispatch-bridging/header.log" 2>&1 \
+    || { echo "FAIL: the generated header must compile as Objective-C ($slice)" >&2; exit 1; }
+done
+echo 'PASS: Swift @objc members with dispatch handles, declared as dispatch_*_t in the generated header'
+# libdispatch's C calls are replaced by the overlay's methods, with stock Swift's diagnostics.
+printf 'import Dispatch\nfunc legacySync(_ q: DispatchQueue) { dispatch_sync(q) { } }\n' > "$OUT/dispatch-bridging/RawSync.swift"
+for slice in armv7-apple-ios5.0 arm64-apple-ios7.0; do
+  "$TC/usr/bin/swiftc" "${COMMON[@]}" -target $slice -typecheck "$OUT/dispatch-bridging/RawSync.swift" \
+    > "$OUT/dispatch-bridging/raw-sync-$slice.log" 2>&1 && { echo "FAIL: dispatch_sync must be unavailable ($slice)" >&2; exit 1; }
+  grep -aq "'dispatch_sync' has been replaced by instance method 'DispatchQueue.sync(execute:)'" \
+    "$OUT/dispatch-bridging/raw-sync-$slice.log" \
+    || { echo "FAIL: dispatch_sync must point at DispatchQueue.sync(execute:) as in stock Swift ($slice)" >&2; exit 1; }
+done
 
 cat > "$OUT/LaterFamily.swift" <<'SWIFT'
 import UIKit

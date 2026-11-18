@@ -472,3 +472,59 @@ public var DISPATCH_TIME_NOW: Int {
 public var DISPATCH_TIME_FOREVER: Int {
   fatalError()
 }
+
+// Legacy toolchain: stock Swift's replacement diagnostics for the libdispatch calls whose SDK
+// renames cannot map onto this overlay's classes (they would otherwise be "not in scope").
+@available(*, unavailable, renamed:"DispatchQueue.sync(self:execute:)")
+public func dispatch_sync(_ queue: DispatchQueue, _ block: () -> Void)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchObject.suspend(self:)")
+public func dispatch_suspend(_ object: DispatchObject)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchObject.resume(self:)")
+public func dispatch_resume(_ object: DispatchObject)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchObject.activate(self:)")
+public func dispatch_activate(_ object: DispatchObject)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchObject.setTarget(self:queue:)")
+public func dispatch_set_target_queue(_ object: DispatchObject, _ queue: DispatchQueue?)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchGroup.init()")
+public func dispatch_group_create() -> DispatchGroup
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchGroup.enter(self:)")
+public func dispatch_group_enter(_ group: DispatchGroup)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchGroup.leave(self:)")
+public func dispatch_group_leave(_ group: DispatchGroup)
+{
+	fatalError()
+}
+
+@available(*, unavailable, renamed:"DispatchSemaphore.init(value:)")
+public func dispatch_semaphore_create(_ value: Int) -> DispatchSemaphore
+{
+	fatalError()
+}

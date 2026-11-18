@@ -57,6 +57,39 @@ kept = nil
 for _ in 0..<20 where LegacyOwnedQueueFinalized == 0 { usleep(50_000) }
 check(LegacyOwnedQueueFinalized == 1, "the queue is finalized once the last Swift wrapper goes (no leak)")
 
+// Identity, as in stock Swift: one wrapper per handle while any is alive.
+check(owner.queue === queue, "a queue read back from Objective-C is === the one stored")
+var calledBack: DispatchQueue?
+owner.callBack { calledBack = $0 }
+check(calledBack === queue, "a queue passed to a block is === the one stored")
+check(DispatchQueue.main === DispatchQueue.main, "DispatchQueue.main === DispatchQueue.main")
+check(DispatchQueue.global() === DispatchQueue.global(), "DispatchQueue.global() === DispatchQueue.global()")
+check(LegacyMaybeQueue(1) === DispatchQueue.main, "dispatch_get_main_queue() from C is DispatchQueue.main")
+check(Set<DispatchObject>([queue, owner.queue!, DispatchQueue.main, LegacyMaybeQueue(1)!]).count == 2,
+      "Hashable by identity")
+
+// Swift overrides of Objective-C methods with dispatch handles, called from Objective-C.
+final class SwiftQueueOwner: LegacyQueueOwner {
+    var overrideSawQueue: DispatchQueue?
+    override func run(on queue: DispatchQueue!, group: DispatchGroup!, block: (() -> Void)!) {
+        overrideSawQueue = queue
+        super.run(on: queue, group: group, block: block)
+    }
+}
+let swiftOwner = SwiftQueueOwner()
+check(swiftOwner.invokeRun(on: queue) && swiftOwner.overrideSawQueue === queue,
+      "Objective-C reaches a Swift override with the queue it passed")
+
+// A Swift class implementing an Objective-C protocol that returns a queue.
+final class SwiftProvider: NSObject, LegacyQueueProvider {
+    let queue = DispatchQueue(label: "legacy.provider")
+    func queueForWork() -> DispatchQueue! { return queue }
+}
+let provider = SwiftProvider()
+var providedAddress: UInt = 0
+check(LegacyRunOnProvidedQueue(provider, &providedAddress) && providedAddress == LegacyHandleAddress(provider.queue),
+      "Objective-C gets the handle from a Swift protocol witness and runs work on it")
+
 // The overlay's own API is unchanged.
 var ranAsync = false
 let done = DispatchSemaphore(value: 0)

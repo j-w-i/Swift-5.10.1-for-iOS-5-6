@@ -10,7 +10,16 @@
 - (void)runOnQueue:(dispatch_queue_t)queue group:(dispatch_group_t)group block:(void (^)(void))block;
 - (void)callBackWithQueue:(void (^)(dispatch_queue_t queue))handler;
 - (void)releaseOwnedQueue;
+// Calls -runOnQueue:group:block: through the Objective-C runtime (reaches a Swift override).
+- (BOOL)invokeRunOnQueue:(dispatch_queue_t)queue;
 @end
+
+@protocol LegacyQueueProvider <NSObject>
+- (dispatch_queue_t)queueForWork;
+@end
+
+// Asks a provider (a Swift class here) for its queue and runs a block on it synchronously.
+BOOL LegacyRunOnProvidedQueue(id<LegacyQueueProvider> provider, uintptr_t *queueAddress);
 
 extern volatile int LegacyOwnedQueueFinalized;
 uintptr_t LegacyHandleAddress(dispatch_queue_t queue);

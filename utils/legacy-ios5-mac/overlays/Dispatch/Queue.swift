@@ -116,8 +116,11 @@ extension DispatchQueue {
 		_swift_dispatch_apply_current(iterations, work)
 	}
 
+	// Legacy: the main and global queues are immortal, so each has one permanent wrapper (as stock
+	// Swift's are one object): DispatchQueue.main === DispatchQueue.main, and an access is a load.
+	// Adopted through _LegacyDispatchWrappers, so a wrapper Objective-C handed over first is the one.
 	public class var main: DispatchQueue {
-		return DispatchQueue(queue: _swift_dispatch_get_main_queue())
+		return _legacyMainQueue
 	}
 
 	@available(macOS, deprecated: 10.10, message: "")
@@ -125,7 +128,12 @@ extension DispatchQueue {
 	@available(tvOS, deprecated, message: "")
 	@available(watchOS, deprecated, message: "")
 	public class func global(priority: GlobalQueuePriority) -> DispatchQueue {
-		return DispatchQueue(queue: CDispatch.dispatch_get_global_queue(Int(priority._translatedValue), 0))
+		switch priority {
+		case .high: return _legacyGlobalHigh
+		case .default: return _legacyGlobalDefault
+		case .low: return _legacyGlobalLow
+		case .background: return _legacyGlobalBackground
+		}
 	}
 
 #if LEGACY_IOS5
@@ -515,3 +523,17 @@ private func _destructDispatchSpecificValue(ptr: UnsafeMutableRawPointer?) {
 		Unmanaged<AnyObject>.fromOpaque(p).release()
 	}
 }
+
+// Permanent wrappers for the immortal queues (see DispatchQueue.main).
+private func _legacyImmortalQueue(_ raw: dispatch_queue_t) -> DispatchQueue {
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchQueue(queue: raw) }
+}
+private let _legacyMainQueue = _legacyImmortalQueue(_swift_dispatch_get_main_queue())
+private let _legacyGlobalHigh = _legacyImmortalQueue(
+	CDispatch.dispatch_get_global_queue(Int(DispatchQueue.GlobalQueuePriority.high._translatedValue), 0))
+private let _legacyGlobalDefault = _legacyImmortalQueue(
+	CDispatch.dispatch_get_global_queue(Int(DispatchQueue.GlobalQueuePriority.default._translatedValue), 0))
+private let _legacyGlobalLow = _legacyImmortalQueue(
+	CDispatch.dispatch_get_global_queue(Int(DispatchQueue.GlobalQueuePriority.low._translatedValue), 0))
+private let _legacyGlobalBackground = _legacyImmortalQueue(
+	CDispatch.dispatch_get_global_queue(Int(DispatchQueue.GlobalQueuePriority.background._translatedValue), 0))

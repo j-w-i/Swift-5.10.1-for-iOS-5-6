@@ -26,6 +26,14 @@ static void LegacyOwnedQueueFinalizer(void *context) { LegacyOwnedQueueFinalized
     dispatch_group_async(group, queue, block);
 }
 - (void)callBackWithQueue:(void (^)(dispatch_queue_t))handler { handler(_queue); }
+- (BOOL)invokeRunOnQueue:(dispatch_queue_t)queue {
+    dispatch_group_t group = dispatch_group_create();
+    __block BOOL ran = NO;
+    [self runOnQueue:queue group:group block:^{ ran = YES; }];
+    long timedOut = dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
+    dispatch_release(group);
+    return !timedOut && ran;
+}
 - (void)releaseOwnedQueue {
     dispatch_release(_ownedQueue);
     _ownedQueue = NULL;
@@ -39,4 +47,13 @@ dispatch_semaphore_t LegacySignalSemaphore(dispatch_semaphore_t semaphore) {
 }
 dispatch_queue_t LegacyMaybeQueue(int wantQueue) {
     return wantQueue ? dispatch_get_main_queue() : NULL;
+}
+
+BOOL LegacyRunOnProvidedQueue(id<LegacyQueueProvider> provider, uintptr_t *queueAddress) {
+    dispatch_queue_t queue = [provider queueForWork];
+    *queueAddress = (uintptr_t)queue;
+    if (!queue) return NO;
+    __block BOOL ran = NO;
+    dispatch_sync(queue, ^{ ran = YES; });
+    return ran;
 }

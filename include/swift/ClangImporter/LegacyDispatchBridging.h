@@ -47,6 +47,17 @@ inline StringRef legacyDispatchClassNameForTypedef(StringRef typedefName) {
       .Default("");
 }
 
+/// The libdispatch handle typedef a Dispatch overlay class stands for, or "".
+inline StringRef legacyDispatchTypedefForClassName(StringRef className) {
+  return llvm::StringSwitch<StringRef>(className)
+      .Case("DispatchQueue", "dispatch_queue_t")
+      .Case("DispatchGroup", "dispatch_group_t")
+      .Case("DispatchSemaphore", "dispatch_semaphore_t")
+      .Case("DispatchSource", "dispatch_source_t")
+      .Case("DispatchIO", "dispatch_io_t")
+      .Default("");
+}
+
 /// If \p type is spelled with one of the SDK Dispatch module's handle typedefs
 /// (directly, through nullability or other sugar, or through a user typedef of
 /// it), the overlay class name it bridges to; otherwise "".
@@ -78,10 +89,7 @@ inline ClassDecl *legacyDispatchBridgedClass(ASTContext &ctx, Type type) {
   if (!cls || cls->hasClangNode() ||
       cls->getParentModule()->getName().str() != "Dispatch")
     return nullptr;
-  auto name = cls->getName().str();
-  if (name != "DispatchQueue" && name != "DispatchGroup" &&
-      name != "DispatchSemaphore" && name != "DispatchSource" &&
-      name != "DispatchIO")
+  if (legacyDispatchTypedefForClassName(cls->getName().str()).empty())
     return nullptr;
   return cls;
 }
@@ -119,15 +127,16 @@ inline FuncDecl *legacyDispatchBridgingFunction(ClassDecl *cls, bool toRaw) {
   return nullptr;
 }
 
-/// The raw handle type that \p cls lowers to at a C or Objective-C boundary
-/// whose Clang type is \p clangType, or null when no bridging applies.
+/// The raw handle type that \p type lowers to at a C or Objective-C boundary,
+/// or null when no bridging applies. \p clangType is the boundary's original
+/// Clang type when there is one (imported declarations, overrides of them);
+/// Swift @objc declarations have none and always use the handle, which is how
+/// they are declared in the generated header.
 inline Type legacyDispatchLoweredRawType(ASTContext &ctx, Type type,
                                          const clang::Type *clangType) {
-  if (!clangType)
-    return Type();
   auto cls = legacyDispatchBridgedClass(ctx, type);
-  if (!cls || legacyDispatchClassNameForClangType(clangType) !=
-                  cls->getName().str())
+  if (!cls || (clangType && legacyDispatchClassNameForClangType(clangType) !=
+                                cls->getName().str()))
     return Type();
   auto fn = legacyDispatchBridgingFunction(cls, /*toRaw=*/true);
   return fn ? fn->getResultInterfaceType() : Type();

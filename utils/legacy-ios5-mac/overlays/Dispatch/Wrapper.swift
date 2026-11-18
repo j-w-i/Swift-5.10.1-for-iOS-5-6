@@ -12,6 +12,7 @@
 
 import CDispatch
 import _SwiftDispatchOverlayShims
+import Darwin
 
 // This file contains declarations that are provided by the
 // importer via Dispatch.apinote when the platform has Objective-C support
@@ -43,23 +44,23 @@ public class DispatchObject {
 	}
 
 	public func setTarget(queue:DispatchQueue) {
-		dispatch_set_target_queue(wrapped(), queue.__wrapped)
+		CDispatch.dispatch_set_target_queue(wrapped(), queue.__wrapped)
 	}
 
 	public func activate() {
 		// dispatch_activate is iOS 10+. Before that nothing can be created inactive
 		// (dispatch_queue_attr_make_initially_inactive is also iOS 10+), so activating is a no-op.
 		if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
-			dispatch_activate(wrapped())
+			CDispatch.dispatch_activate(wrapped())
 		}
 	}
 
 	public func suspend() {
-		dispatch_suspend(wrapped())
+		CDispatch.dispatch_suspend(wrapped())
 	}
 
 	public func resume() {
-		dispatch_resume(wrapped())
+		CDispatch.dispatch_resume(wrapped())
 	}
 }
 
@@ -72,7 +73,7 @@ public class DispatchGroup : DispatchObject {
 	}
 
 	public override init() {
-		__wrapped = dispatch_group_create()
+		__wrapped = CDispatch.dispatch_group_create()
 	}
 
 	// Legacy bridging: wraps a handle without taking a reference (see _convertRawToDispatchGroup).
@@ -85,11 +86,11 @@ public class DispatchGroup : DispatchObject {
 	}
 
 	public func enter() {
-		dispatch_group_enter(__wrapped)
+		CDispatch.dispatch_group_enter(__wrapped)
 	}
 
 	public func leave() {
-		dispatch_group_leave(__wrapped)
+		CDispatch.dispatch_group_leave(__wrapped)
 	}
 }
 
@@ -106,7 +107,7 @@ public class DispatchSemaphore : DispatchObject {
 	}
 
 	public init(value: Int) {
-		__wrapped = dispatch_semaphore_create(Int(value))
+		__wrapped = CDispatch.dispatch_semaphore_create(Int(value))
 	}
 
 	deinit {
@@ -180,7 +181,7 @@ public class DispatchQueue : DispatchObject {
 			// Pre-iOS 10: create, then retarget (what dispatch_queue_create_with_target does atomically).
 			let q = dispatch_queue_create(__label, attr)
 			if let target = queue {
-				dispatch_set_target_queue(unsafeBitCast(q, to: dispatch_object_t.self), target.__wrapped)
+				CDispatch.dispatch_set_target_queue(unsafeBitCast(q, to: dispatch_object_t.self), target.__wrapped)
 			}
 			__wrapped = q
 		}
@@ -195,7 +196,7 @@ public class DispatchQueue : DispatchObject {
 	}
 
 	public func sync(execute workItem: ()->()) {
-		dispatch_sync(self.__wrapped, workItem)
+		CDispatch.dispatch_sync(self.__wrapped, workItem)
 	}
 }
 
@@ -397,83 +398,169 @@ internal enum _OSQoSClass : UInt32  {
 //
 // To raw: the handle the object owns, borrowed for the call (the object outlives the call).
 // From raw: a new wrapper holding its own reference (retained here on armv7, by ARC elsewhere), so
-// it stays valid after the Objective-C side lets go. Wrappers are not unique per handle: compare the
-// handles, not the wrappers, for identity.
+// it stays valid after the Objective-C side lets go.
+//
+// Identity: one wrapper per handle while any wrapper for it is alive (_LegacyDispatchWrappers), so,
+// as in stock Swift where the wrapper is the dispatch object itself, a queue read back from
+// Objective-C is === the DispatchQueue that was stored, and DispatchQueue.main === DispatchQueue.main.
+
+/// Live wrapper per libdispatch handle (weakly held). Entries for wrappers that have gone are
+/// dropped lazily; a handle's address can only be reused once every wrapper owning it is gone.
+internal final class _LegacyDispatchWrappers {
+	private final class Entry {
+		weak var object: DispatchObject?
+		init(_ object: DispatchObject) { self.object = object }
+	}
+	private let lock: UnsafeMutablePointer<pthread_mutex_t>
+	private var entries: [UnsafeRawPointer: Entry] = [:]
+	private var purgeAt = 64
+
+	static let shared = _LegacyDispatchWrappers()
+
+	private init() {
+		lock = UnsafeMutablePointer<pthread_mutex_t>.allocate(capacity: 1)
+		pthread_mutex_init(lock, nil)
+	}
+
+	static func key<Handle>(_ handle: Handle) -> UnsafeRawPointer {
+		return unsafeBitCast(handle, to: UnsafeRawPointer.self)
+	}
+
+	/// The live wrapper for the handle, or `make()`'s new one, recorded.
+	func unique<Wrapper: DispatchObject>(_ key: UnsafeRawPointer, _ make: () -> Wrapper) -> Wrapper {
+		pthread_mutex_lock(lock)
+		defer { pthread_mutex_unlock(lock) }
+		// A live wrapper for this handle is of the handle's class (handles are not shared between
+		// classes, and an address is reused only after every wrapper owning it is gone).
+		if let existing = entries[key]?.object { return unsafeDowncast(existing, to: Wrapper.self) }
+		let object = make()
+		record(key, object)
+		return object
+	}
+
+	/// Records a wrapper the overlay created (DispatchQueue(label:) and so on) as the handle's.
+	func register(_ key: UnsafeRawPointer, _ object: DispatchObject) {
+		pthread_mutex_lock(lock)
+		defer { pthread_mutex_unlock(lock) }
+		if entries[key]?.object == nil { record(key, object) }
+	}
+
+	private func record(_ key: UnsafeRawPointer, _ object: DispatchObject) {
+		entries[key] = Entry(object)
+		if entries.count >= purgeAt {
+			entries = entries.filter { $0.value.object != nil }
+			purgeAt = Swift.max(64, entries.count * 2)
+		}
+	}
+}
+
+
 #if LEGACY_ARC_DISPATCH_OBJECTS
 public func _convertDispatchQueueToRaw(_ object: DispatchQueue) -> AnyObject {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchQueue(_ handle: AnyObject) -> DispatchQueue {
 	let raw = unsafeDowncast(handle, to: dispatch_queue_t.self)
-	return DispatchQueue(queue: raw)
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchQueue(queue: raw) }
 }
 public func _convertDispatchGroupToRaw(_ object: DispatchGroup) -> AnyObject {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchGroup(_ handle: AnyObject) -> DispatchGroup {
 	let raw = unsafeDowncast(handle, to: dispatch_group_t.self)
-	return DispatchGroup(__raw: raw)
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchGroup(__raw: raw) }
 }
 public func _convertDispatchSemaphoreToRaw(_ object: DispatchSemaphore) -> AnyObject {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchSemaphore(_ handle: AnyObject) -> DispatchSemaphore {
 	let raw = unsafeDowncast(handle, to: dispatch_semaphore_t.self)
-	return DispatchSemaphore(__raw: raw)
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchSemaphore(__raw: raw) }
 }
 public func _convertDispatchSourceToRaw(_ object: DispatchSource) -> AnyObject {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchSource(_ handle: AnyObject) -> DispatchSource {
 	let raw = unsafeDowncast(handle, to: dispatch_source_t.self)
-	return DispatchSource(source: raw)
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchSource(source: raw) }
 }
 public func _convertDispatchIOToRaw(_ object: DispatchIO) -> AnyObject {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchIO(_ handle: AnyObject) -> DispatchIO {
 	let raw = unsafeDowncast(handle, to: dispatch_io_t.self)
-	return DispatchIO(__raw: raw)
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) { DispatchIO(__raw: raw) }
 }
 #else
 public func _convertDispatchQueueToRaw(_ object: DispatchQueue) -> dispatch_queue_t {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchQueue(_ raw: dispatch_queue_t) -> DispatchQueue {
-	let object = DispatchQueue(queue: raw)
-	_legacyDispatchRetain(object.wrapped())
-	return object
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) {
+		let object = DispatchQueue(queue: raw)
+		_legacyDispatchRetain(object.wrapped())
+		return object
+	}
 }
 public func _convertDispatchGroupToRaw(_ object: DispatchGroup) -> dispatch_group_t {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchGroup(_ raw: dispatch_group_t) -> DispatchGroup {
-	let object = DispatchGroup(__raw: raw)
-	_legacyDispatchRetain(object.wrapped())
-	return object
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) {
+		let object = DispatchGroup(__raw: raw)
+		_legacyDispatchRetain(object.wrapped())
+		return object
+	}
 }
 public func _convertDispatchSemaphoreToRaw(_ object: DispatchSemaphore) -> dispatch_semaphore_t {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchSemaphore(_ raw: dispatch_semaphore_t) -> DispatchSemaphore {
-	let object = DispatchSemaphore(__raw: raw)
-	_legacyDispatchRetain(object.wrapped())
-	return object
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) {
+		let object = DispatchSemaphore(__raw: raw)
+		_legacyDispatchRetain(object.wrapped())
+		return object
+	}
 }
 public func _convertDispatchSourceToRaw(_ object: DispatchSource) -> dispatch_source_t {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchSource(_ raw: dispatch_source_t) -> DispatchSource {
-	let object = DispatchSource(source: raw)
-	_legacyDispatchRetain(object.wrapped())
-	return object
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) {
+		let object = DispatchSource(source: raw)
+		_legacyDispatchRetain(object.wrapped())
+		return object
+	}
 }
 public func _convertDispatchIOToRaw(_ object: DispatchIO) -> dispatch_io_t {
+	_LegacyDispatchWrappers.shared.register(_LegacyDispatchWrappers.key(object.__wrapped), object)
 	return object.__wrapped
 }
 public func _convertRawToDispatchIO(_ raw: dispatch_io_t) -> DispatchIO {
-	let object = DispatchIO(__raw: raw)
-	_legacyDispatchRetain(object.wrapped())
-	return object
+	return _LegacyDispatchWrappers.shared.unique(_LegacyDispatchWrappers.key(raw)) {
+		let object = DispatchIO(__raw: raw)
+		_legacyDispatchRetain(object.wrapped())
+		return object
+	}
 }
 #endif
+
+// Stock Swift's dispatch objects are NSObjects: Equatable and Hashable by identity. With one wrapper
+// per handle, identity here is the handle's.
+extension DispatchObject: Hashable {
+	public static func == (lhs: DispatchObject, rhs: DispatchObject) -> Bool {
+		return lhs === rhs
+	}
+	public func hash(into hasher: inout Hasher) {
+		hasher.combine(ObjectIdentifier(self))
+	}
+}

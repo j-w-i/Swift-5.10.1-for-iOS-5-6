@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
 #include "DeclAndTypePrinter.h"
 #include "ClangSyntaxPrinter.h"
 #include "PrimitiveTypeMapping.h"
@@ -1992,6 +1993,14 @@ private:
         case FunctionTypeRepresentation::CFunctionPointer:
           break;
         }
+      } else if (auto dispatchClass = legacyDispatchBridgedClass(
+                     VD->getASTContext(), copyTy)) {
+        // Legacy toolchain: a libdispatch handle. An object (strong) where
+        // dispatch objects are Objective-C objects (iOS 6+ slices), a plain C
+        // pointer (assign, the default) on the iOS 5 slice.
+        auto toRaw = legacyDispatchBridgingFunction(dispatchClass, true);
+        if (toRaw && toRaw->getResultInterfaceType()->isAnyObject())
+          os << ", strong";
       } else if (isObjCReferenceCountableObjectType(copyTy)) {
         os << ", strong";
       }
@@ -2504,6 +2513,13 @@ private:
   void visitClassType(ClassType *CT,
                       llvm::Optional<OptionalTypeKind> optionalKind) {
     const ClassDecl *CD = CT->getClassOrBoundGenericClass();
+    // Legacy toolchain: Dispatch overlay classes are libdispatch handles.
+    if (auto dispatchClass =
+            legacyDispatchBridgedClass(CD->getASTContext(), CT)) {
+      os << legacyDispatchTypedefForClassName(dispatchClass->getName().str());
+      printNullability(optionalKind);
+      return;
+    }
     assert(CD->isObjC() || CD->isForeignReferenceType());
     auto clangDecl = dyn_cast_or_null<clang::NamedDecl>(CD->getClangDecl());
     if (clangDecl) {

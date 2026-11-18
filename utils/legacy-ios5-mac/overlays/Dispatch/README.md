@@ -29,3 +29,10 @@ The shared shim header `stdlib/public/SwiftShims/DispatchOverlayShims.h` include
   (`include/swift/ClangImporter/LegacyDispatchBridging.h`). On armv7s/arm64 their raw side is
   `AnyObject`: the SDK names the dispatch classes `DispatchQueue` and so on for Swift, so a signature
   naming corelibs' `OS_dispatch_queue` would not deserialize in clients.
+* `_LegacyDispatchWrappers` (`Wrapper.swift`) keeps one live wrapper per handle; `DispatchQueue.main` and
+  `global()` (`Queue.swift`) and the bridging functions go through it. `DispatchObject` is `Hashable` by
+  identity, as stock Swift's NSObject-based dispatch objects are.
+* `Private.swift` adds stock Swift's unavailable/renamed declarations for `dispatch_sync`,
+  `dispatch_suspend`/`resume`/`activate`, `dispatch_set_target_queue`, `dispatch_group_create`/`enter`/
+  `leave` and `dispatch_semaphore_create`; the overlay's own calls to those C functions are qualified
+  `CDispatch.` so they never resolve to the stubs.

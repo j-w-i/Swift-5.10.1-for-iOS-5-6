@@ -16,6 +16,7 @@
 
 #define DEBUG_TYPE "ast-types"
 
+#include "swift/ClangImporter/LegacyDispatchBridging.h"
 #include "swift/AST/Types.h"
 #include "ForeignRepresentationInfo.h"
 #include "swift/AST/ASTContext.h"
@@ -3096,6 +3097,14 @@ getForeignRepresentable(Type type, ForeignLanguage language,
 
     return failure();
   }
+
+  // Legacy toolchain: the Dispatch overlay classes stand for libdispatch
+  // handles in Objective-C (LegacyDispatchBridging.h), as stock Swift's
+  // DispatchQueue (OS_dispatch_queue) does, so @objc overrides, protocol
+  // witnesses and members can use them.
+  if (language == ForeignLanguage::ObjectiveC &&
+      legacyDispatchBridgedClass(ctx, type))
+    return { ForeignRepresentableKind::Object, nullptr };
 
   // If the type was imported from Clang, check whether it is
   // representable in the requested language.
