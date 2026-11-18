@@ -36,6 +36,7 @@ with availability warnings treated as errors.
 | Timer | iOS 10 scheduled/unscheduled block factories and fire-date initializer |
 | Calendar | Same-day, today, yesterday and tomorrow predicates using calendar day intervals/arithmetic |
 | String/CharacterSet | Percent encoding/decoding and six URL allowed-character sets using the actual Foundation types |
+| Object subscripting | iOS 6 `-objectAtIndexedSubscript:` / `-setObject:atIndexedSubscript:` (NSArray, NSMutableArray, NSOrderedSet, NSMutableOrderedSet) and `-objectForKeyedSubscript:` / `-setObject:forKeyedSubscript:` (NSDictionary, NSMutableDictionary), installed when absent. Covers Objective-C `a[i]`/`d[k]` (the toolchain does not link ARCLite) and Swift's NSArray/NSMutableArray/NSOrderedSet subscripts, which the importer lowers to iOS 5. `d[k] = nil` removes the key, as current Foundation does |
 | Data base64 | Existing upstream-derived legacy decoder/encoder and native options, now available through implemented Swift methods |
 | URLSession | Foreground default-configuration data, in-memory upload and download tasks, ordered delegate/completion queue, task registry, cancellation and invalidation |
 
